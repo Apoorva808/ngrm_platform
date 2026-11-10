@@ -219,4 +219,4 @@ function projectIndex(p, evidence, ruleIds) {
 }
 
 module.exports = { projectIndex, FORMULA_VERSION, MIN_GROUP, FACTORS, ROLES, PROGRAMMES, EVIDENCE_TYPES, SLOTS, CONSENT_PURPOSES,
-  DEFAULT_RULE_SETTINGS, THRESHOLD_RANGE, score, band, recommend, counts, avg, round1, clamp };
+  DEFAULT_RULE_SETTINGS, THRESHOLD_RANGE, weakest, score, band, recommend, counts, avg, round1, clamp };

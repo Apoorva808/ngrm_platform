@@ -172,3 +172,22 @@ CREATE TABLE IF NOT EXISTS audit_log (
   target   TEXT,
   at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Courses vetted by the team, mapped to a role skill (skill_index 0-3) or to communication (role = 'communication').
+CREATE TABLE IF NOT EXISTS courses (
+  id          INTEGER PRIMARY KEY,
+  title       TEXT NOT NULL,
+  provider    TEXT NOT NULL,
+  url         TEXT NOT NULL,
+  role        TEXT NOT NULL,
+  skill_index INTEGER,
+  weeks       INTEGER,
+  free        INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+-- Course sites searched live for a skill. {q} in the address is replaced by the skill name.
+CREATE TABLE IF NOT EXISTS course_sources (
+  id            INTEGER PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,
+  url_template  TEXT NOT NULL
+);

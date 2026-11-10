@@ -14,6 +14,12 @@ const LAST = ['Shetty', 'Rao', 'Gowda', 'Naik', 'Kulkarni', 'Hegde', 'Iyer', 'Pa
 function bootstrap(db, env = process.env) {
   const h = helpers(db);
   for (const r of D.DEFAULT_RULE_SETTINGS) h.run('INSERT OR IGNORE INTO rules (id, factor, slot, effort, threshold, active) VALUES (?, ?, ?, ?, ?, 1)', r.id, r.factor, r.slot, r.effort, r.threshold);
+  // Course sites students are sent to for a live search. An admin can change these on the Admin page.
+  if (!h.get('SELECT 1 FROM course_sources')) for (const [name, url] of [['SWAYAM', 'https://swayam.gov.in/explorer?searchText={q}'], ['Class Central', 'https://www.classcentral.com/search?q={q}'], ['Coursera', 'https://www.coursera.org/search?query={q}']])
+    h.run('INSERT INTO course_sources (name, url_template) VALUES (?, ?)', name, url);
+  // Starter catalogue of checked courses, loaded once. If an admin has curated the list (even down to empty), it is left alone.
+  if (!h.get('SELECT 1 FROM courses') && !h.get("SELECT 1 FROM audit_log WHERE action IN ('admin.course_added', 'admin.course_removed')"))
+    for (const [role, idx, title, provider, url, free] of require('./courses')) h.run('INSERT INTO courses (title, provider, url, role, skill_index, free) VALUES (?, ?, ?, ?, ?, ?)', title, provider, url, role, idx, free);
   const email = String(env.ADMIN_EMAIL || '').trim().toLowerCase();
   if (email && !h.get('SELECT id FROM users WHERE email = ?', email)) {
     h.run("INSERT INTO users (email, name, role, is_sample) VALUES (?, ?, 'admin', 0)", email, String(env.ADMIN_NAME || 'NGRM admin').trim());

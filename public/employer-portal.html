@@ -73,6 +73,7 @@
     N.api('GET', '/api/me').then(function (r) { if (r.user.employer) $('#orgName').textContent = r.user.employer.name + ' · totals only'; });
     $('#roleSel').innerHTML = Object.keys(meta.roles).map(function (k) { return '<option value="' + k + '">' + esc(meta.roles[k].label) + '</option>'; }).join('');
     loadSupply(); loadPosts(); loadMyIntros();
+    N.live(function () { loadPosts(); loadMyIntros(); }, 30);
   });
   $('#roleSel').addEventListener('change', loadSupply);
   $('#introBtn').addEventListener('click', function () { N.api('POST', '/api/employer/intros', { role: $('#roleSel').value }).then(function (r) { N.toast(r.message); loadMyIntros(); }).catch(function (x) { N.toast(x.message); }); });

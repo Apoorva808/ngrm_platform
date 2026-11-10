@@ -25,6 +25,10 @@
     <div class="recs" id="recs"><p class="loading">Loading your plan…</p></div>
     <p class="small muted" style="margin-top:0.9rem">Steps and their ranking come from fixed rules your mentor can see. If you agreed to AI wording, an AI model may reword the reason; it never sets a number or adds a step, and anything it writes is checked first.</p>
   </section>
+  <section class="card" aria-labelledby="demandTitle">
+    <header><h2 id="demandTitle">Live demand for your target role</h2><span class="small muted" id="liveStamp" aria-live="off"></span></header>
+    <div id="demand"><p class="muted">Loading…</p></div>
+  </section>
   <section class="card" aria-labelledby="mapTitle">
     <header><h2 id="mapTitle">Roadmap</h2><span class="small muted" id="gradNote"></span></header>
     <div class="timeline" id="timeline"></div>
@@ -51,6 +55,22 @@
     summer: 'May – Jul ' + (m <= 7 ? y : y + 1),
   };
   var academicYearStart = m >= 6 ? y : y - 1;
+  // Real places to learn the exact skill: courses your college has vetted, then live searches on course sites.
+  function learn(x) {
+    if (!x.learn) return '';
+    var L = x.learn, link = function (u, t) { return '<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + esc(t) + '</a>'; };
+    var vetted = L.courses.length ? '<ul class="small" style="margin:0.2rem 0 0.4rem;padding-left:1.1rem">' + L.courses.map(function (c) { return '<li>' + link(c.url, c.title) + ' · ' + esc(c.provider) + (c.weeks ? ' · ' + c.weeks + ' weeks' : '') + (c.free ? ' · free to learn' : '') + '</li>'; }).join('') + '</ul>' : '';
+    var search = L.searches.length ? '<p class="small" style="margin:0">' + (L.courses.length ? 'More' : 'Find') + ' current courses in ' + esc(L.skill.toLowerCase()) + ': ' + L.searches.map(function (s) { return link(s.url, s.name); }).join(' · ') + ' <span class="muted">(opens the site’s live results)</span></p>' : '';
+    return vetted || search ? '<div class="learn" style="border-left:3px solid var(--accent);padding-left:0.75rem;margin:0.5rem 0">' + (vetted ? '<b class="small">Checked courses for this skill</b>' + vetted : '') + search + '</div>' : '';
+  }
+  function loadDemand(role) {
+    return N.api('GET', '/api/demand/summary?role=' + encodeURIComponent(role)).then(function (d) {
+      if (!d.openings) { $('#demand').innerHTML = '<p class="muted">No partner employer has posted openings for ' + esc(meta.roles[d.role].label) + ' in the last 90 days. This updates by itself when one does.</p>'; return; }
+      $('#demand').innerHTML = '<div class="grid-3"><div class="kpi"><b>' + d.openings + '</b><span>Openings posted for ' + esc(meta.roles[d.role].label) + ' (last 90 days)</span></div><div class="kpi"><b>' + d.employers + '</b><span>Partner employers hiring</span></div><div class="kpi"><b>' + esc(d.skills[0] ? d.skills[0].name : '—') + '</b><span>Skill asked for most</span></div></div>' +
+        '<p class="small" style="margin-top:0.75rem"><b>Skills employers are asking for:</b> ' + d.skills.map(function (k) { return esc(k.name) + ' (' + k.openings + ' openings)'; }).join(' · ') + '</p>' +
+        '<p class="small muted">Latest: ' + d.latest.map(function (p) { return esc(p.employer) + (p.city ? ', ' + esc(p.city) : '') + ' · ' + p.openings; }).join(' | ') + '. These are posts made on this platform by partner employers, not a national job count.</p>';
+    }).catch(function (e) { N.showError($('#demand'), e); });
+  }
   function load() {
     return Promise.all([N.api('GET', '/api/me/recommendations'), N.api('GET', '/api/me/profile')]).then(function (r) { data = r[0]; profile = r[1].profile; render(); })
       .catch(function (e) { if (/consent_required/.test(e.message)) $('#recs').innerHTML = '<div class="note warning">Start on <a href="readiness-index.html">My score</a> to give consent and fill in your profile.</div>'; else N.showError($('#recs'), e); });
@@ -70,7 +90,7 @@
         : '<div class="actions"><button class="btn btn-primary btn-sm" type="button" data-act="accept" data-id="' + x.id + '">Accept</button><button class="btn btn-secondary btn-sm" type="button" data-act="decline" data-id="' + x.id + '">Not for me</button></div>';
       return '<article class="rec' + (x.student === 'accepted' ? ' accepted' : '') + '"><div class="top"><span class="chip accent">' + (x.always ? 'Support' : F.label + ' · ' + F.w + '%') + '</span>' + (x.always ? '' : '<span class="gain" title="' + esc(x.assume) + '">+' + N.f1(x.gain) + ' pts</span>') + '</div>' +
         '<h3>' + esc(x.title) + '</h3><p>' + esc(x.what) + '</p><p class="why"><b>Why:</b> ' + esc(x.aiWhy || x.why) + (x.aiWhy ? ' <span class="chip" title="Reworded by AI from: ' + esc(x.why) + '">AI wording</span>' : '') + '</p>' +
-        '<div class="meta"><span>When: ' + slot.label.toLowerCase() + ' (' + WHEN[x.slot] + ')</span><span>Effort: ' + esc(x.effort) + '</span><span>' + esc(x.assume) + '</span></div>' + mentor + actions + '</article>';
+        learn(x) + '<div class="meta"><span>When: ' + slot.label.toLowerCase() + ' (' + WHEN[x.slot] + ')</span><span>Effort: ' + esc(x.effort) + '</span><span>' + esc(x.assume) + '</span></div>' + mentor + actions + '</article>';
     }).join('') : '<p class="muted">No steps would raise your score right now. Talk to your mentor about stretch goals.</p>';
     var by = {}, declined = [];
     items.forEach(function (x) { if (x.student === 'accepted') (by[x.slot] = by[x.slot] || []).push(x); if (x.student === 'declined') declined.push(x); });
@@ -92,7 +112,12 @@
     }).catch(function (x) { N.toast(x.message); });
   });
   $('#gapToggle').addEventListener('click', function () { var on = this.getAttribute('aria-pressed') !== 'true'; this.setAttribute('aria-pressed', String(on)); this.textContent = on ? 'View as bars' : 'View as table'; $('#gapTableWrap').hidden = !on; $('#gapBars').hidden = on; });
-  N.boot('plan', ['student']).then(function (ctx) { meta = ctx.meta; load(); });
+  N.boot('plan', ['student']).then(function (ctx) {
+    meta = ctx.meta;
+    Promise.resolve(load()).then(function () { if (data) loadDemand(data.role); });
+    // Mentor reviews and employer demand appear without a refresh.
+    N.live(function () { return Promise.resolve(load()).then(function () { if (data) return loadDemand(data.role); }); }, 30, $('#liveStamp'));
+  });
 })();
 </script>
 </body>

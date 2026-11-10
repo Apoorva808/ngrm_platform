@@ -119,6 +119,8 @@
     if (me.role === 'mentor') {
       $('#queueCard').hidden = false; $('#menteeCard').hidden = false;
       loadQueue().then(loadCohort).catch(function (e) { N.showError($('#queue'), e); });
+      // New items appear on their own, unless a note is being drafted (so nothing typed is lost).
+      N.live(function () { var drafting = N.$$('#queue textarea').some(function (t) { return t.value.trim(); }); if (!drafting) return loadQueue(); }, 30);
       N.api('GET', '/api/mentor/mentees').then(function (list) {
         if (!list.length) { $('#mentees').innerHTML = '<tr><td colspan="6" class="muted">No mentees linked to you yet. Your admin links students to mentors.</td></tr>'; $('#assessForm').hidden = true; return; }
         mentees = list;

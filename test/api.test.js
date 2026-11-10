@@ -6,10 +6,11 @@ const { createApp } = require('../server/app');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
 const uploads = fs.mkdtempSync(path.join(os.tmpdir(), 'ngrm-up-'));
 
-let server, base, h;
+let server, base, h, db;
+const D = require('../server/domain');
 test.before(async () => {
   process.env.DEV_SHOW_OTP = 'true';
-  const db = open(':memory:'); seed(db); h = helpers(db);
+  db = open(':memory:'); seed(db); h = helpers(db);
   server = createApp(db, { demoMode: true, sendCode: () => {}, uploadDir: uploads }).listen(0);
   await new Promise((r) => server.once('listening', r));
   base = 'http://localhost:' + server.address().port;
@@ -547,4 +548,39 @@ test('sign-in codes are emailed through the configured provider, and the code is
   } finally { global.fetch = realFetch; }
   assert.match(calls[0][0], /api\.resend\.com/); assert.equal(calls[0][1].headers.authorization, 'Bearer rk'); assert.match(calls[0][1].body, /123456/);
   assert.match(calls[1][0], /api\.brevo\.com/); assert.equal(calls[1][1].headers['api-key'], 'bk');
+});
+
+test('admins can set, change and clear a student\'s mentor, only within the same college', async () => {
+  const admin = await as('admin@demo.ngrm.in');
+  const sid = h.get("SELECT u.id FROM users u WHERE u.role = 'student' AND u.institution_id = 1 AND u.id NOT IN (SELECT student_id FROM mentor_links) LIMIT 1").id;
+  assert.equal((await admin('PUT', `/api/admin/users/${sid}/mentor`, { mentorEmail: 'nobody@x.in' })).status, 400);
+  assert.equal((await admin('PUT', `/api/admin/users/${sid}/mentor`, { mentorEmail: 'mentor@pilot.edu' })).status, 400, 'other college refused');
+  assert.equal((await admin('PUT', `/api/admin/users/${sid}/mentor`, { mentorEmail: 'Kavya@demo.ngrm.in' })).body.mentor, 'kavya@demo.ngrm.in');
+  assert.equal(h.get('SELECT COUNT(*) AS n FROM mentor_links WHERE student_id = ?', sid).n, 1);
+  assert.equal((await admin('GET', '/api/admin/people?q=' + encodeURIComponent(h.get('SELECT email FROM users WHERE id = ?', sid).email))).body.recent[0].mentor, 'kavya@demo.ngrm.in');
+  assert.equal((await admin('PUT', `/api/admin/users/${sid}/mentor`, { mentorEmail: '' })).body.mentor, null);
+  assert.equal(h.get('SELECT COUNT(*) AS n FROM mentor_links WHERE student_id = ?', sid).n, 0);
+  assert.equal((await (await as('kavya@demo.ngrm.in'))('PUT', `/api/admin/users/${sid}/mentor`, { mentorEmail: '' })).status, 403);
+});
+
+test('course steps carry real, checked courses for the exact weak skill, plus live search links', async () => {
+  const { bootstrap } = require('../server/seed'); bootstrap(db, {});
+  const catalogue = require('../server/courses');
+  assert.ok(catalogue.length >= 20);
+  for (const [role, idx, title, provider, url] of catalogue) { assert.ok(title && provider && /^https:\/\//.test(url)); assert.ok(D.ROLES[role].skills[idx]); }
+  const student = await as('ananya@demo.ngrm.in');
+  // Ananya's weakest HR skill is labour law (index 3).
+  const course = (await student('GET', '/api/me/recommendations')).body.items.find((x) => x.id === 'course');
+  assert.equal(course.learn.skill, 'Labour law basics');
+  assert.ok(course.learn.courses.some((c) => c.title === 'Legal Essentials for Human Resource Management'));
+  assert.ok(course.learn.searches.length >= 3 && course.learn.searches.every((s) => s.url.startsWith('https://') && /Labour%20law%20basics/.test(s.url)));
+  const admin = await as('admin@demo.ngrm.in');
+  assert.equal((await admin('POST', '/api/admin/courses', { role: 'hr', skillIndex: 3, title: 'X', provider: 'Y', url: 'javascript:alert(1)' })).status, 400);
+  assert.equal((await student('GET', '/api/admin/courses')).status, 403);
+  const added = await admin('POST', '/api/admin/courses', { role: 'hr', skillIndex: 3, title: 'New labour codes', provider: 'Test', url: 'https://example.org/c', weeks: 4 });
+  assert.equal(added.status, 201);
+  assert.ok((await student('GET', '/api/me/recommendations')).body.items.find((x) => x.id === 'course').learn.courses.some((c) => c.title === 'New labour codes'), 'students see a new course at once');
+  await admin('DELETE', '/api/admin/courses/' + added.body.id);
+  bootstrap(db, {});
+  assert.equal(h.get("SELECT COUNT(*) AS n FROM courses WHERE title = 'Intro to SQL'").n, 1, 'restarting never duplicates the catalogue');
 });

@@ -9,6 +9,17 @@
   var ordinal = function (n) { return n + (n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th'); };
   var bandCls = { building: 'warning', progressing: 'accent', ready: 'success' };
 
+  // Keep a section up to date without a page refresh. Runs only while the tab is visible and the person
+  // is not typing, so nothing they are writing is replaced.
+  function live(fn, seconds, stampEl) {
+    var stamp = function () { if (stampEl) stampEl.textContent = 'Live · updated ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }); };
+    stamp();
+    setInterval(function () {
+      var a = document.activeElement, typing = a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName);
+      if (document.hidden || typing) return;
+      Promise.resolve(fn()).then(stamp, function () {});
+    }, (seconds || 30) * 1000);
+  }
   // An identical change already on its way (for example after a double-click) is not sent twice.
   var inflight = {};
   function api(method, url, body) {
@@ -133,5 +144,5 @@
   }
   function showError(el, e) { el.innerHTML = '<div class="error-box">' + esc(e.message || 'Something went wrong.') + '</div>'; }
 
-  window.NGRM = { $: $, $$: $$, esc: esc, f1: f1, f0: f0, ordinal: ordinal, bandCls: bandCls, api: api, toast: toast, boot: boot, consentPanel: consentPanel, ring: ring, showError: showError, HOME: HOME };
+  window.NGRM = { $: $, $$: $$, esc: esc, f1: f1, f0: f0, ordinal: ordinal, bandCls: bandCls, api: api, toast: toast, live: live, boot: boot, consentPanel: consentPanel, ring: ring, showError: showError, HOME: HOME };
 })();

@@ -13,7 +13,7 @@ Requires Node.js 22.13 or newer (tested on 22.13, 22.23 and 24). Nothing else is
 npm install
 cp .env.example .env      # demo settings are already on
 npm start                 # http://localhost:3000
-npm test                  # 53 tests
+npm test                  # 55 tests
 npm run seed              # wipe and reload the sample data
 ```
 
@@ -68,11 +68,18 @@ One dependency (Express). The scoring and rules live on the server only, so the 
 
 AI is optional. When switched on (`GEMINI_API_KEY` and the student's AI consent), Gemini only rewords the reason for a step. The new wording is rejected if it adds a number, a link or changes length too much, and the original is used instead. AI never changes a score or a ranking.
 
+## Real courses and live updates
+
+- **Checked courses.** The step for a student's weakest skill names real courses with links (NPTEL/SWAYAM, Kaggle, freeCodeCamp, Coursera, Google, HubSpot, Poynter, Figma). The starter list is in `server/courses.js`; each title and link was checked on 10 Nov 2026. Admins add and remove courses on the Admin page, and students see changes at once. Providers move and retire courses, so open the links at the start of each semester.
+- **Live search.** Each course step also links to a live search for that exact skill on SWAYAM, Class Central and Coursera, so students always see what is running now. Admins can change the sites.
+- **Live screens.** The plan, evidence, mentor queue and employer pages refresh on their own every 30 seconds (paused while someone is typing or the tab is hidden).
+- **Not included.** There is no automatic feed from SWAYAM or job portals: SWAYAM has no public feed we could rely on, and job-market feeds need paid agreements. Demand shown to students is what employers post on this platform.
+
 ## Quality checks done
 
-- 53 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
+- 55 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
 - The tests pass on Node 22.13, 22.23 and 24. Node 22.12 and older cannot run the built-in database, and the server says so.
-- A browser walk-through of every page for all six roles (109 checks), at desktop and phone widths, with no server errors.
+- A browser walk-through of every page for all six roles (119 checks), at desktop and phone widths, with no server errors.
 - An automated accessibility scan (axe-core, WCAG 2.1 AA) of every page in normal and high-contrast mode: no violations. Keyboard-only use works.
 - Speed with 20,000 extra students: every page answers in under 0.2 seconds.
 - The Postgres scripts were applied to Postgres 16 and their access rules tested role by role.

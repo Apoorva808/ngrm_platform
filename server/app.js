@@ -89,7 +89,17 @@ function createApp(db, opts = {}) {
     const c = computeFor(userId); if (!c) return null;
     const list = D.recommend(c.p, c.ev, ruleSettings());
     const states = {}; for (const s of h.all('SELECT * FROM recommendation_states WHERE user_id = ?', userId)) states[s.rule_id] = s;
-    return { c, list: list.map((r) => ({ ...r, state: states[r.id] || null })) };
+    return { c, list: list.map((r) => ({ ...r, state: states[r.id] || null, learn: learnFor(r.id, c.p) })) };
+  }
+  // Where to learn: vetted courses from the catalogue plus live searches on course sites, for the exact skill in the step.
+  const httpsUrl = (u) => { try { const x = new URL(String(u)); return x.protocol === 'https:' ? x.href : null; } catch { return null; } };
+  function learnFor(ruleId, p) {
+    if (ruleId !== 'course' && ruleId !== 'communication') return null;
+    const role = ruleId === 'course' ? p.role : 'communication', idx = ruleId === 'course' ? D.weakest(p) : null;
+    const skill = ruleId === 'course' ? D.ROLES[p.role].skills[idx] : 'Communication skills';
+    const courses = h.all('SELECT id, title, provider, url, weeks, free FROM courses WHERE role = ? AND ' + (idx === null ? 'skill_index IS NULL' : 'skill_index = ?') + ' ORDER BY id DESC LIMIT 5', ...(idx === null ? [role] : [role, idx]));
+    const searches = h.all('SELECT name, url_template FROM course_sources ORDER BY id').map((s) => ({ name: s.name, url: httpsUrl(s.url_template.replace('{q}', encodeURIComponent(skill))) })).filter((s) => s.url);
+    return { skill, courses, searches };
   }
   const pseudo = (id) => 'S-' + crypto.createHmac('sha256', process.env.SESSION_SECRET || 'dev-only-secret-change-me').update('study:' + id).digest('hex').slice(0, 10);
   const small = (n) => (n < D.MIN_GROUP ? null : n); // null = suppressed
@@ -310,7 +320,7 @@ function createApp(db, opts = {}) {
       }
       const accepted = r.list.filter((x) => x.state?.student_status === 'accepted').map((x) => x.id);
       res.json({ score: r.c.result, projected: D.projectIndex(r.c.p, r.c.ev, accepted), role: r.c.p.role, programme: r.c.p.prog, year: r.c.p.year,
-        items: r.list.map((x) => ({ id: x.id, factor: x.factor, slot: x.slot, effort: x.effort, gain: x.gain, always: x.always, title: x.title, what: x.what, why: x.why, aiWhy: x.aiWhy || null, assume: x.assume,
+        items: r.list.map((x) => ({ id: x.id, factor: x.factor, slot: x.slot, effort: x.effort, gain: x.gain, always: x.always, title: x.title, what: x.what, why: x.why, aiWhy: x.aiWhy || null, assume: x.assume, learn: x.learn,
           student: x.state?.student_status || null, mentor: x.state?.mentor_status || null, mentorNote: x.state?.mentor_note || null,
           mentorName: x.state?.mentor_id ? (h.get('SELECT name FROM users WHERE id = ?', x.state.mentor_id) || {}).name : null })) });
     } catch (e) { next(e); }
@@ -476,6 +486,16 @@ function createApp(db, opts = {}) {
       .map((d) => ({ ...d, skills: parse(d.skills_json, []), skills_json: undefined })));
   });
 
+  // Live demand for one role: what partner employers have posted in the last 90 days.
+  app.get('/api/demand/summary', need(), (req, res) => {
+    const role = has(D.ROLES, req.query.role) ? req.query.role : null; if (!role) return fail(res, 400, 'Choose a role.');
+    const posts = h.all("SELECT d.skills_json, d.openings, d.city, d.created_at, e.name AS employer FROM demand_posts d JOIN employers e ON e.id = d.employer_id WHERE d.role = ? AND d.created_at > datetime('now', '-90 days') ORDER BY d.id DESC", role);
+    const skills = {}; for (const p of posts) for (const k of parse(p.skills_json, [])) skills[k] = (skills[k] || 0) + p.openings;
+    res.json({ role, openings: posts.reduce((t, p) => t + p.openings, 0), employers: new Set(posts.map((p) => p.employer)).size,
+      skills: Object.entries(skills).sort((a, b) => b[1] - a[1]).map(([name, openings]) => ({ name, openings })),
+      latest: posts.slice(0, 5).map((p) => ({ employer: p.employer, city: p.city, openings: p.openings, postedAt: p.created_at })), asOf: new Date().toISOString() });
+  });
+
   // ---------- Employer (aggregates only) ----------
   app.get('/api/employer/supply', need('employer'), (req, res) => {
     const role = has(D.ROLES, req.query.role) ? req.query.role : 'hr';
@@ -580,7 +600,8 @@ function createApp(db, opts = {}) {
     res.json({ institutions: h.all('SELECT i.id, i.name, i.city, (SELECT COUNT(*) FROM users u WHERE u.institution_id = i.id AND u.role = \'student\') AS students FROM institutions i ORDER BY i.name'),
       employers: h.all('SELECT id, name, city FROM employers ORDER BY name'),
       roles: h.all('SELECT role, COUNT(*) AS n FROM users GROUP BY role'),
-      recent: h.all(`SELECT u.id, u.name, u.email, u.role, COALESCE(i.name, e.name) AS org, u.created_at FROM users u LEFT JOIN institutions i ON i.id = u.institution_id LEFT JOIN employers e ON e.id = u.employer_id
+      recent: h.all(`SELECT u.id, u.name, u.email, u.role, COALESCE(i.name, e.name) AS org, u.created_at,
+        (SELECT m.email FROM mentor_links l JOIN users m ON m.id = l.mentor_id WHERE l.student_id = u.id LIMIT 1) AS mentor FROM users u LEFT JOIN institutions i ON i.id = u.institution_id LEFT JOIN employers e ON e.id = u.employer_id
         WHERE (? = '' OR lower(u.name) LIKE ? OR lower(u.email) LIKE ?) ORDER BY u.id DESC LIMIT 15`, q, '%' + q + '%', '%' + q + '%') });
   });
   app.post('/api/admin/orgs', need('admin'), (req, res) => {
@@ -631,6 +652,52 @@ function createApp(db, opts = {}) {
     });
     audit(req.user.id, 'admin.users_added', clean.length);
     res.status(201).json({ added: clean.length });
+  });
+
+  // Set, change or clear a student's mentor. The mentor must be at the same college.
+  app.put('/api/admin/users/:id/mentor', need('admin'), (req, res) => {
+    const st = h.get("SELECT id, institution_id FROM users WHERE id = ? AND role = 'student'", +req.params.id);
+    if (!st) return fail(res, 404, 'Not found.');
+    const email = String(req.body?.mentorEmail || '').trim().toLowerCase();
+    let m = null;
+    if (email) {
+      m = h.get("SELECT id, institution_id FROM users WHERE email = ? AND role = 'mentor'", email);
+      if (!m) return fail(res, 400, `No mentor has the email ${email}.`);
+      if (m.institution_id !== st.institution_id) return fail(res, 400, 'That mentor is at a different college.');
+    }
+    h.tx(() => { h.run('DELETE FROM mentor_links WHERE student_id = ?', st.id); if (m) h.run('INSERT INTO mentor_links (mentor_id, student_id) VALUES (?, ?)', m.id, st.id); });
+    audit(req.user.id, 'admin.mentor_' + (m ? 'set' : 'cleared'), st.id);
+    res.json({ mentor: m ? email : null });
+  });
+
+  // Course catalogue and the course sites used for live searches.
+  app.get('/api/admin/courses', need('admin'), (req, res) => res.json({ courses: h.all('SELECT * FROM courses ORDER BY id DESC'), sources: h.all('SELECT * FROM course_sources ORDER BY id') }));
+  app.post('/api/admin/courses', need('admin'), (req, res) => {
+    const b = req.body || {}, title = String(b.title || '').trim().slice(0, 200), provider = String(b.provider || '').trim().slice(0, 80), url = httpsUrl(b.url);
+    const isComm = b.role === 'communication', idx = isComm ? null : Number(b.skillIndex);
+    if (!title || !provider) return fail(res, 400, 'Give the course title and who provides it.');
+    if (!url) return fail(res, 400, 'Give the full course link, starting with https://');
+    if (!isComm && (!has(D.ROLES, b.role) || !(Number.isInteger(idx) && idx >= 0 && idx <= 3))) return fail(res, 400, 'Choose the role and skill this course teaches.');
+    const weeks = b.weeks === '' || b.weeks == null ? null : Math.round(Number(b.weeks));
+    if (weeks !== null && !(weeks >= 1 && weeks <= 104)) return fail(res, 400, 'Length in weeks must be from 1 to 104.');
+    const r = h.run('INSERT INTO courses (title, provider, url, role, skill_index, weeks, free) VALUES (?, ?, ?, ?, ?, ?, ?)', title, provider, url, b.role, idx, weeks, b.free === false ? 0 : 1);
+    audit(req.user.id, 'admin.course_added', r.lastInsertRowid);
+    res.status(201).json({ id: Number(r.lastInsertRowid) });
+  });
+  app.delete('/api/admin/courses/:id', need('admin'), (req, res) => {
+    if (!h.run('DELETE FROM courses WHERE id = ?', +req.params.id).changes) return fail(res, 404, 'Not found.');
+    audit(req.user.id, 'admin.course_removed', req.params.id); res.json({ removed: true });
+  });
+  app.post('/api/admin/course-sources', need('admin'), (req, res) => {
+    const name = String(req.body?.name || '').trim().slice(0, 60), tpl = String(req.body?.urlTemplate || '').trim().slice(0, 300);
+    if (!name || !httpsUrl(tpl.replace('{q}', 'test')) || !tpl.includes('{q}')) return fail(res, 400, 'Give a name and a search address that starts with https:// and contains {q} where the skill goes.');
+    if (h.get('SELECT 1 FROM course_sources WHERE lower(name) = lower(?)', name)) return fail(res, 409, 'That site is already listed.');
+    h.run('INSERT INTO course_sources (name, url_template) VALUES (?, ?)', name, tpl);
+    audit(req.user.id, 'admin.course_source_added', name); res.status(201).json({ ok: true });
+  });
+  app.delete('/api/admin/course-sources/:id', need('admin'), (req, res) => {
+    if (!h.run('DELETE FROM course_sources WHERE id = ?', +req.params.id).changes) return fail(res, 404, 'Not found.');
+    audit(req.user.id, 'admin.course_source_removed', req.params.id); res.json({ removed: true });
   });
 
   // Remove someone's account (for example when they leave, or ask for their data to be erased).

@@ -38,8 +38,30 @@
   </div>
   <section class="card" aria-labelledby="uTitle"><header><h2 id="uTitle">Accounts</h2><span class="small muted">Latest 15, or search</span></header>
     <form id="findForm" role="search" novalidate style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem"><label class="sr-only" for="q">Search by name or email</label><input type="search" id="q" placeholder="Search by name or email" style="flex:1;min-width:12rem"><button class="btn btn-secondary btn-sm" type="submit">Search</button></form>
-    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>College or employer</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="recent"></tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>College or employer</th><th>Mentor (students)</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="recent"></tbody></table></div>
     <p class="small muted" style="margin-top:0.5rem">Removing an account deletes the person’s data for good. Use it when someone leaves or asks to be erased.</p></section>
+  <section class="card" aria-labelledby="cTitle">
+    <header><h2 id="cTitle">Courses shown in recommendations</h2><span class="small muted">Students see these on the step for their weakest skill</span></header>
+    <form id="courseForm" novalidate style="display:grid;gap:0.75rem">
+      <div class="row-2"><div class="field"><label for="c-role">Role</label><select id="c-role"></select></div><div class="field"><label for="c-skill">Skill it teaches</label><select id="c-skill"></select></div></div>
+      <div class="row-2"><div class="field"><label for="c-title">Course title</label><input type="text" id="c-title" maxlength="200"></div><div class="field"><label for="c-provider">Provider</label><input type="text" id="c-provider" maxlength="80" placeholder="NPTEL on SWAYAM"></div></div>
+      <div class="row-2"><div class="field"><label for="c-url">Link</label><input type="url" id="c-url" placeholder="https://"></div><div class="field"><label for="c-weeks">Length in weeks (optional)</label><input type="number" id="c-weeks" min="1" max="104"></div></div>
+      <label class="check"><input type="checkbox" id="c-free" checked><span>Free to learn</span></label>
+      <p class="small" id="c-err" style="color:var(--danger)" hidden></p>
+      <div><button class="btn btn-primary" type="submit">Add course</button></div>
+    </form>
+    <div class="table-wrap" style="margin-top:1rem"><table><thead><tr><th>Course</th><th>Provider</th><th>Role and skill</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="courses"></tbody></table></div>
+    <p class="small muted" style="margin-top:0.5rem">Open each link at the start of a semester: providers move and retire courses.</p>
+    <h3 style="margin-top:1.25rem">Course sites for live search</h3>
+    <p class="small muted">Each course step also links to a live search for the skill on these sites. Use {q} where the skill name goes.</p>
+    <ul class="small" id="sources" style="padding-left:1.1rem"></ul>
+    <form id="sourceForm" novalidate style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:end">
+      <div class="field" style="flex:1;min-width:8rem"><label for="s-name">Site name</label><input type="text" id="s-name" maxlength="60"></div>
+      <div class="field" style="flex:2;min-width:12rem"><label for="s-url">Search address</label><input type="url" id="s-url" placeholder="https://example.org/search?q={q}"></div>
+      <button class="btn btn-secondary" type="submit">Add site</button>
+    </form>
+    <p class="small" id="s-err" style="color:var(--danger)" hidden></p>
+  </section>
   <section class="card" aria-labelledby="rTitle"><header><h2 id="rTitle">Recommendation rules</h2><span class="small muted">Changes apply on the student’s next page load</span></header>
     <div class="table-wrap"><table><thead><tr><th>Rule</th><th>Factor</th><th>Timing</th><th class="n">Threshold</th><th>Active</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="rules"></tbody></table></div></section>
   <section class="card" aria-labelledby="aTitle"><header><h2 id="aTitle">Audit log</h2><span class="small muted">Latest 100 events</span></header>
@@ -58,7 +80,7 @@
       $('#kpis').innerHTML = ['student', 'mentor', 'college_admin', 'employer'].map(function (k) { return '<div class="kpi"><b>' + (n[k] || 0) + '</b><span>' + ROLE[k] + '</span></div>'; }).join('');
       $('#orgs').innerHTML = '<div><b class="small">Colleges</b><ul class="small" style="margin:0.25rem 0 0;padding-left:1.1rem">' + d.institutions.map(function (i) { return '<li>' + esc(i.name) + ' · ' + i.students + ' students</li>'; }).join('') + '</ul></div>' +
         '<div><b class="small">Employers</b><ul class="small" style="margin:0.25rem 0 0;padding-left:1.1rem">' + d.employers.map(function (e) { return '<li>' + esc(e.name) + '</li>'; }).join('') + '</ul></div>';
-      $('#recent').innerHTML = d.recent.map(function (u) { return '<tr><td>' + esc(u.name) + '</td><td>' + esc(u.email) + '</td><td>' + esc(u.role) + '</td><td>' + esc(u.org || '—') + '</td><td>' + (u.id === me.id ? '' : '<button class="btn-link" type="button" data-remove="' + u.id + '" data-name="' + esc(u.name) + '">Remove</button>') + '</td></tr>'; }).join('') || '<tr><td colspan="5" class="muted">No matching accounts.</td></tr>';
+      $('#recent').innerHTML = d.recent.map(function (u) { return '<tr><td>' + esc(u.name) + '</td><td>' + esc(u.email) + '</td><td>' + esc(u.role) + '</td><td>' + esc(u.org || '—') + '</td><td>' + (u.role === 'student' ? '<form data-mentor="' + u.id + '" novalidate style="display:flex;gap:0.3rem"><input type="email" value="' + esc(u.mentor || '') + '" placeholder="No mentor" aria-label="Mentor email for ' + esc(u.name) + '" style="min-width:11rem"><button class="btn btn-secondary btn-sm" type="submit">Save</button></form>' : '—') + '</td><td>' + (u.id === me.id ? '' : '<button class="btn-link" type="button" data-remove="' + u.id + '" data-name="' + esc(u.name) + '">Remove</button>') + '</td></tr>'; }).join('') || '<tr><td colspan="6" class="muted">No matching accounts.</td></tr>';
     });
   }
   function loadRules() {
@@ -69,10 +91,26 @@
   function loadAudit() {
     return N.api('GET', '/api/admin/audit?limit=100').then(function (a) { $('#audit').innerHTML = a.map(function (x) { return '<tr><td>' + esc(x.at) + '</td><td class="n">' + (x.user_id == null ? '—' : x.user_id) + '</td><td>' + esc(x.action) + '</td><td>' + esc(x.target || '') + '</td></tr>'; }).join(''); });
   }
+  var meta = null;
+  function skillOptions() {
+    var r = $('#c-role').value;
+    $('#c-skill').innerHTML = r === 'communication' ? '<option value="">Communication</option>' : meta.roles[r].skills.map(function (k, i) { return '<option value="' + i + '">' + esc(k) + '</option>'; }).join('');
+  }
+  function loadCourses() {
+    return N.api('GET', '/api/admin/courses').then(function (d) {
+      $('#courses').innerHTML = d.courses.map(function (c) {
+        var where = c.role === 'communication' ? 'Communication' : (meta.roles[c.role] ? meta.roles[c.role].label + ' · ' + meta.roles[c.role].skills[c.skill_index] : c.role);
+        return '<tr><td><a href="' + esc(c.url) + '" target="_blank" rel="noopener noreferrer">' + esc(c.title) + '</a>' + (c.free ? ' <span class="chip success">free</span>' : '') + '</td><td>' + esc(c.provider) + '</td><td>' + esc(where) + '</td><td><button class="btn-link" type="button" data-course="' + c.id + '">Remove</button></td></tr>';
+      }).join('') || '<tr><td colspan="4" class="muted">No courses yet. Students still get the live search links.</td></tr>';
+      $('#sources').innerHTML = d.sources.map(function (x) { return '<li>' + esc(x.name) + ' · <span class="muted">' + esc(x.url_template) + '</span> <button class="btn-link" type="button" data-source="' + x.id + '">Remove</button></li>'; }).join('') || '<li class="muted">No sites listed.</li>';
+    });
+  }
   function fail(e) { N.toast(e.message); }
   var me = {};
   $('#findForm').addEventListener('submit', function (e) { e.preventDefault(); loadPeople().catch(fail); });
-  N.boot('admin', ['admin']).then(function (ctx) { me = ctx.me; loadPeople().catch(fail); loadRules().catch(fail); loadAudit().catch(fail); });
+  N.boot('admin', ['admin']).then(function (ctx) { me = ctx.me; meta = ctx.meta;
+    $('#c-role').innerHTML = Object.keys(meta.roles).map(function (k) { return '<option value="' + k + '">' + esc(meta.roles[k].label) + '</option>'; }).join('') + '<option value="communication">Communication (all roles)</option>';
+    skillOptions(); loadCourses().catch(fail); loadPeople().catch(fail); loadRules().catch(fail); loadAudit().catch(fail); });
 
   // A line can name a college that itself contains a comma ("Sample College, Bengaluru"), so read
   // name, email and role from the start, the mentor email from the end, and treat the middle as the college.
@@ -91,10 +129,31 @@
     N.api('POST', '/api/admin/users', { rows: rows }).then(function (r) { err.hidden = true; $('#p-rows').value = ''; N.toast('Added ' + r.added + (r.added === 1 ? ' person.' : ' people.') + ' They can sign in with their email.'); loadPeople(); loadAudit(); })
       .catch(function (x) { err.hidden = false; err.textContent = x.message; });
   });
+  $('#c-role').addEventListener('change', skillOptions);
+  $('#courseForm').addEventListener('submit', function (e) {
+    e.preventDefault(); var err = $('#c-err');
+    N.api('POST', '/api/admin/courses', { role: $('#c-role').value, skillIndex: $('#c-skill').value === '' ? null : +$('#c-skill').value, title: $('#c-title').value, provider: $('#c-provider').value, url: $('#c-url').value, weeks: $('#c-weeks').value, free: $('#c-free').checked })
+      .then(function () { err.hidden = true; ['#c-title', '#c-url', '#c-weeks'].forEach(function (i) { $(i).value = ''; }); N.toast('Course added. Students see it straight away.'); loadCourses(); loadAudit(); })
+      .catch(function (x) { err.hidden = false; err.textContent = x.message; });
+  });
+  $('#sourceForm').addEventListener('submit', function (e) {
+    e.preventDefault(); var err = $('#s-err');
+    N.api('POST', '/api/admin/course-sources', { name: $('#s-name').value, urlTemplate: $('#s-url').value }).then(function () { err.hidden = true; $('#s-name').value = ''; $('#s-url').value = ''; N.toast('Site added.'); loadCourses(); })
+      .catch(function (x) { err.hidden = false; err.textContent = x.message; });
+  });
+  document.addEventListener('click', function (e) {
+    var c = e.target.closest('[data-course]'), x = e.target.closest('[data-source]');
+    if (c) N.api('DELETE', '/api/admin/courses/' + c.dataset.course).then(function () { N.toast('Course removed.'); loadCourses(); loadAudit(); }).catch(fail);
+    if (x) N.api('DELETE', '/api/admin/course-sources/' + x.dataset.source).then(function () { N.toast('Site removed.'); loadCourses(); }).catch(fail);
+  });
   $('#orgForm').addEventListener('submit', function (e) {
     e.preventDefault(); var err = $('#o-err');
     N.api('POST', '/api/admin/orgs', { kind: $('#o-kind').value, name: $('#o-name').value, city: $('#o-city').value }).then(function () { err.hidden = true; $('#o-name').value = ''; N.toast('Added.'); loadPeople(); loadAudit(); })
       .catch(function (x) { err.hidden = false; err.textContent = x.message; });
+  });
+  document.addEventListener('submit', function (e) {
+    var f = e.target.closest('[data-mentor]'); if (!f) return; e.preventDefault();
+    N.api('PUT', '/api/admin/users/' + f.dataset.mentor + '/mentor', { mentorEmail: f.querySelector('input').value }).then(function (r) { N.toast(r.mentor ? 'Mentor set to ' + r.mentor + '.' : 'Mentor cleared.'); loadAudit(); }).catch(fail);
   });
   var armed = null;
   document.addEventListener('click', function (e) {

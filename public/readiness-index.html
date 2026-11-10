@@ -57,6 +57,7 @@
           <div id="sBand"></div>
           <p class="small muted">Bands: Building below 50 · Progressing 50–74 · Ready 75+. They guide mentoring and are never a hiring cut-off.</p>
           <div style="display:flex;flex-wrap:wrap;gap:0.6rem;align-items:center"><button class="btn btn-secondary btn-sm" type="button" id="recordBtn">Record this score</button><span class="small muted" id="lastRec"></span></div>
+          <div id="history" style="margin-top:0.75rem"></div>
         </div>
       </div>
     </section>
@@ -135,6 +136,20 @@
     set($('#f-cgpa'), p.cgpa); set($('#f-comm'), p.comm); set($('#f-year'), String(p.year));
     p.skills.forEach(function (v, i) { set($('#sk-' + i), v); });
   }
+  // Recorded scores over time: a small line for the eye and a list for exact values.
+  function history() {
+    N.api('GET', '/api/me/score-history').then(function (rows) {
+      rows = rows.slice().reverse(); var el = $('#history');
+      if (rows.length < 2) { el.innerHTML = rows.length ? '<p class="small muted">Record again after you add evidence or finish a step to see your progress here.</p>' : ''; return; }
+      var W = 260, H = 56, lo = Math.min.apply(null, rows.map(function (r) { return r.index_value; })) - 3, hi = Math.max.apply(null, rows.map(function (r) { return r.index_value; })) + 3;
+      var pts = rows.map(function (r, i) { return [(6 + i * (W - 12) / (rows.length - 1)).toFixed(1), (H - 6 - (r.index_value - lo) / (hi - lo) * (H - 12)).toFixed(1)]; });
+      var d = function (r) { return new Date(r.created_at.replace(' ', 'T') + 'Z').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }); };
+      var change = rows[rows.length - 1].index_value - rows[0].index_value;
+      el.innerHTML = '<p class="small"><b>Your progress:</b> ' + N.f1(rows[0].index_value) + ' on ' + d(rows[0]) + ' to ' + N.f1(rows[rows.length - 1].index_value) + ' on ' + d(rows[rows.length - 1]) + ' (' + (change >= 0 ? '+' : '') + N.f1(change) + ')</p>' +
+        '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" role="img" aria-label="Recorded scores over time" style="max-width:100%"><polyline fill="none" stroke="currentColor" stroke-width="2" points="' + pts.map(function (p) { return p.join(','); }).join(' ') + '"/>' + pts.map(function (p) { return '<circle cx="' + p[0] + '" cy="' + p[1] + '" r="3" fill="currentColor"/>'; }).join('') + '</svg>' +
+        '<details class="small"><summary>All recorded scores</summary><ul style="margin:0.3rem 0 0;padding-left:1.1rem">' + rows.map(function (r) { return '<li>' + d(r) + ': ' + N.f1(r.index_value) + ' (formula ' + N.esc(r.formula_version) + ')</li>'; }).join('') + '</ul></details>';
+    }).catch(function () {});
+  }
   var pending = null;
   function save() {
     clearTimeout(timer); timer = null;
@@ -145,7 +160,7 @@
   }
   function start() {
     $('#gate').hidden = true; $('#content').hidden = false;
-    N.api('GET', '/api/me/profile').then(function (d) { data = d; fill(d.profile); render(); }).catch(function (e) { N.showError($('#gate'), e); $('#gate').hidden = false; });
+    N.api('GET', '/api/me/profile').then(function (d) { data = d; fill(d.profile); render(); history(); }).catch(function (e) { N.showError($('#gate'), e); $('#gate').hidden = false; });
   }
   N.boot('score', ['student']).then(function (ctx) {
     meta = ctx.meta; me = ctx.me; consents = ctx.consents; $('#ver').textContent = 'formula ' + meta.formulaVersion;
@@ -163,7 +178,7 @@
   $('#profileForm').addEventListener('focusout', function () { setTimeout(function () { if (data && !timer) sync(data.profile); }, 0); });
   $('#recordBtn').addEventListener('click', function () {
     // Save any edit still waiting, so the recorded score matches what is on screen.
-    (timer ? save() : pending || Promise.resolve()).then(function () { return N.api('POST', '/api/me/score'); }).then(function (r) { N.toast('Recorded ' + N.f1(r.index) + ' with formula ' + r.version + '.'); return N.api('GET', '/api/me/profile'); })
+    (timer ? save() : pending || Promise.resolve()).then(function () { return N.api('POST', '/api/me/score'); }).then(function (r) { history(); N.toast('Recorded ' + N.f1(r.index) + ' with formula ' + r.version + '.'); return N.api('GET', '/api/me/profile'); })
       .then(function (d) { data = d; render(); }).catch(function (e) { N.toast(e.message); });
   });
 })();
