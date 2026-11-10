@@ -1,0 +1,21 @@
+# Render blueprint: New + > Blueprint > pick this repository.
+# This is a DEMO deployment (sample accounts, one-click sign-in). For real students, see README "Before real students".
+services:
+  - type: web
+    name: ngrm-demo
+    runtime: docker
+    plan: starter            # a paid plan is needed for the disk that keeps the database
+    healthCheckPath: /api/meta
+    disk:
+      name: ngrm-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DEMO_MODE
+        value: "true"
+      - key: DEV_SHOW_OTP
+        value: "true"
+      - key: TRUST_PROXY
+        value: "true"
+      - key: SESSION_SECRET
+        generateValue: true

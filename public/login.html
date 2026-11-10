@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sign in · NGRM</title>
+<link rel="stylesheet" href="assets/site.css">
+<style>
+  .wrap { max-width: 980px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
+  @media (max-width: 760px) { .wrap { grid-template-columns: minmax(0, 1fr); } }
+  .demo-list { display: grid; gap: 0.5rem; }
+  .demo-list button { justify-content: space-between; width: 100%; text-align: left; }
+  .demo-list small { color: var(--muted); font-weight: 400; }
+</style>
+</head>
+<body>
+<main id="main" tabindex="-1">
+<div class="container wrap">
+  <section class="card" aria-labelledby="sTitle">
+    <header><h1 id="sTitle" style="font-size:1.6rem">Sign in</h1></header>
+    <form id="emailForm" novalidate style="display:grid;gap:0.85rem">
+      <div class="field"><label for="email">Your college or work email</label><input type="text" id="email" inputmode="email" autocomplete="email" placeholder="name@college.edu.in"></div>
+      <div><button class="btn btn-primary" type="submit">Send me a code</button></div>
+    </form>
+    <form id="codeForm" novalidate hidden style="display:grid;gap:0.85rem;margin-top:0.5rem">
+      <p class="small" id="sentTo"></p>
+      <div class="field"><label for="code">6-digit code</label><input type="text" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></div>
+      <div style="display:flex;gap:0.6rem;flex-wrap:wrap"><button class="btn btn-primary" type="submit">Sign in</button><button class="btn btn-secondary" type="button" id="back">Use a different email</button></div>
+    </form>
+    <p class="small" id="err" style="color:var(--danger);margin-top:0.75rem" hidden></p>
+    <p class="small muted" style="margin-top:1rem">We email you a one-time code; there is no password to remember. Sign-in with APAAR ID or DigiLocker will come later.</p>
+  </section>
+  <section class="card" id="demoCard" hidden aria-labelledby="dTitle">
+    <header><h2 id="dTitle">Try a sample account</h2><span class="small muted">Demo mode only</span></header>
+    <div class="demo-list" id="demoList"></div>
+    <p class="small muted" style="margin-top:0.9rem">These accounts and everything in them are fictional. Demo mode must be off in production.</p>
+  </section>
+</div>
+</main>
+<script src="assets/app.js"></script>
+<script>
+(function () {
+  var N = NGRM, $ = N.$, esc = N.esc;
+  var next = new URLSearchParams(location.search).get('next');
+  var ROLE = { student: 'Student', mentor: 'Faculty mentor', college_admin: 'College placement cell', employer: 'Employer', researcher: 'Researcher', admin: 'Admin' };
+  function go(user) { location.href = next && /^[a-z-]+\.html$/.test(next) ? next : N.HOME[user.role]; }
+  N.boot('login').then(function (ctx) {
+    if (ctx.me) return go(ctx.me);
+    if (ctx.meta.demoMode) N.api('GET', '/api/auth/demo-users').then(function (list) {
+      $('#demoCard').hidden = false;
+      $('#demoList').innerHTML = list.map(function (u) { return '<button class="btn btn-secondary" type="button" data-email="' + esc(u.email) + '"><span>' + esc(u.name) + '</span><small>' + esc(ROLE[u.role]) + '</small></button>'; }).join('');
+    });
+  });
+  function err(m) { var e = $('#err'); e.hidden = !m; e.textContent = m || ''; }
+  $('#emailForm').addEventListener('submit', function (e) {
+    e.preventDefault(); err('');
+    var email = $('#email').value.trim();
+    N.api('POST', '/api/auth/request-code', { email: email }).then(function (r) {
+      $('#emailForm').hidden = true; $('#codeForm').hidden = false;
+      $('#sentTo').textContent = 'If ' + email + ' has an NGRM account, a code is on its way. It expires in 10 minutes.' + (r.devCode ? ' (Development code: ' + r.devCode + ')' : '') + (r.devNote ? ' (Development note: ' + r.devNote + ')' : '');
+      $('#code').focus();
+    }).catch(function (x) { err(x.message); });
+  });
+  $('#codeForm').addEventListener('submit', function (e) {
+    e.preventDefault(); err('');
+    N.api('POST', '/api/auth/verify', { email: $('#email').value.trim(), code: $('#code').value.trim() }).then(function (r) { go(r.user); }).catch(function (x) { err(x.message); });
+  });
+  $('#back').addEventListener('click', function () { $('#codeForm').hidden = true; $('#emailForm').hidden = false; $('#email').focus(); err(''); });
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-email]'); if (!b) return;
+    N.api('POST', '/api/auth/demo', { email: b.dataset.email }).then(function (r) { go(r.user); }).catch(function (x) { err(x.message); });
+  });
+})();
+</script>
+</body>
+</html>

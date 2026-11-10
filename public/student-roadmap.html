@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>My plan · NGRM</title>
+<link rel="stylesheet" href="assets/site.css">
+<style>
+  .banner-stats { display: flex; flex-wrap: wrap; gap: 1.5rem; }
+  .banner-stats div { display: grid; }
+  .banner-stats b { font-family: var(--font-mono); font-size: 1.6rem; line-height: 1.1; }
+  .banner-stats span { font-size: 0.8rem; color: var(--muted); }
+  .recs { display: grid; gap: 1rem; }
+</style>
+</head>
+<body>
+<div class="page-banner"><div class="container">
+  <div style="min-width:0"><span class="eyebrow">Personal plan</span><h1>My plan</h1><p class="lead" id="who">Accept the steps that suit you and turn down the rest; you never need to give a reason.</p></div>
+  <div class="banner-stats" aria-live="polite"><div><b id="stNow">–</b><span>Score now</span></div><div><b id="stProj">–</b><span>If you finish accepted steps</span></div><div><b id="stAcc">–</b><span>Steps accepted</span></div></div>
+</div></div>
+<main id="main" tabindex="-1">
+<div class="container stack">
+  <section class="card" aria-labelledby="recTitle">
+    <header><h2 id="recTitle">Recommended next steps</h2><span class="small muted">Ranked by how much each would raise your score</span></header>
+    <div class="recs" id="recs"><p class="loading">Loading your plan…</p></div>
+    <p class="small muted" style="margin-top:0.9rem">Steps and their ranking come from fixed rules your mentor can see. If you agreed to AI wording, an AI model may reword the reason; it never sets a number or adds a step, and anything it writes is checked first.</p>
+  </section>
+  <section class="card" aria-labelledby="mapTitle">
+    <header><h2 id="mapTitle">Roadmap</h2><span class="small muted" id="gradNote"></span></header>
+    <div class="timeline" id="timeline"></div>
+    <div id="declined" style="margin-top:1rem"></div>
+  </section>
+  <section class="card" aria-labelledby="gapTitle">
+    <header><h2 id="gapTitle">Skill gaps for your target role</h2><button class="btn btn-secondary btn-sm" type="button" id="gapToggle" aria-pressed="false">View as table</button></header>
+    <div id="gapBars"></div>
+    <div class="table-wrap" id="gapTableWrap" hidden><table><thead><tr><th>Skill</th><th class="n">You</th><th class="n">Target</th><th class="n">Gap (points)</th></tr></thead><tbody id="gapTable"></tbody></table></div>
+    <p class="small muted" style="margin-top:0.8rem">The black line marks the target level (sample values, to be set with faculty mentors). Change your role or ratings on <a href="readiness-index.html">My score</a>.</p>
+  </section>
+</div>
+</main>
+<script src="assets/app.js"></script>
+<script>
+(function () {
+  var N = NGRM, $ = N.$, esc = N.esc, meta, profile, data;
+  // Term dates follow today's date, on the usual calendar: odd semester Aug–Dec, even semester Jan–May, summer May–Jul.
+  var today = new Date(), y = today.getFullYear(), m = today.getMonth() + 1;
+  var WHEN = {
+    now: 'now – ' + (m <= 5 ? 'May ' + y : m <= 7 ? 'Jul ' + y : 'Dec ' + y),
+    winter: m === 1 ? 'Dec ' + (y - 1) + ' – Jan ' + y : 'Dec ' + y + ' – Jan ' + (y + 1),
+    next: m >= 8 ? 'Jan – May ' + (y + 1) : 'Aug – Dec ' + y,
+    summer: 'May – Jul ' + (m <= 7 ? y : y + 1),
+  };
+  var academicYearStart = m >= 6 ? y : y - 1;
+  function load() {
+    return Promise.all([N.api('GET', '/api/me/recommendations'), N.api('GET', '/api/me/profile')]).then(function (r) { data = r[0]; profile = r[1].profile; render(); })
+      .catch(function (e) { if (/consent_required/.test(e.message)) $('#recs').innerHTML = '<div class="note warning">Start on <a href="readiness-index.html">My score</a> to give consent and fill in your profile.</div>'; else N.showError($('#recs'), e); });
+  }
+  function render() {
+    var items = data.items, R = meta.roles[data.role];
+    var scored = items.filter(function (x) { return !x.always; });
+    var acc = scored.filter(function (x) { return x.student === 'accepted'; });
+    $('#stNow').textContent = N.f1(data.score.index); $('#stProj').textContent = N.f1(data.projected); $('#stAcc').textContent = acc.length + ' of ' + scored.length;
+    $('#recs').innerHTML = items.length ? items.map(function (x) {
+      var F = meta.factors.filter(function (f) { return f.k === x.factor; })[0], slot = meta.slots.filter(function (s) { return s.id === x.slot; })[0];
+      if (x.student === 'declined') return '<article class="rec declined"><div class="top"><b>' + esc(x.title) + '</b><span class="chip">Not for me</span></div><p class="small muted">You turned this down. No reason needed, and nobody can override it. <button class="btn-link" type="button" data-act="undo" data-id="' + x.id + '">Undo</button></p></article>';
+      var mentor = x.mentor === 'approved' ? '<p class="mentor-line ok"><span aria-hidden="true">✓</span><span>Reviewed by ' + esc(x.mentorName || 'your mentor') + (x.mentorNote ? ': “' + esc(x.mentorNote) + '”' : '') + '</span></p>'
+        : x.mentor === 'note' ? '<p class="mentor-line"><span aria-hidden="true">✎</span><span>Note from ' + esc(x.mentorName || 'your mentor') + ': “' + esc(x.mentorNote) + '”</span></p>'
+        : '<p class="mentor-line wait"><span aria-hidden="true">○</span><span>Awaiting mentor review</span></p>';
+      var actions = x.student === 'accepted' ? '<div class="actions"><span class="chip success">Accepted · in your roadmap</span><button class="btn-link" type="button" data-act="undo" data-id="' + x.id + '">Undo</button></div>'
+        : '<div class="actions"><button class="btn btn-primary btn-sm" type="button" data-act="accept" data-id="' + x.id + '">Accept</button><button class="btn btn-secondary btn-sm" type="button" data-act="decline" data-id="' + x.id + '">Not for me</button></div>';
+      return '<article class="rec' + (x.student === 'accepted' ? ' accepted' : '') + '"><div class="top"><span class="chip accent">' + (x.always ? 'Support' : F.label + ' · ' + F.w + '%') + '</span>' + (x.always ? '' : '<span class="gain" title="' + esc(x.assume) + '">+' + N.f1(x.gain) + ' pts</span>') + '</div>' +
+        '<h3>' + esc(x.title) + '</h3><p>' + esc(x.what) + '</p><p class="why"><b>Why:</b> ' + esc(x.aiWhy || x.why) + (x.aiWhy ? ' <span class="chip" title="Reworded by AI from: ' + esc(x.why) + '">AI wording</span>' : '') + '</p>' +
+        '<div class="meta"><span>When: ' + slot.label.toLowerCase() + ' (' + WHEN[x.slot] + ')</span><span>Effort: ' + esc(x.effort) + '</span><span>' + esc(x.assume) + '</span></div>' + mentor + actions + '</article>';
+    }).join('') : '<p class="muted">No steps would raise your score right now. Talk to your mentor about stretch goals.</p>';
+    var by = {}, declined = [];
+    items.forEach(function (x) { if (x.student === 'accepted') (by[x.slot] = by[x.slot] || []).push(x); if (x.student === 'declined') declined.push(x); });
+    $('#timeline').innerHTML = meta.slots.map(function (s) { var it = by[s.id] || [];
+      return '<div class="slot' + (it.length ? ' has' : '') + '"><b>' + s.label + '</b><span class="small muted">' + WHEN[s.id] + '</span>' + (it.length ? '<ul>' + it.map(function (x) { return '<li>' + esc(x.title) + '</li>'; }).join('') + '</ul>' : '<span class="small muted">Nothing planned yet</span>') + '</div>'; }).join('');
+    var prog = meta.programmes.filter(function (p) { return p.id === data.programme; })[0];
+    $('#gradNote').textContent = prog ? 'Graduating around May ' + (academicYearStart + (prog.years - data.year) + 1) : '';
+    $('#declined').innerHTML = declined.length ? '<p class="small muted">Turned down: ' + declined.map(function (x) { return esc(x.title); }).join(' · ') + '. Your mentor can see these but cannot change them.</p>' : '';
+    $('#who').textContent = 'Target role: ' + R.label + '. Accept the steps that suit you and turn down the rest; you never need to give a reason.';
+    $('#gapBars').innerHTML = R.skills.map(function (s, i) { var v = +profile.skills[i], t = R.target[i], g = v - t;
+      return '<div class="bar-row' + (g < 0 ? ' low' : '') + '"><div class="lbl"><b>' + esc(s) + '</b><small>You ' + v + ' · target ' + t + '</small></div><div class="track"><i style="width:' + v + '%"></i><span class="target" style="left:calc(' + t + '% - 1px)"></span></div><span class="val">' + (g >= 0 ? '+' : '') + g + ' pts</span></div>'; }).join('');
+    $('#gapTable').innerHTML = R.skills.map(function (s, i) { var v = +profile.skills[i], t = R.target[i]; return '<tr><td>' + esc(s) + '</td><td class="n">' + v + '</td><td class="n">' + t + '</td><td class="n">' + (v - t >= 0 ? '+' : '') + (v - t) + '</td></tr>'; }).join('');
+  }
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-act]'); if (!b) return;
+    var act = b.dataset.act;
+    N.api('PATCH', '/api/me/recommendations/' + b.dataset.id, { action: act }).then(function () {
+      N.toast(act === 'accept' ? 'Added to your roadmap.' : act === 'decline' ? 'Removed. No reason needed.' : 'Undone.'); return load();
+    }).catch(function (x) { N.toast(x.message); });
+  });
+  $('#gapToggle').addEventListener('click', function () { var on = this.getAttribute('aria-pressed') !== 'true'; this.setAttribute('aria-pressed', String(on)); this.textContent = on ? 'View as bars' : 'View as table'; $('#gapTableWrap').hidden = !on; $('#gapBars').hidden = on; });
+  N.boot('plan', ['student']).then(function (ctx) { meta = ctx.meta; load(); });
+})();
+</script>
+</body>
+</html>

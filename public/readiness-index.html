@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>My score · NGRM</title>
+<link rel="stylesheet" href="assets/site.css">
+<style>
+  .form-card { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 84px); max-height: calc(100vh - 100px); overflow: auto; }
+  @media (max-width: 960px) { .form-card { position: static; max-height: none; order: 2; } }
+  .score-top { display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: center; }
+  .skillrow { display: grid; grid-template-columns: minmax(0, 1fr) 5.2rem; gap: 0.5rem; align-items: center; }
+  .skillrow label { font-weight: 500; }
+  .skillrow .src { grid-column: 1 / -1; margin-top: -0.2rem; }
+</style>
+</head>
+<body>
+<div class="page-banner"><div class="container">
+  <div><span class="eyebrow">Graduate Readiness Index · <span id="ver"></span></span><h1>My score</h1>
+  <p class="lead">Your score is calculated on our server with a fixed formula. Change anything on the left and it updates. Courses, projects, internships and roles come from your <a href="skill-credentials.html">evidence</a>.</p></div>
+</div></div>
+<main id="main" tabindex="-1">
+<div class="container" id="gate"></div>
+<div class="container split" id="content" hidden>
+  <form class="card form-card" id="profileForm" novalidate aria-label="Profile">
+    <div class="form-group"><fieldset><legend>About you</legend>
+      <div class="field"><label for="f-prog">Programme</label><select id="f-prog"></select></div>
+      <div class="row-2">
+        <div class="field"><label for="f-year">Year</label><select id="f-year"></select></div>
+        <div class="field"><label for="f-cgpa">CGPA (out of 10)</label><input type="number" id="f-cgpa" min="0" max="10" step="0.1" inputmode="decimal"></div>
+      </div>
+      <div class="field"><label for="f-role">Target role</label><select id="f-role" aria-describedby="roleHint"></select><span class="hint" id="roleHint">Changing role starts a fresh plan: steps you accepted and mentor reviews are cleared.</span></div>
+    </fieldset></div>
+    <div class="form-group"><fieldset><legend>Role skills (0–100)</legend><div id="skillsBox" style="display:grid;gap:0.75rem"></div></fieldset></div>
+    <div class="form-group"><fieldset id="psyBox"><legend>Personality (Big Five)</legend>
+      <p class="small muted" id="psyNote" style="margin-top:-0.4rem">Your results (0–100 each) from a Big Five questionnaire given by your college or counsellor. Used to understand fit, never as something to fix.</p>
+      <div class="field"><label for="o-o">Openness</label><div class="slider"><input type="range" id="o-o" min="0" max="100"><output for="o-o"></output></div></div>
+      <div class="field"><label for="o-c">Conscientiousness</label><div class="slider"><input type="range" id="o-c" min="0" max="100"><output for="o-c"></output></div></div>
+      <div class="field"><label for="o-e">Extraversion</label><div class="slider"><input type="range" id="o-e" min="0" max="100"><output for="o-e"></output></div></div>
+      <div class="field"><label for="o-a">Agreeableness</label><div class="slider"><input type="range" id="o-a" min="0" max="100"><output for="o-a"></output></div></div>
+      <div class="field"><label for="o-n">Neuroticism</label><div class="slider"><input type="range" id="o-n" min="0" max="100"><output for="o-n"></output></div></div>
+    </fieldset></div>
+    <div class="form-group"><fieldset><legend>Communication and direction</legend>
+      <div class="field"><label for="f-comm">College communication assessment</label><input type="number" id="f-comm" min="0" max="100" placeholder="Not taken yet" aria-describedby="commHint"><span class="hint" id="commHint">Leave blank until you take it. Once your mentor records the result, it is locked.</span></div>
+      <div class="field"><label for="f-clarity">How sure are you about your career direction?</label><div class="slider"><input type="range" id="f-clarity" min="0" max="100"><output for="f-clarity"></output></div></div>
+    </fieldset></div>
+    <p class="small muted" id="saveState" aria-live="polite">Changes save automatically.</p>
+  </form>
+
+  <div class="stack" aria-live="polite">
+    <section class="card">
+      <div class="score-top">
+        <div class="ring" id="ring"></div>
+        <div style="display:grid;gap:0.45rem;min-width:0;flex:1">
+          <h2 id="sName"></h2>
+          <p class="muted" id="sMeta"></p>
+          <div id="sBand"></div>
+          <p class="small muted">Bands: Building below 50 · Progressing 50–74 · Ready 75+. They guide mentoring and are never a hiring cut-off.</p>
+          <div style="display:flex;flex-wrap:wrap;gap:0.6rem;align-items:center"><button class="btn btn-secondary btn-sm" type="button" id="recordBtn">Record this score</button><span class="small muted" id="lastRec"></span></div>
+        </div>
+      </div>
+    </section>
+    <section class="card">
+      <header><h2>What makes up the score</h2><span class="small muted">Factor score out of 100 → points out of its weight</span></header>
+      <div id="factors"></div>
+      <div class="note" style="margin-top:1rem">No AI model sets or changes this score. Open any factor to see its rule.</div>
+    </section>
+  </div>
+</div>
+</main>
+<script src="assets/app.js"></script>
+<script>
+(function () {
+  var N = NGRM, $ = N.$, $$ = N.$$, esc = N.esc, meta, me, consents, data, timer;
+  function sel(el, items, val) { el.innerHTML = items.map(function (i) { return '<option value="' + esc(i[0]) + '"' + (String(i[0]) === String(val) ? ' selected' : '') + '>' + esc(i[1]) + '</option>'; }).join(''); }
+  function skills(p) {
+    $('#skillsBox').innerHTML = meta.roles[p.role].skills.map(function (s, i) {
+      var v = (p.verifiedSkills || []).indexOf(i) > -1;
+      return '<div class="skillrow"><label for="sk-' + i + '">' + esc(s) + '</label><input type="number" id="sk-' + i + '" min="0" max="100" value="' + p.skills[i] + '"' + (v ? ' disabled title="Set by your college assessment"' : '') + '><span class="src">' + (v ? '<span class="chip success">Verified by assessment</span>' : '<span class="chip">Self-rated</span>') + '</span></div>';
+    }).join('');
+  }
+  function years(prog, year) {
+    var P = meta.programmes.filter(function (x) { return x.id === prog; })[0], n = P ? P.years : 3, list = [];
+    for (var y = 1; y <= n; y++) list.push([y, N.ordinal(y) + ' year']);
+    sel($('#f-year'), list, Math.min(year, n));
+  }
+  function fill(p) {
+    sel($('#f-prog'), meta.programmes.map(function (x) { return [x.id, x.label]; }), p.prog);
+    years(p.prog, p.year); $('#f-cgpa').value = p.cgpa == null ? '' : p.cgpa;
+    sel($('#f-role'), Object.keys(meta.roles).map(function (k) { return [k, meta.roles[k].label]; }), p.role);
+    skills(p);
+    // Sliders start unset when no results are stored: nothing is saved until all five are set by the student.
+    var o = p.ocean || { o: 50, c: 50, e: 50, a: 50, n: 50 };
+    touched = p.ocean ? TRAITS.slice() : [];
+    TRAITS.forEach(function (k) { $('#o-' + k).value = o[k]; $('#o-' + k).disabled = !consents.psychometric; });
+    $('#psyNote').innerHTML = consents.psychometric ? 'Your results (0–100 each) from a Big Five questionnaire given by your college or counsellor. Used to understand fit, never as something to fix.' : 'You haven’t agreed to store questionnaire results, so this factor uses its default of 75. You can change that on <a href="skill-credentials.html">Evidence &amp; privacy</a>.';
+    $('#f-comm').value = p.comm == null ? '' : p.comm; $('#f-comm').disabled = !!p.commVerified;
+    $('#commHint').innerHTML = p.commVerified ? '<span class="chip success">Verified by assessment</span> Recorded by your mentor.' : 'Leave blank until you take it. Once your mentor records the result, it is locked.'; $('#f-clarity').value = p.clarity == null ? 80 : p.clarity;
+    outputs();
+  }
+  var TRAITS = ['o', 'c', 'e', 'a', 'n'], touched = [];
+  function outputs() {
+    $$('#profileForm output').forEach(function (o) { var id = o.getAttribute('for'), i = document.getElementById(id); if (!i) return;
+      o.textContent = /^o-/.test(id) && touched.indexOf(id.slice(2)) < 0 ? 'not set' : i.value; });
+    if (consents && consents.psychometric && touched.length && touched.length < 5) $('#psyNote').textContent = 'Set all five traits to save your results (' + touched.length + ' of 5 set). Until then this factor uses its default of 75.';
+  }
+  function read() {
+    var role = $('#f-role').value;
+    return { prog: $('#f-prog').value, year: +$('#f-year').value, cgpa: $('#f-cgpa').value, role: role,
+      skills: [0, 1, 2, 3].map(function (i) { var el = $('#sk-' + i); return el ? el.value : 50; }),
+      ocean: !consents.psychometric ? null : touched.length === 5 ? { o: $('#o-o').value, c: $('#o-c').value, e: $('#o-e').value, a: $('#o-a').value, n: $('#o-n').value } : undefined,
+      comm: $('#f-comm').value, clarity: $('#f-clarity').value };
+  }
+  function render() {
+    var p = data.profile, s = data.score;
+    N.ring($('#ring'), s.index);
+    $('#sName').textContent = me.name;
+    var prog = meta.programmes.filter(function (x) { return x.id === p.prog; })[0];
+    $('#sMeta').textContent = (prog ? prog.label : '') + ' · ' + N.ordinal(p.year) + ' year · Target: ' + meta.roles[p.role].label;
+    $('#sBand').innerHTML = '<span class="chip ' + N.bandCls[data.band.k] + '">' + data.band.label + '</span>' + (s.flags.cgpaMissing ? ' <span class="chip warning">CGPA missing</span>' : '');
+    $('#lastRec').textContent = data.lastRecorded ? 'Last recorded ' + N.f1(data.lastRecorded.index_value) + ' on ' + new Date(data.lastRecorded.created_at.replace(' ', 'T') + 'Z').toLocaleDateString('en-IN') : 'Not recorded yet';
+    $('#factors').innerHTML = meta.factors.map(function (F) {
+      var v = s.factors[F.k], extra = '';
+      if (F.k === 'communication' && s.flags.commEstimated) extra = ' <span class="chip warning">estimated</span>';
+      if (F.k === 'psychometric') extra = s.flags.psychometricMissing ? ' <span class="chip">default</span>' : ' <span class="chip">for fit only</span>';
+      var src = { projects: s.counts.project + ' on record', experience: s.counts.internship + ' on record', leadership: s.counts.role ? 'role on record' : 'no role on record' }[F.k];
+      return '<div class="bar-row"><div class="lbl"><b>' + F.label + extra + '</b><small>Weight ' + F.w + '% · ' + N.f0(v) + '/100' + (src ? ' · ' + src : '') + '</small></div>' +
+        '<div class="track mint" role="img" aria-label="' + F.label + ' ' + N.f0(v) + ' out of 100"><i style="width:' + Math.min(100, v) + '%"></i></div><span class="val">' + N.f1(v * F.w / 100) + ' / ' + F.w + '</span>' +
+        '<details><summary>How this is calculated</summary><p style="margin-top:0.3rem">' + esc(F.how) + '</p></details></div>';
+    }).join('');
+  }
+  // Show the values the server actually stored (for example a CGPA of 11 becomes 10), except in the field being typed in.
+  function sync(p) {
+    var set = function (el, v) { if (el && el !== document.activeElement && String(el.value) !== String(v == null ? '' : v)) el.value = v == null ? '' : v; };
+    set($('#f-cgpa'), p.cgpa); set($('#f-comm'), p.comm); set($('#f-year'), String(p.year));
+    p.skills.forEach(function (v, i) { set($('#sk-' + i), v); });
+  }
+  var pending = null;
+  function save() {
+    clearTimeout(timer); timer = null;
+    $('#saveState').textContent = 'Saving…';
+    pending = N.api('PUT', '/api/me/profile', read()).then(function (d) { data = d; sync(d.profile); render(); $('#saveState').textContent = 'Saved.'; })
+      .catch(function (e) { $('#saveState').textContent = e.message; throw e; });
+    return pending;
+  }
+  function start() {
+    $('#gate').hidden = true; $('#content').hidden = false;
+    N.api('GET', '/api/me/profile').then(function (d) { data = d; fill(d.profile); render(); }).catch(function (e) { N.showError($('#gate'), e); $('#gate').hidden = false; });
+  }
+  N.boot('score', ['student']).then(function (ctx) {
+    meta = ctx.meta; me = ctx.me; consents = ctx.consents; $('#ver').textContent = 'formula ' + meta.formulaVersion;
+    if (!consents.profile) {
+      N.consentPanel($('#gate'), meta, consents, { requireProfile: true, onDone: function (c) { consents = c; start(); } });
+    } else start();
+  });
+  $('#profileForm').addEventListener('input', function (e) {
+    if (e.target.id === 'f-prog') years(e.target.value, +$('#f-year').value);
+    if (/^o-[ocean]$/.test(e.target.id) && touched.indexOf(e.target.id.slice(2)) < 0) touched.push(e.target.id.slice(2));
+    if (e.target.id === 'f-role') { data.profile.role = e.target.value; data.profile.skills = [50, 50, 50, 50]; data.profile.verifiedSkills = []; skills(data.profile); }
+    outputs(); clearTimeout(timer); timer = setTimeout(save, 450);
+  });
+  $('#profileForm').addEventListener('submit', function (e) { e.preventDefault(); });
+  $('#profileForm').addEventListener('focusout', function () { setTimeout(function () { if (data && !timer) sync(data.profile); }, 0); });
+  $('#recordBtn').addEventListener('click', function () {
+    // Save any edit still waiting, so the recorded score matches what is on screen.
+    (timer ? save() : pending || Promise.resolve()).then(function () { return N.api('POST', '/api/me/score'); }).then(function (r) { N.toast('Recorded ' + N.f1(r.index) + ' with formula ' + r.version + '.'); return N.api('GET', '/api/me/profile'); })
+      .then(function (d) { data = d; render(); }).catch(function (e) { N.toast(e.message); });
+  });
+})();
+</script>
+</body>
+</html>

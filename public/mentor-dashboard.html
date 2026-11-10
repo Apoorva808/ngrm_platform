@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mentor and college · NGRM</title>
+<link rel="stylesheet" href="assets/site.css">
+<style>
+  .queue { display: grid; gap: 0.75rem; }
+  .qitem { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 0.85rem 1rem; display: grid; gap: 0.5rem; }
+  .qitem .top { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.4rem; align-items: center; }
+  .stackbar { display: flex; height: 16px; border-radius: 99px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-subtle); }
+  .stackbar i { display: block; height: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; font-size: 0.84rem; color: var(--muted); margin-top: 0.5rem; }
+  .legend span { display: inline-flex; gap: 0.35rem; align-items: center; }
+  .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .c-build { background: var(--warning); } .c-prog { background: var(--accent); } .c-ready { background: var(--mint); }
+  .tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+  .tabs button[aria-pressed="true"] { background: var(--accent-light); color: var(--accent); border-color: var(--accent-border); }
+</style>
+</head>
+<body>
+<div class="page-banner"><div class="container">
+  <div><span class="eyebrow" id="bannerCollege"></span><h1 id="pageTitle">Mentor and college</h1>
+  <p class="lead">Mentors review every recommendation and verify evidence. The cohort view shows, anonymously, where the curriculum falls short. Groups under 5 are hidden.</p></div>
+  <div class="field" style="min-width:min(260px,100%)"><label for="progFilter">Programme</label><select id="progFilter"><option value="all">All programmes</option></select></div>
+</div></div>
+<main id="main" tabindex="-1">
+<div class="container stack">
+  <section class="grid-4" id="kpis" aria-label="Summary"></section>
+  <section class="card" id="queueCard" hidden aria-labelledby="qTitle">
+    <header><h2 id="qTitle">Review queue</h2><div class="tabs" role="group" aria-label="Filter"><button class="btn btn-secondary btn-sm" type="button" data-filter="todo" aria-pressed="true">Needs review</button><button class="btn btn-secondary btn-sm" type="button" data-filter="all" aria-pressed="false">Everything</button></div></header>
+    <div class="queue" id="queue"><p class="loading">Loading…</p></div>
+    <div style="margin-top:0.75rem"><button class="btn btn-secondary btn-sm" type="button" id="more" hidden>Show more</button></div>
+  </section>
+  <div class="grid-2">
+    <section class="card" aria-labelledby="wTitle"><header><h2 id="wTitle">Where the cohort is weakest</h2><span class="small muted">Average factor score, out of 100</span></header><div id="cFactors"></div><div class="note warning" style="margin-top:1rem" id="signal" hidden></div></section>
+    <section class="card" aria-labelledby="bTitle">
+      <header><h2 id="bTitle">Readiness bands</h2><span class="small muted">Students see only their own band</span></header>
+      <div class="stackbar" id="bands" role="img"></div>
+      <div class="legend"><span><i class="c-build"></i>Building (below 50)</span><span><i class="c-prog"></i>Progressing (50–74)</span><span><i class="c-ready"></i>Ready (75+)</span></div>
+      <p class="small muted" id="bandNote" style="margin-top:0.6rem"></p>
+      <h3 style="margin-top:1.25rem">What employers are asking for</h3>
+      <div id="demand" style="display:grid;gap:0.5rem;margin-top:0.6rem"></div>
+    </section>
+  </div>
+  <section class="card" id="introCard" hidden aria-labelledby="iTitle">
+    <header><h2 id="iTitle">Introduction requests</h2><span class="small muted">Only students who said they’re interested, and only from your college</span></header>
+    <div id="intros" style="display:grid;gap:0.75rem"></div>
+  </section>
+  <section class="card" id="menteeCard" hidden aria-labelledby="mTitle">
+    <header><h2 id="mTitle">My mentees</h2><span class="small muted">Visible only to the student’s own mentor</span></header>
+    <div class="table-wrap"><table><thead><tr><th>Student</th><th>Programme</th><th>Year</th><th>Target role</th><th class="n">Score</th><th>Band</th></tr></thead><tbody id="mentees"></tbody></table></div>
+    <form id="assessForm" novalidate style="display:grid;gap:0.75rem;margin-top:1.25rem;border-top:1px solid var(--border);padding-top:1rem">
+      <h3>Record a college assessment</h3>
+      <p class="small muted" style="margin:0">The result replaces the student’s own rating for that skill and is shown as verified. Students cannot change it.</p>
+      <div class="row-2"><div class="field"><label for="as-student">Student</label><select id="as-student"></select></div><div class="field"><label for="as-what">What was assessed</label><select id="as-what"></select></div></div>
+      <div class="row-2"><div class="field"><label for="as-score">Score (0–100)</label><input type="number" id="as-score" min="0" max="100" inputmode="numeric"></div><div class="field" style="align-self:end"><button class="btn btn-primary" type="submit">Record result</button></div></div>
+      <p class="small" id="as-err" style="color:var(--danger)" hidden></p>
+    </form>
+  </section>
+</div>
+</main>
+<script src="assets/app.js"></script>
+<script>
+(function () {
+  var N = NGRM, $ = N.$, $$ = N.$$, esc = N.esc, meta, me, q = null, filter = 'todo', shown = 12;
+  function progLabel(id) { var p = meta.programmes.filter(function (x) { return x.id === id; })[0]; return p ? p.label : id; }
+  function renderQueue() {
+    var recs = q.recommendations.filter(function (x) { return filter === 'all' || (!x.mentor && x.student !== 'declined'); });
+    var ev = q.evidence.filter(function (e) { return filter === 'all' || e.status !== 'needs_proof'; });
+    var items = ev.map(function (e) { return { kind: 'ev', e: e }; }).concat(recs.map(function (r) { return { kind: 'rec', r: r }; }));
+    $('#queue').innerHTML = items.slice(0, shown).map(function (it) {
+      if (it.kind === 'ev') { var e = it.e;
+        return '<div class="qitem"><div class="top"><b>' + esc(e.studentName) + ' · evidence: ' + esc(e.title) + '</b><span class="chip ' + (e.status === 'needs_proof' ? 'danger' : 'warning') + '">' + (e.status === 'needs_proof' ? 'Proof requested' : 'Awaiting check') + '</span></div><p class="small muted">' + esc(e.typeLabel) + (e.file_name ? ' · proof: ' + (e.has_file ? '<a href="/api/evidence/' + e.id + '/file" target="_blank" rel="noopener">' + esc(e.file_name) + '</a>' : esc(e.file_name) + ' (named, no file)') : ' · no proof attached') + '</p>' +
+          '<div style="display:flex;flex-wrap:wrap;gap:0.5rem"><button class="btn btn-primary btn-sm" type="button" data-ev="' + e.id + '" data-act="verify">Mark as verified</button><button class="btn btn-secondary btn-sm" type="button" data-ev="' + e.id + '" data-act="needs_proof">Ask for proof</button></div></div>'; }
+      var r = it.r, key = r.studentId + '-' + r.ruleId, first = esc(r.studentName.split(' ')[0]);
+      var stu = r.student === 'accepted' ? '<span class="chip success">Student accepted</span>' : r.student === 'declined' ? '<span class="chip">Student declined</span>' : '<span class="chip">Student hasn’t decided</span>';
+      var body = r.student === 'declined' ? '<p class="small muted">' + first + ' turned this down. Declines need no reason and cannot be overridden.</p>'
+        : r.mentor ? '<p class="small" style="color:var(--success)">' + (r.mentor === 'approved' ? 'Approved' : 'Note sent') + (r.note ? ': “' + esc(r.note) + '”' : '') + '</p><div><button class="btn-link" type="button" data-rev="' + key + '" data-act="reopen">Reopen</button></div>'
+        : '<div class="field"><label class="small" for="note-' + key + '">Note to ' + first + ' (optional)</label><textarea id="note-' + key + '" maxlength="500"></textarea></div><div style="display:flex;flex-wrap:wrap;gap:0.5rem"><button class="btn btn-primary btn-sm" type="button" data-rev="' + key + '" data-act="approve">Approve</button><button class="btn btn-secondary btn-sm" type="button" data-rev="' + key + '" data-act="note">Send note only</button></div>';
+      return '<div class="qitem"><div class="top"><b>' + esc(r.studentName) + ' · ' + esc(r.title) + '</b>' + stu + '</div><p class="small muted">' + esc(r.why) + (r.gain ? ' Estimated +' + N.f1(r.gain) + ' points.' : '') + '</p>' + body + '</div>';
+    }).join('') || '<p class="muted">Nothing needs your review right now.</p>';
+    $('#more').hidden = items.length <= shown;
+    $('#more').textContent = 'Show more (' + (items.length - shown) + ' left)';
+  }
+  function loadQueue() { return N.api('GET', '/api/mentor/queue').then(function (d) { q = d; renderQueue(); return d; }); }
+  function loadCohort() {
+    var prog = $('#progFilter').value;
+    return N.api('GET', '/api/college/cohort?programme=' + encodeURIComponent(prog)).then(function (c) {
+      var pending = q ? q.evidence.filter(function (e) { return e.status !== 'needs_proof'; }).length + q.recommendations.filter(function (x) { return !x.mentor && x.student !== 'declined'; }).length : null;
+      if (c.suppressed) {
+        $('#kpis').innerHTML = '<div class="kpi"><b>&lt;5</b><span>Students in view</span></div>';
+        $('#cFactors').innerHTML = '<p class="muted">Fewer than 5 students in this group, so averages are hidden to protect them.</p>' + (c.smallProgrammesLeftOut ? '<p class="small muted">Programmes with fewer than 5 students are always left out.</p>' : ''); $('#signal').hidden = true; $('#bands').innerHTML = ''; $('#bandNote').textContent = ''; return;
+      }
+      $('#kpis').innerHTML = '<div class="kpi"><b>~' + c.n + '</b><span>Students in view (to nearest 5)</span></div><div class="kpi"><b>' + c.avgIndex + '</b><span>Average score</span></div><div class="kpi"><b>' + (c.noInternshipPct == null ? '—' : '~' + c.noInternshipPct + '%') + '</b><span>' + (c.noInternshipPct == null ? 'Internship share hidden (small group)' : 'With no internship yet') + '</span></div>' +
+        (pending != null ? '<div class="kpi"><b>' + pending + '</b><span>Items awaiting your review</span></div>' : '<div class="kpi"><b>' + esc(meta.formulaVersion) + '</b><span>Scoring formula</span></div>');
+      var avgs = meta.factors.map(function (F) { return { F: F, v: c.factors[F.k] }; });
+      var low = avgs.filter(function (x) { return x.F.k !== 'psychometric'; }).sort(function (a, b) { return a.v - b.v; }).slice(0, 2);
+      $('#cFactors').innerHTML = avgs.map(function (x) { var isLow = low.some(function (l) { return l.F.k === x.F.k; });
+        return '<div class="bar-row' + (isLow ? ' low' : '') + '"><div class="lbl"><b>' + x.F.label + '</b><small>Weight ' + x.F.w + '%</small></div><div class="track"><i style="width:' + Math.min(100, x.v) + '%"></i></div><span class="val">' + x.v + '</span></div>'; }).join('');
+      if (c.smallProgrammesLeftOut) $('#cFactors').insertAdjacentHTML('beforeend', '<p class="small muted" style="margin-top:0.6rem">Programmes with fewer than 5 students are left out of every view, so no one can work out an individual’s score.</p>');
+      $('#signal').hidden = false;
+      $('#signal').innerHTML = '<span><b>Curriculum signal:</b> ' + low[0].F.label + ' (' + N.f0(low[0].v) + ') and ' + low[1].F.label.toLowerCase() + ' (' + N.f0(low[1].v) + ') are lowest in this group. Consider credit-bearing modules or partnerships that target them.</span>';
+      var b = c.bands, tot = Math.max(c.n, (b.building || 0) + (b.progressing || 0) + (b.ready || 0));
+      var w = function (v) { return v == null ? 0 : v / tot * 100; };
+      $('#bands').innerHTML = '<i class="c-build" style="width:' + w(b.building) + '%"></i><i class="c-prog" style="width:' + w(b.progressing) + '%"></i><i class="c-ready" style="width:' + w(b.ready) + '%"></i>';
+      var lab = function (v) { return v == null ? 'hidden' : 'about ' + v; };
+      $('#bands').setAttribute('aria-label', 'Building ' + lab(b.building) + ', Progressing ' + lab(b.progressing) + ', Ready ' + lab(b.ready));
+      $('#bandNote').textContent = 'Building: ' + lab(b.building) + ' · Progressing: ' + lab(b.progressing) + ' · Ready: ' + lab(b.ready) + '. Counts are rounded to the nearest 5. Bands with fewer than 5 students, or that would let one be worked out, are hidden.';
+    });
+  }
+  N.boot('mentor', ['mentor', 'college_admin']).then(function (ctx) {
+    meta = ctx.meta; me = ctx.me;
+    N.api('GET', '/api/me').then(function (r) { $('#bannerCollege').textContent = (r.user.institution ? r.user.institution.name : '') + (me.role === 'mentor' ? ' · faculty mentor' : ' · placement cell'); });
+    $('#pageTitle').textContent = me.role === 'mentor' ? 'Mentor dashboard' : 'College dashboard';
+    $('#progFilter').innerHTML += meta.programmes.map(function (p) { return '<option value="' + p.id + '">' + esc(p.label) + '</option>'; }).join('');
+    N.api('GET', '/api/demand').then(function (d) { $('#demand').innerHTML = d.slice(0, 4).map(function (x) { return '<div style="border:1px solid var(--border);border-radius:var(--radius-md);padding:0.6rem 0.8rem;display:grid;gap:0.15rem"><b class="small">' + esc(x.employer) + '</b><span class="small">' + esc(meta.roles[x.role].label) + ' · ' + x.openings + ' opening' + (x.openings == 1 ? '' : 's') + (x.city ? ' · ' + esc(x.city) : '') + '</span><span class="small muted">Needs: ' + x.skills.map(esc).join(', ') + '</span></div>'; }).join('') || '<p class="small muted">No requirements posted yet.</p>'; });
+    if (me.role === 'mentor') {
+      $('#queueCard').hidden = false; $('#menteeCard').hidden = false;
+      loadQueue().then(loadCohort).catch(function (e) { N.showError($('#queue'), e); });
+      N.api('GET', '/api/mentor/mentees').then(function (list) {
+        if (!list.length) { $('#mentees').innerHTML = '<tr><td colspan="6" class="muted">No mentees linked to you yet. Your admin links students to mentors.</td></tr>'; $('#assessForm').hidden = true; return; }
+        mentees = list;
+        $('#as-student').innerHTML = list.map(function (s) { return '<option value="' + s.id + '">' + esc(s.name) + '</option>'; }).join(''); whatOptions();
+        $('#mentees').innerHTML = list.map(function (s) { return '<tr><td>' + esc(s.name) + '</td><td>' + esc(progLabel(s.programme)) + '</td><td>' + N.ordinal(s.year) + '</td><td>' + esc(meta.roles[s.role].label) + '</td><td class="n">' + N.f1(s.index) + '</td><td><span class="chip ' + N.bandCls[s.band.k] + '">' + s.band.label + '</span></td></tr>'; }).join('');
+      });
+    } else {
+      loadCohort().catch(function (e) { N.showError($('#cFactors'), e); });
+      $('#introCard').hidden = false;
+      N.api('GET', '/api/college/intro-requests').then(function (list) {
+        $('#intros').innerHTML = list.length ? list.map(function (r) {
+          var when = new Date(r.created_at.replace(' ', 'T') + 'Z').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+          return '<div style="border:1px solid var(--border);border-radius:var(--radius-md);padding:0.7rem 0.9rem;display:grid;gap:0.35rem"><div style="display:flex;justify-content:space-between;gap:0.5rem;flex-wrap:wrap"><b class="small">' + esc(r.employer) + (r.city ? ' · ' + esc(r.city) : '') + ' · ' + esc(meta.roles[r.role].label) + '</b><span class="small muted">' + when + '</span></div>' +
+            (r.students.length ? '<p class="small">' + r.students.length + ' of your students are interested. Put them in touch:</p><ul class="small" style="margin:0;padding-left:1.1rem">' + r.students.map(function (u) { return '<li>' + esc(u.name) + ' · <a href="mailto:' + esc(u.email) + '">' + esc(u.email) + '</a></li>'; }).join('') + '</ul>' : '<p class="small muted">None of your students has replied yet.</p>') + '</div>';
+        }).join('') : '<p class="small muted">No requests in the last 90 days.</p>';
+      }).catch(function (e) { N.showError($('#intros'), e); });
+    }
+  });
+  var mentees = [];
+  function whatOptions() {
+    var s = mentees.filter(function (m) { return String(m.id) === $('#as-student').value; })[0]; if (!s) return;
+    $('#as-what').innerHTML = meta.roles[s.role].skills.map(function (k, i) { return '<option value="' + i + '">' + esc(k) + '</option>'; }).join('') + '<option value="communication">Communication</option>';
+  }
+  $('#as-student').addEventListener('change', whatOptions);
+  $('#assessForm').addEventListener('submit', function (e) {
+    e.preventDefault(); var err = $('#as-err');
+    N.api('POST', '/api/mentor/assessments', { studentId: +$('#as-student').value, what: $('#as-what').value, value: $('#as-score').value })
+      .then(function (r) { err.hidden = true; $('#as-score').value = ''; N.toast('Recorded: ' + r.label + ' ' + r.score + '/100.'); return N.api('GET', '/api/mentor/mentees'); })
+      .then(function (list) { mentees = list; $('#mentees').innerHTML = list.map(function (s) { return '<tr><td>' + esc(s.name) + '</td><td>' + esc(progLabel(s.programme)) + '</td><td>' + N.ordinal(s.year) + '</td><td>' + esc(meta.roles[s.role].label) + '</td><td class="n">' + N.f1(s.index) + '</td><td><span class="chip ' + N.bandCls[s.band.k] + '">' + s.band.label + '</span></td></tr>'; }).join(''); })
+      .catch(function (x) { err.hidden = false; err.textContent = x.message; });
+  });
+  $('#progFilter').addEventListener('change', loadCohort);
+  $('#more').addEventListener('click', function () { shown += 12; renderQueue(); });
+  $$('[data-filter]').forEach(function (b) { b.addEventListener('click', function () { filter = b.dataset.filter; shown = 12; $$('[data-filter]').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); }); renderQueue(); }); });
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-rev],[data-ev]'); if (!b) return;
+    if (b.dataset.ev) {
+      N.api('POST', '/api/mentor/evidence/' + b.dataset.ev, { action: b.dataset.act }).then(function () { N.toast(b.dataset.act === 'verify' ? 'Marked as verified.' : 'Asked the student for proof.'); return loadQueue(); }).then(loadCohort).catch(function (x) { N.toast(x.message); });
+      return;
+    }
+    var parts = b.dataset.rev.split('-'), sid = parts[0], rule = parts.slice(1).join('-'), act = b.dataset.act;
+    var noteEl = document.getElementById('note-' + b.dataset.rev), note = noteEl ? noteEl.value.trim() : '';
+    if (act === 'note' && !note) { N.toast('Write a note first, or choose Approve.'); if (noteEl) noteEl.focus(); return; }
+    N.api('PATCH', '/api/mentor/reviews/' + sid + '/' + rule, { action: act, note: note }).then(function () { N.toast(act === 'approve' ? 'Approved. The student sees it on My plan.' : act === 'note' ? 'Note sent.' : 'Reopened.'); return loadQueue(); }).then(loadCohort).catch(function (x) { N.toast(x.message); });
+  });
+})();
+</script>
+</body>
+</html>

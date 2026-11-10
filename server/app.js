@@ -1,0 +1,654 @@
+// NGRM API and static frontend.
+const path = require('node:path');
+const fs = require('node:fs');
+const crypto = require('node:crypto');
+const express = require('express');
+const D = require('./domain');
+const { helpers } = require('./db');
+const { makeAuth, readCookie } = require('./auth');
+const ai = require('./ai');
+const mail = require('./mail');
+
+const COOKIE = 'ngrm_session';
+
+function createApp(db, opts = {}) {
+  const h = helpers(db);
+  const demoMode = opts.demoMode ?? process.env.DEMO_MODE === 'true';
+  const audit = (userId, action, target) => h.run('INSERT INTO audit_log (user_id, action, target) VALUES (?, ?, ?)', userId ?? null, action, target == null ? null : String(target));
+  const sendCode = opts.sendCode || ((email, code) => {
+    // With an email provider configured the code is emailed; a failure is logged without the code.
+    if (mail.provider()) mail.sendCode(email, code).catch((e) => console.error('Could not email a sign-in code:', e.message));
+    else if (process.env.NODE_ENV !== 'production') console.log(`[dev] sign-in code for ${email}: ${code}`);
+  });
+  // Proof files live next to the database, outside the public folder, under random names.
+  const uploadDir = opts.uploadDir || process.env.UPLOAD_DIR || path.join(path.dirname(process.env.DB_FILE || path.join(__dirname, '..', 'data', 'ngrm.sqlite')), 'uploads');
+  const FILE_TYPES = { 'application/pdf': ['pdf', (b) => b.subarray(0, 5).toString() === '%PDF-'], 'image/png': ['png', (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))], 'image/jpeg': ['jpg', (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff] };
+  const dropFile = (p) => { if (p) fs.rm(path.join(uploadDir, path.basename(p)), { force: true }, () => {}); };
+  const auth = makeAuth(h, { audit, sendCode });
+  const app = express();
+
+  // ---------- Basics ----------
+  app.disable('x-powered-by');
+  app.use((req, res, next) => {
+    res.set({
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'same-origin',
+      'X-Frame-Options': 'DENY',
+      'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    });
+    // Personal data is never kept in the browser cache, so the back button cannot show it after sign-out.
+    if (req.path.startsWith('/api/')) res.set('Cache-Control', 'no-store');
+    if (process.env.NODE_ENV === 'production') res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    next();
+  });
+  app.use(express.json({ limit: '100kb' }));
+  app.use((err, req, res, next) => (err && err.type === 'entity.too.large' ? res.status(413).json({ error: 'That file is larger than 5 MB.' }) : err && err.type === 'entity.parse.failed' ? res.status(400).json({ error: 'The request could not be read. Refresh the page and try again.' }) : next(err)));
+  app.use((req, res, next) => { req.token = readCookie(req, COOKIE); req.user = auth.userFromToken(req.token); next(); });
+
+  const fail = (res, status, message) => res.status(status).json({ error: message });
+  const need = (...roles) => (req, res, next) => {
+    if (!req.user) return fail(res, 401, 'Please sign in.');
+    if (roles.length && !roles.includes(req.user.role)) return fail(res, 403, 'Your account does not have access to this.');
+    next();
+  };
+  const setCookie = (res, token) => res.cookie(COOKIE, token, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: auth.SESSION_TTL_MS, path: '/' });
+
+  // ---------- Data helpers ----------
+  const parse = (s, d) => { try { return s == null ? d : JSON.parse(s); } catch { return d; } };
+  function consents(userId) {
+    const rows = h.all('SELECT purpose, granted, is_adult, guardian_name FROM consents WHERE user_id = ? ORDER BY id', userId);
+    const out = {}; for (const k of Object.keys(D.CONSENT_PURPOSES)) out[k] = false;
+    out.isAdult = true; out.guardianName = null;
+    for (const r of rows) { out[r.purpose] = !!r.granted; if (r.is_adult !== null) { out.isAdult = !!r.is_adult; out.guardianName = r.guardian_name; } }
+    return out;
+  }
+  const hasConsent = (userId, purpose) => consents(userId)[purpose] === true;
+  function profileRow(userId) { return h.get('SELECT * FROM profiles WHERE user_id = ?', userId); }
+  function toDomain(row) {
+    return { prog: row.programme, year: row.year, cgpa: row.cgpa, role: row.target_role, skills: parse(row.skills_json, [50, 50, 50, 50]),
+      ocean: parse(row.ocean_json, null), comm: row.comm, clarity: row.clarity };
+  }
+  const evidenceOf = (userId) => h.all('SELECT id, type, title, completed_on, file_name, status, verified_by, verified_at, skill_index, skill_role, skill_value, file_path IS NOT NULL AS has_file FROM evidence WHERE user_id = ? ORDER BY id', userId);
+  // Skills set by a verified college assessment, for a given target role: { index: value }.
+  function verifiedSkills(userId, role) {
+    const out = {};
+    for (const e of h.all("SELECT skill_index, skill_value FROM evidence WHERE user_id = ? AND type = 'assessment' AND status = 'verified' AND skill_role = ? AND skill_index BETWEEN 0 AND 3", userId, role)) out[e.skill_index] = e.skill_value;
+    return out;
+  }
+  // Communication score set by a verified college assessment, or null.
+  const verifiedComm = (userId) => (h.get("SELECT skill_value FROM evidence WHERE user_id = ? AND type = 'assessment' AND status = 'verified' AND skill_role = 'communication' ORDER BY id DESC LIMIT 1", userId) || {}).skill_value ?? null;
+  // Look up a key only among an object's own entries, so names like "toString" are never treated as valid.
+  const has = (obj, k) => typeof k === 'string' && Object.hasOwn(obj, k);
+  const ruleSettings = () => h.all('SELECT * FROM rules ORDER BY rowid');
+  function computeFor(userId) {
+    const row = profileRow(userId); if (!row) return null;
+    const p = toDomain(row), ev = evidenceOf(userId);
+    return { p, ev, row, result: D.score(p, ev) };
+  }
+  function recsFor(userId) {
+    const c = computeFor(userId); if (!c) return null;
+    const list = D.recommend(c.p, c.ev, ruleSettings());
+    const states = {}; for (const s of h.all('SELECT * FROM recommendation_states WHERE user_id = ?', userId)) states[s.rule_id] = s;
+    return { c, list: list.map((r) => ({ ...r, state: states[r.id] || null })) };
+  }
+  const pseudo = (id) => 'S-' + crypto.createHmac('sha256', process.env.SESSION_SECRET || 'dev-only-secret-change-me').update('study:' + id).digest('hex').slice(0, 10);
+  const small = (n) => (n < D.MIN_GROUP ? null : n); // null = suppressed
+  // Employer-facing counts: hidden under 5, otherwise rounded to the nearest 5 so totals cannot be subtracted to find a small group.
+  // A percentage is shown only when both the group it describes and the rest have 5 or more people, rounded to 5%.
+  const safePct = (count, total) => (count < D.MIN_GROUP || total - count < D.MIN_GROUP ? null : Math.round(count / total * 20) * 5);
+  const approx = (n) => (n < D.MIN_GROUP ? null : Math.max(D.MIN_GROUP, Math.round(n / 5) * 5));
+
+  // ---------- Public ----------
+  app.get('/api/meta', (req, res) => res.json({
+    formulaVersion: D.FORMULA_VERSION, minGroup: D.MIN_GROUP, factors: D.FACTORS, roles: D.ROLES, programmes: D.PROGRAMMES,
+    evidenceTypes: D.EVIDENCE_TYPES, slots: D.SLOTS, consentPurposes: D.CONSENT_PURPOSES, demoMode,
+  }));
+
+  // ---------- Auth ----------
+  // Per-address limit too, so one sender cannot flood many inboxes with codes (30 an hour).
+  const ipHits = new Map();
+  app.post('/api/auth/request-code', (req, res) => {
+    const now = Date.now(), ip = req.ip || 'unknown';
+    const hits = (ipHits.get(ip) || []).filter((t) => now - t < 60 * 60 * 1000);
+    if (hits.length >= 30) return fail(res, 429, 'Too many sign-in codes asked for from this network. Try again in an hour.');
+    hits.push(now); ipHits.set(ip, hits);
+    if (ipHits.size > 10000) for (const [k, v] of ipHits) if (!v.some((t) => now - t < 60 * 60 * 1000)) ipHits.delete(k);
+    const email = String(req.body?.email || '').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return fail(res, 400, 'Enter a valid email address.');
+    const r = auth.requestCode(email);
+    if (r.error) return fail(res, r.status, r.error);
+    res.json(r);
+  });
+  app.post('/api/auth/verify', (req, res) => {
+    const r = auth.verifyCode(req.body?.email, req.body?.code);
+    if (r.error) return fail(res, 400, r.error);
+    setCookie(res, r.token); res.json({ user: { id: r.user.id, name: r.user.name, role: r.user.role } });
+  });
+  app.get('/api/auth/demo-users', (req, res) => {
+    if (!demoMode) return fail(res, 404, 'Not available.');
+    res.json(h.all("SELECT u.email, u.name, u.role FROM users u WHERE u.email LIKE '%@demo.ngrm.in' ORDER BY CASE u.role WHEN 'student' THEN 1 WHEN 'mentor' THEN 2 WHEN 'college_admin' THEN 3 WHEN 'employer' THEN 4 WHEN 'researcher' THEN 5 ELSE 6 END"));
+  });
+  app.post('/api/auth/demo', (req, res) => {
+    if (!demoMode) return fail(res, 404, 'Not available.');
+    const u = h.get("SELECT * FROM users WHERE email = ? AND email LIKE '%@demo.ngrm.in'", String(req.body?.email || ''));
+    if (!u) return fail(res, 400, 'Unknown demo account.');
+    setCookie(res, auth.startSession(u.id)); res.json({ user: { id: u.id, name: u.name, role: u.role } });
+  });
+  app.post('/api/auth/sign-out', (req, res) => { auth.endSession(req.token); res.clearCookie(COOKIE, { path: '/' }); res.json({ ok: true }); });
+  app.get('/api/me', (req, res) => {
+    if (!req.user) return res.json({ user: null });
+    const u = req.user;
+    const inst = u.institution_id ? h.get('SELECT name, city FROM institutions WHERE id = ?', u.institution_id) : null;
+    const emp = u.employer_id ? h.get('SELECT name FROM employers WHERE id = ?', u.employer_id) : null;
+    res.json({ user: { id: u.id, name: u.name, email: u.email, role: u.role, institution: inst, employer: emp }, consents: u.role === 'student' ? consents(u.id) : undefined });
+  });
+
+  // ---------- Student: consent ----------
+  app.get('/api/me/consents', need('student'), (req, res) => res.json(consents(req.user.id)));
+  app.post('/api/me/consents', need('student'), (req, res) => {
+    const purposes = req.body?.purposes && typeof req.body.purposes === 'object' ? req.body.purposes : {};
+    const keys = Object.keys(purposes).filter((k) => has(D.CONSENT_PURPOSES, k));
+    if (!keys.length) return fail(res, 400, 'Choose at least one purpose.');
+    // If the request does not say, keep the age status and guardian already on record.
+    const prev = consents(req.user.id);
+    const isAdult = req.body?.isAdult === undefined ? prev.isAdult : req.body.isAdult !== false;
+    const guardian = String(req.body?.guardianName ?? (req.body?.isAdult === undefined ? prev.guardianName || '' : '')).trim().slice(0, 120);
+    if (!isAdult && keys.some((k) => purposes[k]) && !guardian) return fail(res, 400, 'Students under 18 need a parent or guardian’s consent. Add their name.');
+    h.tx(() => { for (const k of keys) h.run('INSERT INTO consents (user_id, purpose, granted, is_adult, guardian_name) VALUES (?, ?, ?, ?, ?)', req.user.id, k, purposes[k] ? 1 : 0, isAdult ? 1 : 0, isAdult ? null : guardian); });
+    // The introductions consent and the opt-in switch are the same choice, so keep them in step.
+    if (keys.includes('introductions')) h.run('UPDATE profiles SET opt_in_intros = ? WHERE user_id = ?', purposes.introductions ? 1 : 0, req.user.id);
+    if (purposes.psychometric === false) scrubPsychometric(req.user.id);
+    if (purposes.ai_wording === false) h.run('UPDATE recommendation_states SET ai_text = NULL, ai_source_hash = NULL WHERE user_id = ?', req.user.id);
+    audit(req.user.id, 'consent.updated', keys.map((k) => k + '=' + (purposes[k] ? 1 : 0)).join(','));
+    res.json(consents(req.user.id));
+  });
+  const needConsent = (purpose) => (req, res, next) => (hasConsent(req.user.id, purpose) ? next() : fail(res, 403, 'consent_required:' + purpose));
+
+  // ---------- Student: profile and score ----------
+  function profilePayload(userId) {
+    const c = computeFor(userId); if (!c) return null;
+    const last = h.get('SELECT id, formula_version, index_value, created_at FROM score_runs WHERE user_id = ? ORDER BY id DESC LIMIT 1', userId);
+    const verified = Object.keys(verifiedSkills(userId, c.p.role)).map(Number);
+    return { profile: { ...c.p, optInIntros: !!c.row.opt_in_intros, verifiedSkills: verified, commVerified: verifiedComm(userId) != null }, score: c.result, band: D.band(c.result.index), lastRecorded: last || null };
+  }
+  // Withdrawing questionnaire consent removes the answers everywhere they were kept, including recorded scores and the study baseline.
+  function scrubPsychometric(userId) {
+    h.tx(() => {
+      h.run('UPDATE profiles SET ocean_json = NULL WHERE user_id = ?', userId);
+      for (const r of h.all('SELECT id, inputs_json, factors_json FROM score_runs WHERE user_id = ?', userId)) {
+        const inputs = parse(r.inputs_json, {}), factors = parse(r.factors_json, {});
+        if (inputs.profile && inputs.profile.ocean) inputs.profile.ocean = 'withdrawn';
+        if ('psychometric' in factors) factors.psychometric = null;
+        h.run('UPDATE score_runs SET inputs_json = ?, factors_json = ? WHERE id = ?', JSON.stringify(inputs), JSON.stringify(factors), r.id);
+      }
+    });
+  }
+  app.get('/api/me/profile', need('student'), needConsent('profile'), (req, res) => {
+    if (!profileRow(req.user.id)) h.run('INSERT INTO profiles (user_id, opt_in_intros) VALUES (?, ?)', req.user.id, hasConsent(req.user.id, 'introductions') ? 1 : 0);
+    res.json(profilePayload(req.user.id));
+  });
+  app.put('/api/me/profile', need('student'), needConsent('profile'), (req, res) => {
+    const b = req.body || {}; const cur = profileRow(req.user.id) || {};
+    const prog = D.PROGRAMMES.find((x) => x.id === b.prog) ? b.prog : cur.programme || 'ba-psy';
+    const years = D.PROGRAMMES.find((x) => x.id === prog).years;
+    const role = has(D.ROLES, b.role) ? b.role : has(D.ROLES, cur.target_role) ? cur.target_role : 'hr';
+    const num = (v, lo, hi) => (v === '' || v === null || v === undefined || Number.isNaN(+v) ? null : D.clamp(+v, lo, hi));
+    // A field left out of the request keeps its stored value; an empty value clears it.
+    const keep = (field, col, hi) => (b[field] === undefined ? cur[col] ?? null : num(b[field], 0, hi));
+    const prevSkills = parse(cur.skills_json, [50, 50, 50, 50]);
+    const skills = Array.isArray(b.skills) && b.skills.length === 4 ? b.skills.map((s, i) => Math.round(num(s, 0, 100) ?? (role === cur.target_role ? prevSkills[i] : 50))) : prevSkills.slice();
+    // A skill verified by a college assessment keeps the assessed value; the student cannot overwrite it.
+    for (const [i, v] of Object.entries(verifiedSkills(req.user.id, role))) if (v != null) skills[+i] = v;
+    // Questionnaire answers: keep what is stored unless new answers are sent; never store them without consent.
+    let ocean = hasConsent(req.user.id, 'psychometric') ? parse(cur.ocean_json, null) : null;
+    // New answers are stored only when all five traits are given; nothing is filled in on the student's behalf.
+    if (b.ocean === null && b.ocean !== undefined) ocean = null;
+    else if (b.ocean && typeof b.ocean === 'object' && hasConsent(req.user.id, 'psychometric')) {
+      const vals = ['o', 'c', 'e', 'a', 'n'].map((k) => num(b.ocean[k], 0, 100));
+      if (vals.every((v) => v !== null)) ocean = Object.fromEntries(['o', 'c', 'e', 'a', 'n'].map((k, i) => [k, Math.round(vals[i])]));
+    }
+    h.run(`INSERT INTO profiles (user_id, programme, year, cgpa, target_role, skills_json, ocean_json, comm, clarity, opt_in_intros, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${hasConsent(req.user.id, 'introductions') ? 1 : 0}, datetime('now'))
+           ON CONFLICT(user_id) DO UPDATE SET programme=excluded.programme, year=excluded.year, cgpa=excluded.cgpa, target_role=excluded.target_role,
+           skills_json=excluded.skills_json, ocean_json=excluded.ocean_json, comm=excluded.comm, clarity=excluded.clarity, updated_at=excluded.updated_at`,
+      req.user.id, prog, Math.min(Math.max(1, parseInt(b.year, 10) || cur.year || 1), years), keep('cgpa', 'cgpa', 10), role, JSON.stringify(skills), ocean ? JSON.stringify(ocean) : null, verifiedComm(req.user.id) ?? keep('comm', 'comm', 100), keep('clarity', 'clarity', 100));
+    // A new target role means a different plan: earlier accepted steps and mentor reviews no longer apply.
+    if (cur.target_role && cur.target_role !== role) {
+      h.run('DELETE FROM recommendation_states WHERE user_id = ?', req.user.id);
+      audit(req.user.id, 'plan.reset_for_new_role', role);
+    }
+    audit(req.user.id, 'profile.updated');
+    res.json(profilePayload(req.user.id));
+  });
+  app.post('/api/me/score', need('student'), needConsent('profile'), (req, res) => {
+    const c = computeFor(req.user.id); if (!c) return fail(res, 404, 'Fill in your profile first.');
+    const r = h.run('INSERT INTO score_runs (user_id, formula_version, inputs_json, factors_json, index_value) VALUES (?, ?, ?, ?, ?)',
+      req.user.id, c.result.version, JSON.stringify({ profile: c.p, counts: c.result.counts }), JSON.stringify(c.result.factors), c.result.index);
+    audit(req.user.id, 'score.recorded', r.lastInsertRowid);
+    res.json({ id: Number(r.lastInsertRowid), ...c.result });
+  });
+  app.get('/api/me/score-history', need('student'), needConsent('profile'), (req, res) => {
+    res.json(h.all('SELECT id, formula_version, index_value, created_at FROM score_runs WHERE user_id = ? ORDER BY id DESC LIMIT 20', req.user.id));
+  });
+
+  // ---------- Student: evidence ----------
+  app.get('/api/me/evidence', need('student'), needConsent('profile'), (req, res) => res.json(evidenceOf(req.user.id)));
+  app.post('/api/me/evidence', need('student'), needConsent('profile'), (req, res) => {
+    const b = req.body || {};
+    if (!has(D.EVIDENCE_TYPES, b.type) || b.type === 'assessment') return fail(res, 400, 'Choose a type of evidence.');
+    const title = String(b.title || '').trim().slice(0, 200);
+    if (!title) return fail(res, 400, 'Say what the evidence is, for example the course or project name.');
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(b.completedOn || '') ? b.completedOn : null;
+    const r = h.run('INSERT INTO evidence (user_id, type, title, completed_on, file_name) VALUES (?, ?, ?, ?, ?)', req.user.id, b.type, title, date, String(b.fileName || '').trim().slice(0, 200) || null);
+    audit(req.user.id, 'evidence.added', r.lastInsertRowid);
+    res.status(201).json(evidenceOf(req.user.id));
+  });
+  // Add proof to an item (for example after a mentor asked for it). It goes back to the mentor for checking.
+  app.patch('/api/me/evidence/:id', need('student'), needConsent('profile'), (req, res) => {
+    const e = h.get('SELECT * FROM evidence WHERE id = ? AND user_id = ?', +req.params.id, req.user.id);
+    if (!e) return fail(res, 404, 'Not found.');
+    if (e.status === 'verified' || e.type === 'assessment') return fail(res, 409, 'This is already verified.');
+    const file = String(req.body?.fileName || '').trim().slice(0, 200);
+    if (!file) return fail(res, 400, 'Name the proof you are adding, for example the certificate file.');
+    h.run("UPDATE evidence SET file_name = ?, status = 'pending' WHERE id = ?", file, e.id);
+    audit(req.user.id, 'evidence.proof_added', e.id);
+    res.json(evidenceOf(req.user.id));
+  });
+  // Upload a proof file (PDF, PNG or JPEG, up to 5 MB). The body is the file itself.
+  app.put('/api/me/evidence/:id/file', need('student'), needConsent('profile'), express.raw({ type: Object.keys(FILE_TYPES), limit: '5mb' }), (req, res) => {
+    const e = h.get('SELECT * FROM evidence WHERE id = ? AND user_id = ?', +req.params.id, req.user.id);
+    if (!e) return fail(res, 404, 'Not found.');
+    if (e.status === 'verified' || e.type === 'assessment') return fail(res, 409, 'This is already verified.');
+    const kind = FILE_TYPES[String(req.headers['content-type'] || '').split(';')[0].trim()];
+    if (!kind || !Buffer.isBuffer(req.body) || !req.body.length) return fail(res, 400, 'Upload a PDF, PNG or JPEG file.');
+    if (!kind[1](req.body)) return fail(res, 400, 'That file does not look like a real PDF, PNG or JPEG.');
+    let name = ''; try { name = decodeURIComponent(String(req.headers['x-file-name'] || '')); } catch { name = ''; }
+    name = name.replace(/[\\/\u0000-\u001f"<>]/g, '').trim().slice(0, 120) || 'proof.' + kind[0];
+    const stored = crypto.randomBytes(16).toString('hex') + '.' + kind[0];
+    fs.mkdirSync(uploadDir, { recursive: true });
+    fs.writeFileSync(path.join(uploadDir, stored), req.body, { mode: 0o600 });
+    dropFile(e.file_path);
+    h.run("UPDATE evidence SET file_name = ?, file_path = ?, file_type = ?, status = 'pending' WHERE id = ?", name, stored, Object.keys(FILE_TYPES).find((t) => FILE_TYPES[t] === kind), e.id);
+    audit(req.user.id, 'evidence.file_uploaded', e.id);
+    res.json(evidenceOf(req.user.id));
+  });
+  // Only the student and their own mentor can open a proof file.
+  app.get('/api/evidence/:id/file', need('student', 'mentor'), (req, res) => {
+    const e = h.get('SELECT * FROM evidence WHERE id = ?', +req.params.id);
+    const allowed = e && e.file_path && (e.user_id === req.user.id || (req.user.role === 'mentor' && isMentee(req.user.id, e.user_id) && hasConsent(e.user_id, 'profile')));
+    if (!allowed) return fail(res, 404, 'Not found.');
+    const full = path.join(uploadDir, path.basename(e.file_path));
+    if (!fs.existsSync(full)) return fail(res, 404, 'Not found.');
+    if (req.user.role === 'mentor') audit(req.user.id, 'mentor.opened_proof', e.id);
+    res.set({ 'Content-Type': e.file_type, 'Content-Disposition': `inline; filename="${encodeURIComponent(e.file_name || 'proof')}"`, 'Content-Security-Policy': "default-src 'none'; sandbox" });
+    fs.createReadStream(full).pipe(res);
+  });
+  app.delete('/api/me/evidence/:id', need('student'), (req, res) => {
+    // College assessments are recorded by a mentor and stay on record.
+    dropFile((h.get("SELECT file_path FROM evidence WHERE id = ? AND user_id = ? AND type != 'assessment'", +req.params.id, req.user.id) || {}).file_path);
+    const r = h.run("DELETE FROM evidence WHERE id = ? AND user_id = ? AND type != 'assessment'", +req.params.id, req.user.id);
+    if (!r.changes) return fail(res, 404, 'Not found.');
+    audit(req.user.id, 'evidence.removed', req.params.id);
+    res.json(evidenceOf(req.user.id));
+  });
+
+  // ---------- Student: recommendations ----------
+  app.get('/api/me/recommendations', need('student'), needConsent('profile'), async (req, res, next) => {
+    try {
+      const r = recsFor(req.user.id); if (!r) return fail(res, 404, 'Fill in your profile first.');
+      if (hasConsent(req.user.id, 'ai_wording') && process.env.GEMINI_API_KEY) {
+        await Promise.all(r.list.map(async (x) => {
+          const src = ai.sourceHash(x.why);
+          if (x.state?.ai_source_hash === src && x.state.ai_text) { x.aiWhy = x.state.ai_text; return; }
+          const text = await ai.rewrite(x.why, D.ROLES[r.c.p.role].label);
+          if (text && hasConsent(req.user.id, 'ai_wording')) {
+            h.run(`INSERT INTO recommendation_states (user_id, rule_id, ai_source_hash, ai_text) VALUES (?, ?, ?, ?)
+                   ON CONFLICT(user_id, rule_id) DO UPDATE SET ai_source_hash = excluded.ai_source_hash, ai_text = excluded.ai_text`, req.user.id, x.id, src, text);
+            x.aiWhy = text;
+          }
+        }));
+      }
+      const accepted = r.list.filter((x) => x.state?.student_status === 'accepted').map((x) => x.id);
+      res.json({ score: r.c.result, projected: D.projectIndex(r.c.p, r.c.ev, accepted), role: r.c.p.role, programme: r.c.p.prog, year: r.c.p.year,
+        items: r.list.map((x) => ({ id: x.id, factor: x.factor, slot: x.slot, effort: x.effort, gain: x.gain, always: x.always, title: x.title, what: x.what, why: x.why, aiWhy: x.aiWhy || null, assume: x.assume,
+          student: x.state?.student_status || null, mentor: x.state?.mentor_status || null, mentorNote: x.state?.mentor_note || null,
+          mentorName: x.state?.mentor_id ? (h.get('SELECT name FROM users WHERE id = ?', x.state.mentor_id) || {}).name : null })) });
+    } catch (e) { next(e); }
+  });
+  app.patch('/api/me/recommendations/:ruleId', need('student'), needConsent('profile'), (req, res) => {
+    const action = req.body?.action; const ruleId = req.params.ruleId;
+    if (!['accept', 'decline', 'undo'].includes(action)) return fail(res, 400, 'Unknown action.');
+    if (!h.get('SELECT id FROM rules WHERE id = ?', ruleId)) return fail(res, 404, 'Not found.');
+    const status = action === 'accept' ? 'accepted' : action === 'decline' ? 'declined' : null;
+    h.run(`INSERT INTO recommendation_states (user_id, rule_id, student_status, student_at) VALUES (?, ?, ?, datetime('now'))
+           ON CONFLICT(user_id, rule_id) DO UPDATE SET student_status = excluded.student_status, student_at = excluded.student_at`, req.user.id, ruleId, status);
+    audit(req.user.id, 'recommendation.' + action, ruleId);
+    res.json({ ok: true });
+  });
+
+  // ---------- Student: sharing, study, data rights ----------
+  app.patch('/api/me/intro-opt-in', need('student'), needConsent('profile'), (req, res) => {
+    const on = !!req.body?.optIn, c = consents(req.user.id);
+    // Under-18s: this consent is recorded with the guardian already on file, and needs one.
+    if (on && !c.isAdult && !c.guardianName) return fail(res, 400, 'Students under 18 need a parent or guardian’s consent. Add it in the consent form below.');
+    h.tx(() => {
+      h.run('INSERT INTO consents (user_id, purpose, granted, is_adult, guardian_name) VALUES (?, ?, ?, ?, ?)', req.user.id, 'introductions', on ? 1 : 0, c.isAdult ? 1 : 0, c.isAdult ? null : c.guardianName);
+      h.run('UPDATE profiles SET opt_in_intros = ? WHERE user_id = ?', on ? 1 : 0, req.user.id);
+    });
+    audit(req.user.id, 'introductions.' + (on ? 'on' : 'off'));
+    res.json({ optIn: on });
+  });
+  app.post('/api/me/baseline', need('student'), needConsent('profile'), needConsent('study'), (req, res) => {
+    const c = computeFor(req.user.id); if (!c) return fail(res, 404, 'Fill in your profile first.');
+    // A baseline is the starting point for the study, so it is recorded once.
+    const prev = h.get('SELECT created_at FROM baselines WHERE user_id = ? ORDER BY id LIMIT 1', req.user.id);
+    if (prev) return fail(res, 409, `Your study baseline was already recorded on ${prev.created_at.slice(0, 10)}. It is recorded only once.`);
+    const run = h.run('INSERT INTO score_runs (user_id, formula_version, inputs_json, factors_json, index_value) VALUES (?, ?, ?, ?, ?)',
+      req.user.id, c.result.version, JSON.stringify({ profile: c.p, counts: c.result.counts }), JSON.stringify(c.result.factors), c.result.index);
+    h.run('INSERT INTO baselines (user_id, score_run_id) VALUES (?, ?)', req.user.id, run.lastInsertRowid);
+    audit(req.user.id, 'study.baseline_recorded');
+    res.status(201).json({ index: c.result.index, factors: c.result.factors, version: c.result.version });
+  });
+  app.get('/api/me/export', need('student'), (req, res) => {
+    const id = req.user.id;
+    audit(id, 'data.exported');
+    res.json({ exportedAt: new Date().toISOString(), account: { name: req.user.name, email: req.user.email },
+      consents: h.all('SELECT purpose, granted, is_adult, guardian_name, created_at FROM consents WHERE user_id = ? ORDER BY id', id),
+      profile: profileRow(id) ? toDomain(profileRow(id)) : null, evidence: evidenceOf(id),
+      scoreRuns: h.all('SELECT formula_version, inputs_json, factors_json, index_value, created_at FROM score_runs WHERE user_id = ? ORDER BY id', id)
+        .map((r) => ({ formulaVersion: r.formula_version, inputs: parse(r.inputs_json, {}), factors: parse(r.factors_json, {}), index: r.index_value, recordedAt: r.created_at })),
+      recommendationDecisions: h.all('SELECT r.rule_id, r.student_status, r.student_at, r.mentor_status, r.mentor_note, u.name AS mentor_name, r.mentor_at, r.ai_text FROM recommendation_states r LEFT JOIN users u ON u.id = r.mentor_id WHERE r.user_id = ?', id),
+      studyBaselines: h.all('SELECT b.created_at, s.formula_version, s.index_value FROM baselines b JOIN score_runs s ON s.id = b.score_run_id WHERE b.user_id = ? ORDER BY b.id', id),
+      introductionReplies: h.all('SELECT e.name AS employer, r.role, x.created_at FROM intro_replies x JOIN intro_requests r ON r.id = x.request_id JOIN employers e ON e.id = r.employer_id WHERE x.user_id = ?', id),
+      accessLog: h.all('SELECT action, target, at FROM audit_log WHERE user_id = ? ORDER BY id DESC LIMIT 200', id) });
+  });
+  app.delete('/api/me', need('student'), (req, res) => {
+    const id = req.user.id;
+    if (req.body?.confirm !== 'DELETE') return fail(res, 400, 'Confirm by sending confirm: "DELETE".');
+    removeAccount(req.user);
+    audit(null, 'account.deleted', 'user:' + id);
+    res.clearCookie(COOKIE, { path: '/' });
+    res.json({ deleted: true });
+  });
+
+  function removeAccount(u) {
+    for (const e of h.all('SELECT file_path FROM evidence WHERE user_id = ? AND file_path IS NOT NULL', u.id)) dropFile(e.file_path);
+    h.tx(() => { h.run('UPDATE recommendation_states SET mentor_id = NULL WHERE mentor_id = ?', u.id); h.run('DELETE FROM otp_codes WHERE email = ?', u.email); h.run('DELETE FROM otp_requests WHERE email = ?', u.email); h.run('DELETE FROM users WHERE id = ?', u.id); });
+  }
+
+  // ---------- Mentor ----------
+  const isMentee = (mentorId, studentId) => !!h.get('SELECT 1 FROM mentor_links WHERE mentor_id = ? AND student_id = ?', mentorId, studentId);
+  app.get('/api/mentor/mentees', need('mentor'), (req, res) => {
+    const rows = h.all('SELECT u.id, u.name FROM mentor_links m JOIN users u ON u.id = m.student_id WHERE m.mentor_id = ? ORDER BY u.name', req.user.id);
+    const out = rows.filter((r) => hasConsent(r.id, 'profile')).map((r) => {
+      const c = computeFor(r.id); if (!c) return null;
+      return { id: r.id, name: r.name, programme: c.p.prog, year: c.p.year, role: c.p.role, index: c.result.index, band: D.band(c.result.index) };
+    }).filter(Boolean);
+    audit(req.user.id, 'mentor.viewed_mentees');
+    res.json(out);
+  });
+  app.get('/api/mentor/queue', need('mentor'), (req, res) => {
+    const mentees = h.all('SELECT u.id, u.name FROM mentor_links m JOIN users u ON u.id = m.student_id WHERE m.mentor_id = ? ORDER BY u.id', req.user.id);
+    const recItems = [], evItems = [];
+    for (const s of mentees) {
+      if (!hasConsent(s.id, 'profile')) continue;
+      const r = recsFor(s.id); if (!r) continue;
+      for (const x of r.list) recItems.push({ studentId: s.id, studentName: s.name, ruleId: x.id, title: x.title, why: x.why, gain: x.gain,
+        student: x.state?.student_status || null, mentor: x.state?.mentor_status || null, note: x.state?.mentor_note || null });
+      for (const e of r.c.ev.filter((e) => e.status !== 'verified')) evItems.push({ studentId: s.id, studentName: s.name, ...e, typeLabel: D.EVIDENCE_TYPES[e.type] });
+    }
+    res.json({ recommendations: recItems, evidence: evItems });
+  });
+  app.patch('/api/mentor/reviews/:studentId/:ruleId', need('mentor'), (req, res) => {
+    const sid = +req.params.studentId, ruleId = req.params.ruleId, action = req.body?.action;
+    if (!isMentee(req.user.id, sid) || !hasConsent(sid, 'profile')) return fail(res, 404, 'Not found.');
+    if (!h.get('SELECT id FROM rules WHERE id = ?', ruleId)) return fail(res, 404, 'Not found.');
+    if (!['approve', 'note', 'reopen'].includes(action)) return fail(res, 400, 'Unknown action.');
+    const st = h.get('SELECT student_status FROM recommendation_states WHERE user_id = ? AND rule_id = ?', sid, ruleId);
+    if (st?.student_status === 'declined' && action !== 'reopen') return fail(res, 409, 'The student declined this. Declines need no reason and cannot be overridden.');
+    const note = String(req.body?.note || '').trim().slice(0, 500);
+    if (action === 'note' && !note) return fail(res, 400, 'Write a note first, or approve.');
+    const status = action === 'approve' ? 'approved' : action === 'note' ? 'note' : null;
+    h.run(`INSERT INTO recommendation_states (user_id, rule_id, mentor_status, mentor_note, mentor_id, mentor_at) VALUES (?, ?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(user_id, rule_id) DO UPDATE SET mentor_status = excluded.mentor_status, mentor_note = excluded.mentor_note, mentor_id = excluded.mentor_id, mentor_at = excluded.mentor_at`,
+      sid, ruleId, status, status ? note || null : null, req.user.id);
+    audit(req.user.id, 'mentor.review.' + action, sid + ':' + ruleId);
+    res.json({ ok: true });
+  });
+  app.post('/api/mentor/evidence/:id', need('mentor'), (req, res) => {
+    const e = h.get('SELECT * FROM evidence WHERE id = ?', +req.params.id);
+    if (!e || !isMentee(req.user.id, e.user_id) || !hasConsent(e.user_id, 'profile')) return fail(res, 404, 'Not found.');
+    const action = req.body?.action;
+    if (action === 'verify') h.run("UPDATE evidence SET status = 'verified', verified_by = ?, verified_at = datetime('now') WHERE id = ?", req.user.name, e.id);
+    else if (action === 'needs_proof') h.run("UPDATE evidence SET status = 'needs_proof' WHERE id = ?", e.id);
+    else return fail(res, 400, 'Unknown action.');
+    audit(req.user.id, 'mentor.evidence.' + action, e.id);
+    res.json({ ok: true });
+  });
+
+  // A mentor records a college assessment result for a mentee. It locks that skill (or communication) score.
+  app.post('/api/mentor/assessments', need('mentor'), (req, res) => {
+    const sid = +req.body?.studentId, what = req.body?.what, value = Number(req.body?.value);
+    if (!isMentee(req.user.id, sid) || !hasConsent(sid, 'profile')) return fail(res, 404, 'Not found.');
+    const row = profileRow(sid); if (!row) return fail(res, 404, 'This student has not set up a profile yet.');
+    const isComm = what === 'communication', idx = isComm ? null : Number(what);
+    if (!isComm && !(Number.isInteger(idx) && idx >= 0 && idx <= 3)) return fail(res, 400, 'Choose what was assessed.');
+    if (req.body?.value === '' || req.body?.value == null || !Number.isFinite(value) || value < 0 || value > 100) return fail(res, 400, 'Enter a score from 0 to 100.');
+    const score = Math.round(value), role = isComm ? 'communication' : row.target_role;
+    const label = isComm ? 'Communication' : D.ROLES[row.target_role].skills[idx];
+    h.tx(() => {
+      h.run("DELETE FROM evidence WHERE user_id = ? AND type = 'assessment' AND skill_role = ? AND " + (isComm ? 'skill_index IS NULL' : 'skill_index = ?'), ...(isComm ? [sid, role] : [sid, role, idx]));
+      h.run("INSERT INTO evidence (user_id, type, title, completed_on, status, verified_by, verified_at, skill_index, skill_role, skill_value) VALUES (?, 'assessment', ?, date('now'), 'verified', ?, datetime('now'), ?, ?, ?)",
+        sid, `${label} assessment: ${score}/100`, req.user.name, idx, role, score);
+      if (isComm) h.run('UPDATE profiles SET comm = ? WHERE user_id = ?', score, sid);
+      else { const sk = parse(row.skills_json, [50, 50, 50, 50]); sk[idx] = score; h.run('UPDATE profiles SET skills_json = ? WHERE user_id = ?', JSON.stringify(sk), sid); }
+    });
+    audit(req.user.id, 'mentor.assessment_recorded', sid + ':' + (isComm ? 'communication' : idx));
+    res.status(201).json({ ok: true, label, score });
+  });
+
+  // ---------- College (mentor or college admin; own institution, aggregates only) ----------
+  app.get('/api/college/cohort', need('mentor', 'college_admin'), (req, res) => {
+    const prog = req.query.programme && req.query.programme !== 'all' ? String(req.query.programme) : null;
+    const all = h.all("SELECT u.id, p.programme FROM users u JOIN profiles p ON p.user_id = u.id WHERE u.role = 'student' AND u.institution_id = ?", req.user.institution_id)
+      .filter((s) => hasConsent(s.id, 'profile'));
+    // Programmes with fewer than 5 students are left out of every view, including "all programmes".
+    // Otherwise subtracting one view from another could reveal a single student's score.
+    const sizes = {}; for (const s of all) sizes[s.programme] = (sizes[s.programme] || 0) + 1;
+    const students = all.filter((s) => sizes[s.programme] >= D.MIN_GROUP && (!prog || s.programme === prog));
+    audit(req.user.id, 'college.viewed_cohort', prog || 'all');
+    const leftOut = Object.values(sizes).some((n) => n < D.MIN_GROUP);
+    if (students.length < D.MIN_GROUP) return res.json({ n: null, suppressed: true, smallProgrammesLeftOut: leftOut });
+    const rs = students.map((s) => computeFor(s.id).result);
+    const bands = { building: 0, progressing: 0, ready: 0 }; rs.forEach((r) => bands[D.band(r.index).k]++);
+    // Counts rounded to 5 and averages to whole numbers, so comparing views before and after one student
+    // joins, leaves or withdraws consent cannot reveal that student's figures.
+    const shown = { building: approx(bands.building), progressing: approx(bands.progressing), ready: approx(bands.ready) };
+    // If only one band is hidden, it could be worked out from the others, so hide the next smallest too.
+    const hidden = Object.keys(shown).filter((k) => shown[k] === null);
+    if (hidden.length === 1) { const next = Object.keys(shown).filter((k) => shown[k] !== null).sort((a, b) => bands[a] - bands[b])[0]; shown[next] = null; }
+    const factors = {}; for (const F of D.FACTORS) factors[F.k] = Math.round(D.avg(rs.map((r) => r.factors[F.k])));
+    res.json({ n: approx(rs.length), suppressed: false, smallProgrammesLeftOut: leftOut, avgIndex: Math.round(D.avg(rs.map((r) => r.index))), factors, bands: shown,
+      noInternshipPct: safePct(rs.filter((r) => r.counts.internship === 0).length, rs.length), rounding: 5 });
+  });
+  app.get('/api/demand', need(), (req, res) => {
+    res.json(h.all('SELECT d.id, d.role, d.skills_json, d.openings, d.city, d.created_at, e.name AS employer FROM demand_posts d JOIN employers e ON e.id = d.employer_id ORDER BY d.id DESC LIMIT 50')
+      .map((d) => ({ ...d, skills: parse(d.skills_json, []), skills_json: undefined })));
+  });
+
+  // ---------- Employer (aggregates only) ----------
+  app.get('/api/employer/supply', need('employer'), (req, res) => {
+    const role = has(D.ROLES, req.query.role) ? req.query.role : 'hr';
+    const insts = h.all('SELECT id, name FROM institutions ORDER BY id');
+    const rows = h.all("SELECT u.id, u.institution_id, p.skills_json, p.opt_in_intros FROM users u JOIN profiles p ON p.user_id = u.id WHERE u.role = 'student' AND p.target_role = ?", role)
+      .filter((r) => hasConsent(r.id, 'profile'));
+    const level = (sk) => { const a = D.avg(sk); return a < 50 ? 'foundation' : a < 70 ? 'intermediate' : 'strong'; };
+    const tally = (list) => {
+      const t = { foundation: 0, intermediate: 0, strong: 0, optedIn: 0 };
+      for (const r of list) { t[level(parse(r.skills_json, []))]++; if (r.opt_in_intros && hasConsent(r.id, 'introductions')) t.optedIn++; }
+      return { foundation: approx(t.foundation), intermediate: approx(t.intermediate), strong: approx(t.strong), optedIn: approx(t.optedIn), _opted: t.optedIn };
+    };
+    const byCollege = insts.map((i) => { const t = tally(rows.filter((r) => r.institution_id === i.id)); delete t._opted; return { college: i.name, ...t }; });
+    const total = tally(rows); const canRequest = total._opted >= D.MIN_GROUP; delete total._opted;
+    const skills = rows.length >= D.MIN_GROUP ? D.ROLES[role].skills.map((name, k) => ({ name, sharePct: safePct(rows.filter((r) => (parse(r.skills_json, [])[k] || 0) >= 70).length, rows.length) })) : null;
+    audit(req.user.id, 'employer.viewed_supply', role);
+    res.json({ role, byCollege, total, canRequestIntroductions: canRequest, pool: approx(rows.length), skills, rounding: 5 });
+  });
+  app.post('/api/employer/demand', need('employer'), (req, res) => {
+    const b = req.body || {};
+    if (!has(D.ROLES, b.role)) return fail(res, 400, 'Choose a role.');
+    const skills = (Array.isArray(b.skills) ? b.skills : []).filter((s) => D.ROLES[b.role].skills.includes(s));
+    if (!skills.length) return fail(res, 400, 'Pick at least one skill.');
+    const openings = Math.min(500, Math.max(1, parseInt(b.openings, 10) || 1));
+    h.run('INSERT INTO demand_posts (employer_id, role, skills_json, openings, city) VALUES (?, ?, ?, ?, ?)', req.user.employer_id, b.role, JSON.stringify(skills), openings, String(b.city || '').trim().slice(0, 80) || null);
+    audit(req.user.id, 'employer.posted_demand', b.role);
+    res.status(201).json({ ok: true });
+  });
+  app.post('/api/employer/intros', need('employer'), (req, res) => {
+    const role = has(D.ROLES, req.body?.role) ? req.body.role : null; if (!role) return fail(res, 400, 'Choose a role.');
+    const opted = h.all("SELECT u.id FROM users u JOIN profiles p ON p.user_id = u.id WHERE u.role = 'student' AND p.target_role = ? AND p.opt_in_intros = 1", role).filter((r) => hasConsent(r.id, 'profile') && hasConsent(r.id, 'introductions')).length;
+    if (opted < D.MIN_GROUP) return fail(res, 409, 'Fewer than 5 students have opted in for this role, so introductions are not available yet.');
+    if (h.get("SELECT id FROM intro_requests WHERE employer_id = ? AND role = ? AND created_at > datetime('now', '-30 days')", req.user.employer_id, role))
+      return fail(res, 409, 'You already asked for introductions for this role in the last 30 days. Placement cells are working on it.');
+    h.run('INSERT INTO intro_requests (employer_id, role) VALUES (?, ?)', req.user.employer_id, role);
+    audit(req.user.id, 'employer.requested_intros', role);
+    res.status(201).json({ ok: true, message: 'Request sent to the placement cells. Students who opted in decide whether to reply.' });
+  });
+
+  app.get('/api/employer/intros', need('employer'), (req, res) => {
+    res.json(h.all('SELECT id, role, status, created_at FROM intro_requests WHERE employer_id = ? ORDER BY id DESC', req.user.employer_id)
+      .map((r) => ({ ...r, replies: approx(introReplies(r.id).length) })));
+  });
+
+  // ---------- Introductions: students reply, their own placement cell sees who replied ----------
+  const introReplies = (requestId, institutionId) => h.all('SELECT u.id, u.name, u.email, u.institution_id FROM intro_replies r JOIN users u ON u.id = r.user_id WHERE r.request_id = ?', requestId)
+    .filter((u) => hasConsent(u.id, 'introductions') && (institutionId == null || u.institution_id === institutionId));
+  const openRequestsFor = (role) => h.all("SELECT r.id, r.role, r.created_at, e.name AS employer, e.city FROM intro_requests r JOIN employers e ON e.id = r.employer_id WHERE r.role = ? AND r.created_at > datetime('now', '-90 days') ORDER BY r.id DESC", role);
+  app.get('/api/me/intro-requests', need('student'), needConsent('profile'), (req, res) => {
+    const p = profileRow(req.user.id);
+    if (!p || !p.opt_in_intros || !hasConsent(req.user.id, 'introductions')) return res.json({ optedIn: false, requests: [] });
+    const mine = new Set(h.all('SELECT request_id FROM intro_replies WHERE user_id = ?', req.user.id).map((r) => r.request_id));
+    res.json({ optedIn: true, requests: openRequestsFor(p.target_role).map((r) => ({ ...r, interested: mine.has(r.id) })) });
+  });
+  app.post('/api/me/intro-requests/:id', need('student'), needConsent('profile'), needConsent('introductions'), (req, res) => {
+    const p = profileRow(req.user.id), r = h.get('SELECT * FROM intro_requests WHERE id = ?', +req.params.id);
+    const open = r && h.get("SELECT 1 FROM intro_requests WHERE id = ? AND created_at > datetime('now', '-90 days')", r.id);
+    if (!r || !open || !p || r.role !== p.target_role || !p.opt_in_intros) return fail(res, 404, 'Not found.');
+    if (req.body?.interested) h.run('INSERT OR IGNORE INTO intro_replies (request_id, user_id) VALUES (?, ?)', r.id, req.user.id);
+    else h.run('DELETE FROM intro_replies WHERE request_id = ? AND user_id = ?', r.id, req.user.id);
+    audit(req.user.id, 'introductions.' + (req.body?.interested ? 'interested' : 'withdrawn'), r.id);
+    res.json({ interested: !!req.body?.interested });
+  });
+  app.get('/api/college/intro-requests', need('college_admin'), (req, res) => {
+    const rows = h.all("SELECT r.id, r.role, r.created_at, e.name AS employer, e.city FROM intro_requests r JOIN employers e ON e.id = r.employer_id WHERE r.created_at > datetime('now', '-90 days') ORDER BY r.id DESC")
+      .map((r) => ({ ...r, students: introReplies(r.id, req.user.institution_id).map((u) => ({ name: u.name, email: u.email })) }));
+    audit(req.user.id, 'college.viewed_intro_replies');
+    res.json(rows);
+  });
+
+  // ---------- Researcher (consented, de-identified) ----------
+  app.get('/api/research/export', need('researcher'), (req, res) => {
+    const rows = h.all("SELECT b.user_id, b.created_at, s.formula_version, s.factors_json, s.index_value, p.programme, p.year, p.target_role FROM baselines b JOIN score_runs s ON s.id = b.score_run_id JOIN profiles p ON p.user_id = b.user_id")
+      .filter((r) => hasConsent(r.user_id, 'study'))
+      .map((r) => ({ participant: pseudo(r.user_id), recordedAt: r.created_at, formulaVersion: r.formula_version, programme: r.programme, year: r.year, targetRole: r.target_role, index: r.index_value, factors: parse(r.factors_json, {}) }));
+    audit(req.user.id, 'research.exported', rows.length);
+    res.json({ participants: new Set(rows.map((r) => r.participant)).size, rows });
+  });
+
+  // ---------- Admin ----------
+  app.get('/api/admin/audit', need('admin'), (req, res) => res.json(h.all('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?', Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 100)))));
+  app.get('/api/admin/rules', need('admin'), (req, res) => res.json(ruleSettings()));
+  app.patch('/api/admin/rules/:id', need('admin'), (req, res) => {
+    const r = h.get('SELECT * FROM rules WHERE id = ?', req.params.id); if (!r) return fail(res, 404, 'Not found.');
+    const active = req.body?.active === undefined ? r.active : req.body.active ? 1 : 0;
+    if (r.id === 'counsellor' && !active) return fail(res, 400, 'The counsellor referral is always offered and cannot be switched off.');
+    let threshold = r.threshold;
+    if (req.body?.threshold !== undefined && has(D.THRESHOLD_RANGE, r.id)) {
+      const t = req.body.threshold === '' || req.body.threshold === null ? NaN : Number(req.body.threshold), [lo, hi] = D.THRESHOLD_RANGE[r.id];
+      if (!Number.isFinite(t) || t < lo || t > hi) return fail(res, 400, `The threshold for ${r.id} must be a number from ${lo} to ${hi}.`);
+      threshold = t;
+    }
+    h.run('UPDATE rules SET active = ?, threshold = ? WHERE id = ?', active, threshold, r.id);
+    audit(req.user.id, 'admin.rule_updated', r.id);
+    res.json(h.get('SELECT * FROM rules WHERE id = ?', r.id));
+  });
+
+  // People and organisations. In the pilot, accounts are added by an admin; there is no open sign-up.
+  const ORG_ROLES = { student: 'institution', mentor: 'institution', college_admin: 'institution', employer: 'employer' };
+  app.get('/api/admin/people', need('admin'), (req, res) => {
+    const q = String(req.query.q || '').trim().toLowerCase().slice(0, 80);
+    res.json({ institutions: h.all('SELECT i.id, i.name, i.city, (SELECT COUNT(*) FROM users u WHERE u.institution_id = i.id AND u.role = \'student\') AS students FROM institutions i ORDER BY i.name'),
+      employers: h.all('SELECT id, name, city FROM employers ORDER BY name'),
+      roles: h.all('SELECT role, COUNT(*) AS n FROM users GROUP BY role'),
+      recent: h.all(`SELECT u.id, u.name, u.email, u.role, COALESCE(i.name, e.name) AS org, u.created_at FROM users u LEFT JOIN institutions i ON i.id = u.institution_id LEFT JOIN employers e ON e.id = u.employer_id
+        WHERE (? = '' OR lower(u.name) LIKE ? OR lower(u.email) LIKE ?) ORDER BY u.id DESC LIMIT 15`, q, '%' + q + '%', '%' + q + '%') });
+  });
+  app.post('/api/admin/orgs', need('admin'), (req, res) => {
+    const kind = req.body?.kind, name = String(req.body?.name || '').trim().slice(0, 160), city = String(req.body?.city || '').trim().slice(0, 80);
+    if (!['institution', 'employer'].includes(kind)) return fail(res, 400, 'Choose college or employer.');
+    if (!name || (kind === 'institution' && !city)) return fail(res, 400, kind === 'institution' ? 'Give the college name and city.' : 'Give the employer name.');
+    const table = kind === 'institution' ? 'institutions' : 'employers';
+    if (h.get(`SELECT id FROM ${table} WHERE lower(name) = lower(?)`, name)) return fail(res, 409, 'That name is already listed.');
+    const r = h.run(`INSERT INTO ${table} (name, city, is_sample) VALUES (?, ?, 0)`, name, city || null);
+    audit(req.user.id, 'admin.org_added', kind + ':' + r.lastInsertRowid);
+    res.status(201).json({ id: Number(r.lastInsertRowid) });
+  });
+  // Body: { rows: [{ name, email, role, org, mentorEmail }] }. All rows are checked first; nothing is saved if any row is wrong.
+  app.post('/api/admin/users', need('admin'), (req, res) => {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows.slice(0, 1000) : [];
+    if (!rows.length) return fail(res, 400, 'Add at least one person.');
+    const errors = [], seen = new Set(), clean = [];
+    const findOrg = (table, name) => h.get(`SELECT id FROM ${table} WHERE lower(name) = lower(?)`, String(name || '').trim());
+    rows.forEach((r, i) => {
+      if (!r || typeof r !== 'object') return errors.push(`Line ${i + 1}: could not be read.`);
+      const line = i + 1, name = String(r.name || '').trim().slice(0, 120), email = String(r.email || '').trim().toLowerCase(), role = String(r.role || '').trim().toLowerCase().replace(/\s+/g, '_');
+      if (!name) return errors.push(`Line ${line}: name is missing.`);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return errors.push(`Line ${line}: "${email}" is not a valid email.`);
+      if (seen.has(email) || h.get('SELECT id FROM users WHERE email = ?', email)) return errors.push(`Line ${line}: ${email} already has an account.`);
+      if (!['student', 'mentor', 'college_admin', 'employer', 'researcher', 'admin'].includes(role)) return errors.push(`Line ${line}: role must be student, mentor, college_admin, employer, researcher or admin.`);
+      let institution = null, employer = null;
+      if (ORG_ROLES[role] === 'institution') { const o = findOrg('institutions', r.org); if (!o) return errors.push(`Line ${line}: college "${r.org || ''}" is not listed. Add it first.`); institution = o.id; }
+      if (ORG_ROLES[role] === 'employer') { const o = findOrg('employers', r.org); if (!o) return errors.push(`Line ${line}: employer "${r.org || ''}" is not listed. Add it first.`); employer = o.id; }
+      const mentorEmail = String(r.mentorEmail || '').trim().toLowerCase();
+      if (mentorEmail && role !== 'student') return errors.push(`Line ${line}: only students have a mentor.`);
+      seen.add(email); clean.push({ line, name, email, role, institution, employer, mentorEmail });
+    });
+    // Mentors may be in the same upload, so check mentor emails against both.
+    for (const r of clean.filter((x) => x.mentorEmail)) {
+      const inBatch = clean.find((x) => x.email === r.mentorEmail && x.role === 'mentor');
+      const existing = h.get("SELECT id, institution_id FROM users WHERE email = ? AND role = 'mentor'", r.mentorEmail);
+      const m = inBatch || existing;
+      if (!m) errors.push(`Line ${r.line}: mentor ${r.mentorEmail} not found.`);
+      else if ((inBatch ? inBatch.institution : existing.institution_id) !== r.institution) errors.push(`Line ${r.line}: mentor ${r.mentorEmail} is at a different college.`);
+    }
+    if (errors.length) return fail(res, 400, errors.slice(0, 20).join(' '));
+    h.tx(() => {
+      for (const r of clean) r.id = Number(h.run('INSERT INTO users (email, name, role, institution_id, employer_id, is_sample) VALUES (?, ?, ?, ?, ?, 0)', r.email, r.name, r.role, r.institution, r.employer).lastInsertRowid);
+      for (const r of clean.filter((x) => x.mentorEmail)) {
+        const m = h.get("SELECT id FROM users WHERE email = ? AND role = 'mentor'", r.mentorEmail);
+        h.run('INSERT OR IGNORE INTO mentor_links (mentor_id, student_id) VALUES (?, ?)', m.id, r.id);
+      }
+    });
+    audit(req.user.id, 'admin.users_added', clean.length);
+    res.status(201).json({ added: clean.length });
+  });
+
+  // Remove someone's account (for example when they leave, or ask for their data to be erased).
+  app.delete('/api/admin/users/:id', need('admin'), (req, res) => {
+    const u = h.get('SELECT id, email, role FROM users WHERE id = ?', +req.params.id);
+    if (!u) return fail(res, 404, 'Not found.');
+    if (u.id === req.user.id) return fail(res, 400, 'You cannot remove your own account.');
+    removeAccount(u);
+    audit(req.user.id, 'admin.account_removed', u.role + ':' + u.id);
+    res.json({ removed: true });
+  });
+
+  // ---------- Frontend ----------
+  app.use(express.static(path.join(__dirname, '..', 'public'), { extensions: ['html'] }));
+  app.use('/api', (req, res) => fail(res, 404, 'Not found.'));
+  app.use((err, req, res, next) => { console.error(err); if (res.headersSent) return next(err); fail(res, err.status || 500, err.expose ? err.message : 'Something went wrong on our side. Try again.'); });
+
+  return app;
+}
+
+module.exports = { createApp };

@@ -1,0 +1,16 @@
+{
+  "name": "ngrm-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NGRM pilot platform: explainable graduate readiness score, student-controlled plan, mentor review, aggregated employer insight.",
+  "type": "commonjs",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --no-warnings server/index.js",
+    "seed": "node --no-warnings server/seed.js --reset",
+    "test": "node --no-warnings --test test/scoring.test.js test/api.test.js"
+  },
+  "dependencies": {
+    "express": "5.1.0"
+  }
+}

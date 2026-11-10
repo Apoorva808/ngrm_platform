@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Admin · NGRM</title>
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<div class="page-banner"><div class="container">
+  <div><span class="eyebrow">Administration</span><h1>Admin</h1><p class="lead">Add colleges, employers and people, tune the recommendation rules, and check the audit log. Every change is logged.</p></div>
+</div></div>
+<main id="main" tabindex="-1">
+<div class="container stack">
+  <section class="grid-4" id="kpis" aria-label="Account totals"></section>
+  <div class="grid-2">
+    <section class="card" aria-labelledby="pTitle">
+      <header><h2 id="pTitle">Add people</h2><span class="small muted">One person per line</span></header>
+      <form id="peopleForm" novalidate style="display:grid;gap:0.75rem">
+        <div class="field"><label for="p-rows">Name, email, role, college or employer, mentor email (students only)</label>
+          <textarea id="p-rows" rows="7" spellcheck="false" placeholder="Asha Rao, asha@college.edu, student, Sample College, Bengaluru, kavya@demo.ngrm.in"></textarea>
+          <span class="hint">Roles: student, mentor, college_admin, employer, researcher, admin. Leave the college blank for researchers and admins. Nothing is saved if any line has a mistake.</span></div>
+        <p class="small" id="p-err" style="color:var(--danger)" hidden></p>
+        <div><button class="btn btn-primary" type="submit">Add people</button></div>
+      </form>
+    </section>
+    <section class="card" aria-labelledby="oTitle">
+      <header><h2 id="oTitle">Colleges and employers</h2></header>
+      <form id="orgForm" novalidate style="display:grid;gap:0.75rem">
+        <div class="row-2"><div class="field"><label for="o-kind">Type</label><select id="o-kind"><option value="institution">College</option><option value="employer">Employer</option></select></div>
+          <div class="field"><label for="o-city">City</label><input type="text" id="o-city" maxlength="80"></div></div>
+        <div class="field"><label for="o-name">Name</label><input type="text" id="o-name" maxlength="160"></div>
+        <p class="small" id="o-err" style="color:var(--danger)" hidden></p>
+        <div><button class="btn btn-secondary" type="submit">Add</button></div>
+      </form>
+      <div id="orgs" style="margin-top:1rem;display:grid;gap:0.75rem"></div>
+    </section>
+  </div>
+  <section class="card" aria-labelledby="uTitle"><header><h2 id="uTitle">Accounts</h2><span class="small muted">Latest 15, or search</span></header>
+    <form id="findForm" role="search" novalidate style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem"><label class="sr-only" for="q">Search by name or email</label><input type="search" id="q" placeholder="Search by name or email" style="flex:1;min-width:12rem"><button class="btn btn-secondary btn-sm" type="submit">Search</button></form>
+    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>College or employer</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="recent"></tbody></table></div>
+    <p class="small muted" style="margin-top:0.5rem">Removing an account deletes the person’s data for good. Use it when someone leaves or asks to be erased.</p></section>
+  <section class="card" aria-labelledby="rTitle"><header><h2 id="rTitle">Recommendation rules</h2><span class="small muted">Changes apply on the student’s next page load</span></header>
+    <div class="table-wrap"><table><thead><tr><th>Rule</th><th>Factor</th><th>Timing</th><th class="n">Threshold</th><th>Active</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="rules"></tbody></table></div></section>
+  <section class="card" aria-labelledby="aTitle"><header><h2 id="aTitle">Audit log</h2><span class="small muted">Latest 100 events</span></header>
+    <div class="table-wrap"><table><thead><tr><th>When (UTC)</th><th class="n">User ID</th><th>Action</th><th>Target</th></tr></thead><tbody id="audit"></tbody></table></div></section>
+</div>
+</main>
+<script src="assets/app.js"></script>
+<script>
+(function () {
+  var N = NGRM, $ = N.$, esc = N.esc;
+  var ROLE = { student: 'Students', mentor: 'Mentors', college_admin: 'Placement cells', employer: 'Employer users', researcher: 'Researchers', admin: 'Admins' };
+  var HINT = { course: '0–100 (weakest skill below this)', project: '0–10 (fewer projects than this)', internship: '0–10 (fewer internships than this)', communication: '0–100', academic: '0–10 (CGPA below this)', clarity: '0–100', counsellor: '0–100 (flag as priority below this)' };
+  function loadPeople() {
+    return N.api('GET', '/api/admin/people?q=' + encodeURIComponent($('#q').value.trim())).then(function (d) {
+      var n = {}; d.roles.forEach(function (r) { n[r.role] = r.n; });
+      $('#kpis').innerHTML = ['student', 'mentor', 'college_admin', 'employer'].map(function (k) { return '<div class="kpi"><b>' + (n[k] || 0) + '</b><span>' + ROLE[k] + '</span></div>'; }).join('');
+      $('#orgs').innerHTML = '<div><b class="small">Colleges</b><ul class="small" style="margin:0.25rem 0 0;padding-left:1.1rem">' + d.institutions.map(function (i) { return '<li>' + esc(i.name) + ' · ' + i.students + ' students</li>'; }).join('') + '</ul></div>' +
+        '<div><b class="small">Employers</b><ul class="small" style="margin:0.25rem 0 0;padding-left:1.1rem">' + d.employers.map(function (e) { return '<li>' + esc(e.name) + '</li>'; }).join('') + '</ul></div>';
+      $('#recent').innerHTML = d.recent.map(function (u) { return '<tr><td>' + esc(u.name) + '</td><td>' + esc(u.email) + '</td><td>' + esc(u.role) + '</td><td>' + esc(u.org || '—') + '</td><td>' + (u.id === me.id ? '' : '<button class="btn-link" type="button" data-remove="' + u.id + '" data-name="' + esc(u.name) + '">Remove</button>') + '</td></tr>'; }).join('') || '<tr><td colspan="5" class="muted">No matching accounts.</td></tr>';
+    });
+  }
+  function loadRules() {
+    return N.api('GET', '/api/admin/rules').then(function (rules) {
+      $('#rules').innerHTML = rules.map(function (r) { return '<tr><td>' + esc(r.id) + '</td><td>' + esc(r.factor) + '</td><td>' + esc(r.slot) + '</td><td class="n"><input type="number" step="0.1" id="th-' + r.id + '" value="' + (r.threshold == null ? '' : r.threshold) + '" style="max-width:6rem" aria-label="Threshold for ' + esc(r.id) + '" title="' + esc(HINT[r.id] || 'No threshold') + '"' + (r.threshold == null ? ' disabled' : '') + '></td><td><input type="checkbox" id="ac-' + r.id + '"' + (r.active ? ' checked' : '') + (r.id === 'counsellor' ? ' disabled title="Always offered"' : '') + ' aria-label="Active: ' + esc(r.id) + '"></td><td><button class="btn btn-secondary btn-sm" type="button" data-save="' + r.id + '">Save</button></td></tr>'; }).join('');
+    });
+  }
+  function loadAudit() {
+    return N.api('GET', '/api/admin/audit?limit=100').then(function (a) { $('#audit').innerHTML = a.map(function (x) { return '<tr><td>' + esc(x.at) + '</td><td class="n">' + (x.user_id == null ? '—' : x.user_id) + '</td><td>' + esc(x.action) + '</td><td>' + esc(x.target || '') + '</td></tr>'; }).join(''); });
+  }
+  function fail(e) { N.toast(e.message); }
+  var me = {};
+  $('#findForm').addEventListener('submit', function (e) { e.preventDefault(); loadPeople().catch(fail); });
+  N.boot('admin', ['admin']).then(function (ctx) { me = ctx.me; loadPeople().catch(fail); loadRules().catch(fail); loadAudit().catch(fail); });
+
+  // A line can name a college that itself contains a comma ("Sample College, Bengaluru"), so read
+  // name, email and role from the start, the mentor email from the end, and treat the middle as the college.
+  function parseLine(line) {
+    var parts = line.split(',').map(function (x) { return x.trim(); });
+    var row = { name: parts[0], email: parts[1], role: parts[2] };
+    var rest = parts.slice(3);
+    if (rest.length && /@/.test(rest[rest.length - 1])) row.mentorEmail = rest.pop();
+    row.org = rest.join(', ');
+    return row;
+  }
+  $('#peopleForm').addEventListener('submit', function (e) {
+    e.preventDefault(); var err = $('#p-err');
+    var rows = $('#p-rows').value.split('\n').map(function (l) { return l.trim(); }).filter(Boolean).map(parseLine);
+    if (!rows.length) { err.hidden = false; err.textContent = 'Add at least one line.'; return; }
+    N.api('POST', '/api/admin/users', { rows: rows }).then(function (r) { err.hidden = true; $('#p-rows').value = ''; N.toast('Added ' + r.added + (r.added === 1 ? ' person.' : ' people.') + ' They can sign in with their email.'); loadPeople(); loadAudit(); })
+      .catch(function (x) { err.hidden = false; err.textContent = x.message; });
+  });
+  $('#orgForm').addEventListener('submit', function (e) {
+    e.preventDefault(); var err = $('#o-err');
+    N.api('POST', '/api/admin/orgs', { kind: $('#o-kind').value, name: $('#o-name').value, city: $('#o-city').value }).then(function () { err.hidden = true; $('#o-name').value = ''; N.toast('Added.'); loadPeople(); loadAudit(); })
+      .catch(function (x) { err.hidden = false; err.textContent = x.message; });
+  });
+  var armed = null;
+  document.addEventListener('click', function (e) {
+    var rm = e.target.closest('[data-remove]');
+    if (rm) {
+      // Two clicks: the first asks for confirmation in place, the second removes.
+      if (armed !== rm) { if (armed) armed.textContent = 'Remove'; armed = rm; rm.textContent = 'Click again to remove ' + rm.dataset.name; return; }
+      armed = null;
+      N.api('DELETE', '/api/admin/users/' + rm.dataset.remove).then(function () { N.toast('Removed ' + rm.dataset.name + '.'); loadPeople(); loadAudit(); }).catch(fail);
+      return;
+    }
+    var b = e.target.closest('[data-save]'); if (!b) return; var id = b.dataset.save, th = $('#th-' + id);
+    N.api('PATCH', '/api/admin/rules/' + id, { active: $('#ac-' + id).checked, threshold: th.disabled ? undefined : th.value }).then(function () { N.toast('Rule saved.'); loadRules(); loadAudit(); }).catch(fail);
+  });
+})();
+</script>
+</body>
+</html>

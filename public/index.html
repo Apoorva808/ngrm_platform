@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NGRM</title>
+<meta name="description" content="NGRM: an explainable graduate readiness score, a plan students control, mentor review, and aggregated employer insight.">
+<link rel="stylesheet" href="assets/site.css">
+<style>
+  .hero { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: 2.5rem; align-items: center; padding-block: 2.5rem 1rem; }
+  .hero .lead { font-size: 1.1rem; color: var(--muted); max-width: 58ch; margin-top: 1rem; }
+  .hero .cta { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1.5rem; }
+  @media (max-width: 860px) { .hero { grid-template-columns: minmax(0, 1fr); } }
+  .principles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
+  .principles > div { padding: 1.1rem; border-right: 1px solid var(--border); display: grid; gap: 0.3rem; align-content: start; }
+  .principles > div:last-child { border-right: 0; }
+  .principles .clause { font-size: 0.74rem; font-weight: 700; letter-spacing: 0.06em; color: var(--success); }
+  @media (max-width: 900px) { .principles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .principles > div:nth-child(2) { border-right: 0; } .principles > div:nth-child(-n+2) { border-bottom: 1px solid var(--border); } }
+  @media (max-width: 520px) { .principles { grid-template-columns: minmax(0, 1fr); } .principles > div { border-right: 0; border-bottom: 1px solid var(--border); } .principles > div:last-child { border-bottom: 0; } }
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; counter-reset: s; }
+  .steps li { counter-increment: s; display: grid; gap: 0.3rem; align-content: start; }
+  .steps li::before { content: counter(s); width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 0.9rem; }
+  @media (max-width: 860px) { .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 480px) { .steps { grid-template-columns: minmax(0, 1fr); } }
+  .who-list { display: grid; gap: 0.8rem; }
+  .who-list div { display: grid; gap: 0.15rem; padding-bottom: 0.8rem; border-bottom: 1px solid var(--border); }
+  .who-list div:last-child { border-bottom: 0; padding-bottom: 0; }
+</style>
+</head>
+<body>
+<main id="main" tabindex="-1">
+<div class="container stack">
+  <section class="hero" aria-labelledby="heroTitle">
+    <div>
+      <span class="chip accent">Pilot · Team NAVDRISHTI</span>
+      <h1 id="heroTitle" style="margin-top:0.9rem">Know where you stand. Know what to do next.</h1>
+      <p class="lead">NGRM gives every student a readiness score that shows its working, a semester-by-semester plan they can accept or turn down, and a faculty mentor who reviews it. Colleges see where the curriculum falls short. Employers see skill supply in totals, never a student’s name, profile or score.</p>
+      <div class="cta" id="cta"><a class="btn btn-primary" href="login.html">Sign in</a></div>
+    </div>
+    <div class="card who-list" aria-label="Who uses NGRM">
+      <div><b>Students</b><span class="small muted">A score with every rule shown, ranked next steps, a roadmap and control over their data.</span></div>
+      <div><b>Mentors and colleges</b><span class="small muted">A review queue, evidence to verify, and anonymised cohort gaps by programme.</span></div>
+      <div><b>Employers</b><span class="small muted">Skill supply in totals; post needs; request introductions to students who opt in.</span></div>
+      <div><b>Researchers</b><span class="small muted">De-identified data from consenting students, to test whether the score predicts jobs.</span></div>
+    </div>
+  </section>
+
+  <section class="principles" aria-label="Design principles">
+    <div><span class="clause">CLAUSE 3</span><b>AI suggests. People decide.</b><span class="small muted">The score is plain arithmetic on our server. AI only rewords reasons.</span></div>
+    <div><span class="clause">CLAUSE 6</span><b>Say no without a reason</b><span class="small muted">Students can turn down any recommendation, and nobody can override that.</span></div>
+    <div><span class="clause">CLAUSES 2 AND 5</span><b>Employers see totals, not people</b><span class="small muted">Any group under 5 is hidden. Introductions only with the student’s opt-in.</span></div>
+    <div><span class="clause">DPDP ACT 2023</span><b>Consent first</b><span class="small muted">Consent per purpose, guardian consent under 18, download and delete anytime.</span></div>
+  </section>
+
+  <section class="card" aria-labelledby="howTitle">
+    <header><h2 id="howTitle">How it works for a student</h2><span class="small muted">Sign in with a code sent to your college email</span></header>
+    <ol class="steps">
+      <li><b>Consent and profile</b><span class="small muted">Choose what NGRM may store, then add CGPA, role skills, personality results and evidence.</span></li>
+      <li><b>See the score and why</b><span class="small muted">Eight factors, each with its weight, the points earned and the rule behind it.</span></li>
+      <li><b>Accept or decline</b><span class="small muted">Accepted steps go into a semester plan. A mentor reviews each one.</span></li>
+      <li><b>Track what happens</b><span class="small muted">With consent, outcomes after graduation test whether the score predicted anything.</span></li>
+    </ol>
+  </section>
+</div>
+</main>
+<script src="assets/app.js"></script>
+<script>
+NGRM.boot('home').then(function (ctx) {
+  if (ctx.me) NGRM.$('#cta').innerHTML = '<a class="btn btn-primary" href="' + NGRM.HOME[ctx.me.role] + '">Go to my dashboard</a>';
+});
+</script>
+</body>
+</html>
