@@ -1,21 +1,32 @@
-# Render blueprint: New + > Blueprint > pick this repository.
-# This is a DEMO deployment (sample accounts, one-click sign-in). For real students, see README "Before real students".
+# Render blueprint for a LIVE PILOT with real students: New + > Blueprint > pick this repository.
+# Render asks for the values marked "sync: false" when you create it.
+# For a free demo with sample accounts instead, see README "Hosting a demo".
 services:
   - type: web
-    name: ngrm-demo
+    name: ngrm-pilot
     runtime: docker
-    plan: starter            # a paid plan is needed for the disk that keeps the database
+    plan: starter            # paid plan: needed for the disk that keeps the database and proof files
     healthCheckPath: /api/meta
     disk:
       name: ngrm-data
       mountPath: /data
       sizeGB: 1
     envVars:
-      - key: DEMO_MODE
-        value: "true"
-      - key: DEV_SHOW_OTP
-        value: "true"
+      - key: NODE_ENV
+        value: production
       - key: TRUST_PROXY
         value: "true"
       - key: SESSION_SECRET
         generateValue: true
+      - key: ORG_NAME          # who runs the pilot, shown on the privacy notice
+        sync: false
+      - key: PRIVACY_CONTACT   # email students write to about their data
+        sync: false
+      - key: ADMIN_EMAIL       # your email: becomes the first admin account
+        sync: false
+      - key: ADMIN_NAME
+        sync: false
+      - key: MAIL_FROM         # the sender address verified with Brevo or Resend
+        sync: false
+      - key: BREVO_API_KEY     # or delete this and add RESEND_API_KEY
+        sync: false

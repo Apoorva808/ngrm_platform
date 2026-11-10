@@ -13,7 +13,7 @@ Requires Node.js 22.13 or newer (tested on 22.13, 22.23 and 24). Nothing else is
 npm install
 cp .env.example .env      # demo settings are already on
 npm start                 # http://localhost:3000
-npm test                  # 55 tests
+npm test                  # 56 tests
 npm run seed              # wipe and reload the sample data
 ```
 
@@ -77,9 +77,9 @@ AI is optional. When switched on (`GEMINI_API_KEY` and the student's AI consent)
 
 ## Quality checks done
 
-- 55 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
+- 56 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
 - The tests pass on Node 22.13, 22.23 and 24. Node 22.12 and older cannot run the built-in database, and the server says so.
-- A browser walk-through of every page for all six roles (119 checks), at desktop and phone widths, with no server errors.
+- A browser walk-through of every page for all six roles (120 checks), at desktop and phone widths, with no server errors.
 - An automated accessibility scan (axe-core, WCAG 2.1 AA) of every page in normal and high-contrast mode: no violations. Keyboard-only use works.
 - Speed with 20,000 extra students: every page answers in under 0.2 seconds.
 - The Postgres scripts were applied to Postgres 16 and their access rules tested role by role.
@@ -112,6 +112,7 @@ Not yet tested, because they need real services: email delivery, the live Gemini
 | `DB_FILE` | Local database path |
 | `MAIL_FROM`, `RESEND_API_KEY` or `BREVO_API_KEY` | Emails sign-in codes. Without these, codes only appear in the server log (development) and nobody can sign in (production) |
 | `UPLOAD_DIR` | Where proof files are kept. Default: an `uploads` folder beside the database |
+| `ORG_NAME`, `PRIVACY_CONTACT` | Required in production. Shown on the privacy notice: who runs the pilot and whom to write to |
 | `NODE_ENV` | Set to `production` when live. The server will not start in production with demo settings on |
 | `ADMIN_EMAIL`, `ADMIN_NAME` | Production: the first admin account, created on start-up. Production starts with no sample people |
 | `TRUST_PROXY` | `true` when running behind a hosting proxy, so the per-network sign-in limit sees real visitor addresses |
@@ -139,12 +140,25 @@ and replace `server/db.js` queries with Supabase calls. The API routes and pages
 - Validation of the score weights with the pilot cohort before any decisions rely on them.
 - Later: DigiLocker and APAAR linking for verified credentials.
 
+## Launching the pilot with real students
+
+`render.yaml` sets up the live pilot. You need three accounts: GitHub (done), Render, and Brevo or Resend for email.
+
+1. **Email.** Create a Brevo (or Resend) account, verify the address codes will be sent from, and copy the API key.
+2. **Host.** On render.com choose New > Blueprint and pick this repository. Fill in what it asks for: `ORG_NAME` (who runs the pilot), `PRIVACY_CONTACT` (an email students can write to), `ADMIN_EMAIL` and `ADMIN_NAME` (you), `MAIL_FROM` and `BREVO_API_KEY`. It needs the Starter plan, because the disk keeps the database and proof files.
+3. **Check sign-in.** Open the site, enter your admin email, and confirm the code reaches your inbox.
+4. **Add people.** On the Admin page add the college, then mentors, then students (one per line, with their mentor's email).
+5. **Read the privacy notice** at `/privacy.html` and edit `public/privacy.html` if anything differs from how you will run the pilot (retention, contact, who the responsible organisation is).
+6. **Tell students** the address. They sign in with their college email, read the notice, and choose their consents.
+
+The server refuses to start in live mode without the operator name, privacy contact and a strong session secret. Keep backups: check your host's disk snapshot settings before students start, and take a copy of `/data` before any upgrade.
+
 ## Hosting a demo
 
 The repository includes a `Dockerfile` and a Render blueprint (`render.yaml`).
 
 1. Put this folder in a GitHub repository.
-2. On render.com choose New > Blueprint and pick the repository. It builds the app, attaches a small disk for the database and sets a random session secret.
+2. On render.com choose New > Web Service, pick the repository, choose the Free instance type, and add `DEMO_MODE=true` and `DEV_SHOW_OTP=true`. Data resets whenever the free service sleeps or restarts.
 3. Open the address Render gives you. The sign-in page shows the sample accounts.
 
 This runs in demo mode with sample data. Any host that runs Docker with a persistent volume mounted at `/data` works the same way (Railway, Fly.io, a VPS). Before real students use it, follow "Before real students": production mode, an email provider, and the legal checks.

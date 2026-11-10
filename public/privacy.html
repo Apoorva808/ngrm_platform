@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Privacy notice · NGRM</title>
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<div class="page-banner"><div class="container">
+  <div><span class="eyebrow">Your data</span><h1>Privacy notice</h1><p class="lead">What NGRM collects, why, who can see it, and how to take it back. Written to be read in two minutes.</p></div>
+</div></div>
+<main id="main" tabindex="-1">
+<div class="container stack" style="max-width:48rem">
+  <section class="card"><h2>Who runs this</h2><p id="who"></p></section>
+  <section class="card"><h2>What we collect, and only with your consent</h2>
+    <ul>
+      <li><b>Account:</b> your name, college email and college, added by your college or the pilot team.</li>
+      <li><b>Profile:</b> programme, year, CGPA, target role, your skill ratings and career-clarity rating.</li>
+      <li><b>Evidence:</b> courses, certificates, projects, internships and roles you add, and any proof files you upload.</li>
+      <li><b>Personality results:</b> only if you separately agree, and only once you enter all five traits yourself.</li>
+      <li><b>Your choices:</b> which plan steps you accepted or declined, and each consent you gave or withdrew.</li>
+    </ul>
+    <p>Each use has its own consent, and you can say no to any of them except the profile, which the service cannot work without. If you are under 18, a parent or guardian must agree.</p></section>
+  <section class="card"><h2>What we do with it</h2>
+    <ul>
+      <li>Work out your readiness score with a fixed, published formula. No AI decides your score.</li>
+      <li>Suggest next steps. You accept or decline each one; a mentor cannot override a decline.</li>
+      <li>If you agree, an AI service rewords the reason for a step. It never receives your name or email.</li>
+      <li>If you agree, include your figures, without your name, in the outcome study.</li>
+    </ul></section>
+  <section class="card"><h2>Who can see what</h2>
+    <ul>
+      <li><b>You:</b> everything, including a full download.</li>
+      <li><b>Your mentor:</b> your profile, evidence, proof files and plan.</li>
+      <li><b>Your college’s placement cell:</b> rounded totals only. It sees your name only if you say you are interested in an employer’s introduction request.</li>
+      <li><b>Employers:</b> rounded totals only. Never your name, profile or score. Groups under 5 are hidden.</li>
+      <li><b>Researchers:</b> figures under a code, not your name, and only if you joined the study.</li>
+      <li><b>Admins:</b> account details and a log of actions, to run the service.</li>
+    </ul>
+    <p>We do not sell your data or use it for advertising.</p></section>
+  <section class="card"><h2>Your rights</h2>
+    <ul>
+      <li><b>See and download</b> everything we hold about you, on the Evidence and privacy page.</li>
+      <li><b>Correct</b> your profile and evidence at any time.</li>
+      <li><b>Withdraw</b> any consent. That use stops; withdrawing personality consent also removes those results from earlier scores.</li>
+      <li><b>Delete</b> your account. Your profile, evidence, files, scores and plan are removed for good.</li>
+      <li><b>Complain or ask a question:</b> <span id="contact"></span></li>
+    </ul></section>
+  <section class="card"><h2>How long we keep it</h2><p>Until you delete your account or the pilot ends, whichever comes first. Sign-in codes are kept for 10 minutes and sign-in sessions for 7 days.</p></section>
+  <p class="small muted" id="demoNote"></p>
+</div>
+</main>
+<script src="assets/app.js"></script>
+<script>
+(function () {
+  var N = NGRM, $ = N.$, esc = N.esc;
+  N.boot('privacy').then(function (ctx) {
+    var o = ctx.meta.operator || {};
+    $('#who').textContent = o.name ? 'This NGRM pilot is run by ' + o.name + ', which decides how your data is used and is responsible for it.' : 'This is a demonstration with sample data. A live pilot names the organisation responsible for your data here.';
+    $('#contact').innerHTML = o.contact ? 'write to <a href="mailto:' + esc(o.contact) + '">' + esc(o.contact) + '</a>.' : 'a live pilot lists a contact email here.';
+    if (ctx.meta.demoMode) $('#demoNote').textContent = 'Demo mode: all people shown are fictional.';
+  });
+})();
+</script>
+</body>
+</html>

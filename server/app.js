@@ -112,6 +112,8 @@ function createApp(db, opts = {}) {
   app.get('/api/meta', (req, res) => res.json({
     formulaVersion: D.FORMULA_VERSION, minGroup: D.MIN_GROUP, factors: D.FACTORS, roles: D.ROLES, programmes: D.PROGRAMMES,
     evidenceTypes: D.EVIDENCE_TYPES, slots: D.SLOTS, consentPurposes: D.CONSENT_PURPOSES, demoMode,
+    // Who runs this pilot and whom to contact about personal data (shown on the privacy notice).
+    operator: { name: String(process.env.ORG_NAME || '').slice(0, 120) || null, contact: String(process.env.PRIVACY_CONTACT || '').slice(0, 160) || null },
   }));
 
   // ---------- Auth ----------

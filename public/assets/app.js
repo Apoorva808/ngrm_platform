@@ -78,7 +78,7 @@
     if (banner && main && banner.parentNode !== main) main.insertBefore(banner, main.firstChild);
     var foot = document.createElement('footer'); foot.className = 'site-footer';
     foot.innerHTML = '<div class="container"><div><p><b>NGRM · National Graduate Readiness Mission</b></p><p class="muted">Built by Team NAVDRISHTI. An independent, student-founded project. Not a government service.</p></div>' +
-      '<div><p class="muted">' + (demo ? 'Pilot. All people, colleges, employers and figures are sample data. ' : 'Pilot. ') + 'Scoring formula ' + esc(meta ? meta.formulaVersion : 'v0.1') + '. Designed for the Digital Personal Data Protection Act, 2023.</p></div></div>';
+      '<div><p class="muted">' + (demo ? 'Pilot. All people, colleges, employers and figures are sample data. ' : 'Pilot. ') + 'Scoring formula ' + esc(meta ? meta.formulaVersion : 'v0.1') + '. Designed for the Digital Personal Data Protection Act, 2023. <a href="privacy.html">Privacy notice</a></p></div></div>';
     document.body.appendChild(foot);
     var t = document.createElement('div'); t.id = 'toasts'; t.setAttribute('role', 'status'); t.setAttribute('aria-live', 'polite'); document.body.appendChild(t);
 
@@ -121,7 +121,7 @@
       '<fieldset><legend class="small">Are you 18 or older?</legend><div style="display:flex;gap:1.25rem;flex-wrap:wrap"><label class="check"><input type="radio" name="adult" id="adult-y" value="y" checked> Yes</label><label class="check"><input type="radio" name="adult" id="adult-n" value="n"> No</label></div></fieldset>' +
       '<div class="field" id="guardianBox" hidden><label for="g-name">Parent or guardian’s name</label><input type="text" id="g-name"><label class="check" style="margin-top:0.4rem"><input type="checkbox" id="g-ok"> <span>My parent or guardian has read this and agrees (needed under the DPDP Act for anyone under 18)</span></label></div>' +
       keys.map(function (k) { return '<label class="check"><input type="checkbox" id="c-' + k + '"' + (current && current[k] ? ' checked' : '') + '> <span>' + esc(meta.consentPurposes[k]) + (k === 'profile' ? ' <b>(needed)</b>' : '') + '</span></label>'; }).join('') +
-      '<p class="small" id="consentErr" style="color:var(--danger)" hidden></p><div><button class="btn btn-primary" type="submit">' + esc(opts.button || 'Save my choices') + '</button></div></form>';
+      '<p class="small">Before you choose, read the <a href="privacy.html" target="_blank" rel="noopener">privacy notice</a>: what is collected, who sees it, and how to take it back.</p><p class="small" id="consentErr" style="color:var(--danger)" hidden></p><div><button class="btn btn-primary" type="submit">' + esc(opts.button || 'Save my choices') + '</button></div></form>';
     // Keep a recorded under-18 status and guardian, so updating consent later does not quietly mark the student as an adult.
     if (current && current.isAdult === false) { $('#adult-n', el).checked = true; $('#guardianBox', el).hidden = false; $('#g-name', el).value = current.guardianName || ''; }
     $$('input[name=adult]', el).forEach(function (r) { r.addEventListener('change', function () { $('#guardianBox', el).hidden = $('#adult-y', el).checked; }); });

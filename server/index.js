@@ -16,6 +16,10 @@ if (fs.existsSync(envFile)) {
     if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
   }
 }
+if (process.env.NODE_ENV === 'production' && (!process.env.ORG_NAME || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(process.env.PRIVACY_CONTACT || ''))) {
+  console.error('Refusing to start in production: set ORG_NAME (who runs this pilot) and PRIVACY_CONTACT (an email students can write to about their data). They appear on the privacy notice.');
+  process.exit(1);
+}
 if (process.env.NODE_ENV === 'production' && (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32 || /change-me/.test(process.env.SESSION_SECRET) || process.env.DEMO_MODE === 'true' || process.env.DEV_SHOW_OTP === 'true')) {
   console.error('Refusing to start in production: set SESSION_SECRET to a long random value (32+ characters, not the example), and turn off DEMO_MODE and DEV_SHOW_OTP.');
   process.exit(1);

@@ -506,7 +506,7 @@ test('sample study baselines store their inputs, like real ones', () => {
 test('production refuses a short or example session secret', () => {
   const { spawnSync } = require('node:child_process');
   for (const secret of ['short', 'change-me-to-a-long-random-string-xxxxxxxxxx']) {
-    const r = spawnSync(process.execPath, ['--no-warnings', 'server/index.js'], { env: { ...process.env, NODE_ENV: 'production', SESSION_SECRET: secret, DEMO_MODE: 'false', DEV_SHOW_OTP: 'false', DB_FILE: ':memory:', PORT: '0' }, timeout: 5000, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, ['--no-warnings', 'server/index.js'], { env: { ...process.env, NODE_ENV: 'production', SESSION_SECRET: secret, ORG_NAME: 'Test Org', PRIVACY_CONTACT: 'p@test.org', DEMO_MODE: 'false', DEV_SHOW_OTP: 'false', DB_FILE: ':memory:', PORT: '0' }, timeout: 5000, encoding: 'utf8' });
     assert.match(r.stderr, /Refusing to start/);
   }
 });
@@ -583,4 +583,13 @@ test('course steps carry real, checked courses for the exact weak skill, plus li
   await admin('DELETE', '/api/admin/courses/' + added.body.id);
   bootstrap(db, {});
   assert.equal(h.get("SELECT COUNT(*) AS n FROM courses WHERE title = 'Intro to SQL'").n, 1, 'restarting never duplicates the catalogue');
+});
+
+test('the privacy notice is public and names the operator; production will not start without one', async () => {
+  const page = await fetch(base + '/privacy.html'); assert.equal(page.status, 200);
+  assert.match(await page.text(), /Who can see what/);
+  assert.ok('operator' in (await (await fetch(base + '/api/meta')).json()));
+  const { spawnSync } = require('node:child_process');
+  const env = { ...process.env, NODE_ENV: 'production', SESSION_SECRET: 'x'.repeat(40), DEMO_MODE: 'false', DEV_SHOW_OTP: 'false', DB_FILE: ':memory:', PORT: '0', ORG_NAME: '', PRIVACY_CONTACT: '' };
+  assert.match(spawnSync(process.execPath, ['--no-warnings', 'server/index.js'], { env, timeout: 5000, encoding: 'utf8' }).stderr, /ORG_NAME/);
 });
