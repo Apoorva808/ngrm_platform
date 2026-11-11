@@ -640,3 +640,38 @@ test('live activity: exact for admins, rounded and college-only for placement ce
   assert.equal((await employer('GET', '/api/college/activity')).status, 403);
   assert.equal((await student('GET', '/api/admin/feeds')).status, 403);
 });
+
+test('passwords: optional for every role, hashed, guess-limited, and reset by emailed code', async () => {
+  const pw = 'river stones at dawn';
+  for (const email of ['ananya@demo.ngrm.in', 'kavya@demo.ngrm.in', 'placement@demo.ngrm.in', 'recruiter@demo.ngrm.in', 'research@demo.ngrm.in', 'admin@demo.ngrm.in']) {
+    const c = await as(email);
+    assert.equal((await c('GET', '/api/me')).body.user.hasPassword, false);
+    assert.equal((await c('POST', '/api/me/password', { password: pw })).status, 200, email);
+    const fresh = client();
+    const r = await fresh('POST', '/api/auth/password', { email: email.toUpperCase(), password: pw });
+    assert.equal(r.status, 200); assert.equal((await fresh('GET', '/api/me')).body.user.signedInWith, 'password');
+  }
+  const stored = h.get("SELECT p.hash FROM passwords p JOIN users u ON u.id = p.user_id WHERE u.email = 'ananya@demo.ngrm.in'").hash;
+  assert.ok(stored.startsWith('scrypt$') && !stored.includes(pw), 'only a salted hash is stored');
+  const c = client();
+  for (const bad of ['short', 'aaaaaaaaaaaa', 'ananya-ananya-1']) { const s = await as('ananya@demo.ngrm.in'); assert.equal((await s('POST', '/api/me/password', { password: bad })).status, 400, bad); }
+  // Unknown email, account without password, and wrong password all get the same answer.
+  const wrong = await c('POST', '/api/auth/password', { email: 'ananya@demo.ngrm.in', password: 'not the password' });
+  const ghost = await c('POST', '/api/auth/password', { email: 'ghost@example.com', password: 'not the password' });
+  assert.equal(wrong.status, 400); assert.deepEqual(wrong.body, ghost.body);
+  // Signed in by password: changing it needs the current one.
+  const viaPw = client(); await viaPw('POST', '/api/auth/password', { email: 'kavya@demo.ngrm.in', password: pw });
+  assert.equal((await viaPw('POST', '/api/me/password', { password: 'a different long one', current: 'wrong' })).status, 400);
+  assert.equal((await viaPw('POST', '/api/me/password', { password: 'a different long one', current: pw })).status, 200);
+  const old = client(); assert.equal((await old('POST', '/api/auth/password', { email: 'kavya@demo.ngrm.in', password: pw })).status, 400, 'old password stops working');
+  // Forgot it: an emailed-code sign-in can set a new one without the old.
+  const viaCode = await as('kavya@demo.ngrm.in');
+  assert.equal((await viaCode('POST', '/api/me/password', { password: 'reset after forgetting' })).status, 200);
+  assert.equal((await viaPw('GET', '/api/me')).body.user, null, 'other devices are signed out when the password changes');
+  // Five wrong tries lock password sign-in for that email; the right password is refused until the wait is over.
+  const g = client(); let last;
+  for (let i = 0; i < 6; i++) last = await g('POST', '/api/auth/password', { email: 'research@demo.ngrm.in', password: 'guess number ' + i });
+  assert.equal(last.status, 429);
+  assert.equal((await g('POST', '/api/auth/password', { email: 'research@demo.ngrm.in', password: pw })).status, 429);
+  h.run('DELETE FROM login_failures'); h.run('DELETE FROM passwords');
+});

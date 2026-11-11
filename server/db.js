@@ -17,6 +17,7 @@ function open(file) {
 function migrate(db) {
   const cols = db.prepare('PRAGMA table_info(evidence)').all().map((c) => c.name);
   if (!cols.includes('skill_value')) db.exec('ALTER TABLE evidence ADD COLUMN skill_value INTEGER');
+  if (!db.prepare('PRAGMA table_info(sessions)').all().some((c) => c.name === 'via')) db.exec("ALTER TABLE sessions ADD COLUMN via TEXT NOT NULL DEFAULT 'code'");
   for (const c of ['file_path', 'file_type']) if (!cols.includes(c)) db.exec(`ALTER TABLE evidence ADD COLUMN ${c} TEXT`);
 }
 

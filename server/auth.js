@@ -8,7 +8,19 @@ const OTP_TTL_MS = 10 * 60 * 1000;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
 const MIN_GAP_MS = 30 * 1000;        // at most one code every 30 seconds per email
-const HOURLY_LIMIT = 5;              // and five per hour, so codes cannot be guessed by asking again and again
+const HOURLY_LIMIT = 5;
+const PW_WINDOW_MS = 15 * 60 * 1000; // five wrong passwords in 15 minutes locks password sign-in for that email
+const PW_MIN = 10;
+
+// Passwords are stored only as salted scrypt hashes.
+const hashPassword = (pw, salt = crypto.randomBytes(16).toString('hex')) => 'scrypt$' + salt + '$' + crypto.scryptSync(String(pw), salt, 32).toString('hex');
+function passwordMatches(stored, pw) {
+  const [, salt, want] = String(stored || '').split('$');
+  if (!salt || !want) return false;
+  const a = Buffer.from(hashPassword(pw, salt).split('$')[2], 'hex'), b = Buffer.from(want, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+const DUMMY = hashPassword('not-a-real-password', '00');              // and five per hour, so codes cannot be guessed by asking again and again
 
 function makeAuth(h, { audit, sendCode }) {
   function requestCode(email) {
@@ -47,10 +59,42 @@ function makeAuth(h, { audit, sendCode }) {
     return { token: startSession(user.id), user };
   }
 
-  function startSession(userId) {
+  const hasPassword = (userId) => !!h.get('SELECT 1 FROM passwords WHERE user_id = ?', userId);
+  function passwordProblem(pw, email) {
+    pw = String(pw ?? '');
+    if (pw.length < PW_MIN) return `Use at least ${PW_MIN} characters. A short sentence works well.`;
+    if (pw.length > 200) return 'That password is too long.';
+    if (new Set(pw).size < 5) return 'Use more varied characters.';
+    if (email && pw.toLowerCase().includes(String(email).split('@')[0].toLowerCase())) return 'Do not use your email name in the password.';
+    return null;
+  }
+  // Sets or changes a password and signs the person out everywhere else.
+  function setPassword(user, pw, keepToken) {
+    const problem = passwordProblem(pw, user.email); if (problem) return { error: problem };
+    h.run("INSERT INTO passwords (user_id, hash) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET hash = excluded.hash, updated_at = datetime('now')", user.id, hashPassword(pw));
+    h.run('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?', user.id, keepToken ? hash(keepToken) : '');
+    audit(user.id, 'auth.password_set');
+    return { ok: true };
+  }
+  const checkPassword = (userId, pw) => passwordMatches((h.get('SELECT hash FROM passwords WHERE user_id = ?', userId) || {}).hash, pw);
+  function signInWithPassword(email, pw) {
+    email = String(email || '').trim().toLowerCase();
+    const now = Date.now();
+    h.run('DELETE FROM login_failures WHERE at < ?', now - PW_WINDOW_MS);
+    if (h.get('SELECT COUNT(*) AS n FROM login_failures WHERE email = ?', email).n >= MAX_ATTEMPTS) return { error: 'Too many wrong tries. Wait 15 minutes, or sign in with an emailed code.', status: 429 };
+    const user = h.get('SELECT * FROM users WHERE email = ?', email);
+    const row = user && h.get('SELECT hash FROM passwords WHERE user_id = ?', user.id);
+    // The same work and the same answer whether the email exists, has a password, or the password is wrong.
+    const ok = passwordMatches(row ? row.hash : DUMMY, pw) && !!row;
+    if (!ok) { h.run('INSERT INTO login_failures (email, at) VALUES (?, ?)', email, now); return { error: 'That email and password do not match. You can also sign in with an emailed code.', status: 400 }; }
+    h.run('DELETE FROM login_failures WHERE email = ?', email);
+    return { token: startSession(user.id, 'password'), user };
+  }
+
+  function startSession(userId, via = 'code') {
     h.run('DELETE FROM sessions WHERE expires_at < ?', Date.now());
     const token = crypto.randomBytes(32).toString('hex');
-    h.run('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)', hash(token), userId, Date.now() + SESSION_TTL_MS);
+    h.run('INSERT INTO sessions (token_hash, user_id, expires_at, via) VALUES (?, ?, ?, ?)', hash(token), userId, Date.now() + SESSION_TTL_MS, via);
     audit(userId, 'auth.signed_in');
     return token;
   }
@@ -59,12 +103,13 @@ function makeAuth(h, { audit, sendCode }) {
 
   function userFromToken(token) {
     if (!token) return null;
-    const s = h.get('SELECT user_id, expires_at FROM sessions WHERE token_hash = ?', hash(token));
+    const s = h.get('SELECT user_id, expires_at, via FROM sessions WHERE token_hash = ?', hash(token));
     if (!s || s.expires_at < Date.now()) return null;
-    return h.get('SELECT id, email, name, role, institution_id, employer_id FROM users WHERE id = ?', s.user_id) || null;
+    const u = h.get('SELECT id, email, name, role, institution_id, employer_id FROM users WHERE id = ?', s.user_id);
+    return u ? { ...u, via: s.via } : null;
   }
 
-  return { requestCode, verifyCode, startSession, endSession, userFromToken, SESSION_TTL_MS };
+  return { requestCode, verifyCode, startSession, endSession, userFromToken, signInWithPassword, setPassword, checkPassword, hasPassword, SESSION_TTL_MS };
 }
 
 function readCookie(req, name) {

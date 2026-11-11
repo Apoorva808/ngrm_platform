@@ -146,6 +146,21 @@ function createApp(db, opts = {}) {
     if (r.error) return fail(res, 400, r.error);
     setCookie(res, r.token); res.json({ user: { id: r.user.id, name: r.user.name, role: r.user.role } });
   });
+  // Sign in with a password instead of a code (for people who have set one).
+  app.post('/api/auth/password', (req, res) => {
+    const r = auth.signInWithPassword(req.body?.email, req.body?.password);
+    if (r.error) return fail(res, r.status, r.error);
+    setCookie(res, r.token); res.json({ user: { id: r.user.id, name: r.user.name, role: r.user.role } });
+  });
+  // Set or change your own password. Changing one needs the current password, unless you just signed in
+  // with an emailed code: that is how a forgotten password is reset.
+  app.post('/api/me/password', need(), (req, res) => {
+    if (auth.hasPassword(req.user.id) && req.user.via !== 'code' && !auth.checkPassword(req.user.id, req.body?.current))
+      return fail(res, 400, 'Your current password is not right. Forgot it? Sign out, sign in with an emailed code, and set a new one.');
+    const r = auth.setPassword(req.user, req.body?.password, req.token);
+    if (r.error) return fail(res, 400, r.error);
+    res.json({ ok: true });
+  });
   app.get('/api/auth/demo-users', (req, res) => {
     if (!demoMode) return fail(res, 404, 'Not available.');
     res.json(h.all("SELECT u.email, u.name, u.role FROM users u WHERE u.email LIKE '%@demo.ngrm.in' ORDER BY CASE u.role WHEN 'student' THEN 1 WHEN 'mentor' THEN 2 WHEN 'college_admin' THEN 3 WHEN 'employer' THEN 4 WHEN 'researcher' THEN 5 ELSE 6 END"));
@@ -162,7 +177,7 @@ function createApp(db, opts = {}) {
     const u = req.user;
     const inst = u.institution_id ? h.get('SELECT name, city FROM institutions WHERE id = ?', u.institution_id) : null;
     const emp = u.employer_id ? h.get('SELECT name FROM employers WHERE id = ?', u.employer_id) : null;
-    res.json({ user: { id: u.id, name: u.name, email: u.email, role: u.role, institution: inst, employer: emp }, consents: u.role === 'student' ? consents(u.id) : undefined });
+    res.json({ user: { id: u.id, name: u.name, email: u.email, role: u.role, institution: inst, employer: emp, hasPassword: auth.hasPassword(u.id), signedInWith: u.via }, consents: u.role === 'student' ? consents(u.id) : undefined });
   });
 
   // ---------- Student: consent ----------
@@ -395,7 +410,7 @@ function createApp(db, opts = {}) {
 
   function removeAccount(u) {
     for (const e of h.all('SELECT file_path FROM evidence WHERE user_id = ? AND file_path IS NOT NULL', u.id)) dropFile(e.file_path);
-    h.tx(() => { h.run('UPDATE recommendation_states SET mentor_id = NULL WHERE mentor_id = ?', u.id); h.run('DELETE FROM otp_codes WHERE email = ?', u.email); h.run('DELETE FROM otp_requests WHERE email = ?', u.email); h.run('DELETE FROM users WHERE id = ?', u.id); });
+    h.tx(() => { h.run('DELETE FROM login_failures WHERE email = ?', u.email); h.run('UPDATE recommendation_states SET mentor_id = NULL WHERE mentor_id = ?', u.id); h.run('DELETE FROM otp_codes WHERE email = ?', u.email); h.run('DELETE FROM otp_requests WHERE email = ?', u.email); h.run('DELETE FROM users WHERE id = ?', u.id); });
   }
 
   // ---------- Live platform activity ----------

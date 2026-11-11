@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Your account · NGRM</title>
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<div class="page-banner"><div class="container">
+  <div><span class="eyebrow">Account</span><h1>Your account</h1><p class="lead">How you sign in. An emailed code always works; a password is optional.</p></div>
+</div></div>
+<main id="main" tabindex="-1">
+<div class="container stack" style="max-width:40rem">
+  <section class="card" aria-labelledby="whoTitle"><h2 id="whoTitle">Signed in as</h2><p id="who"></p></section>
+  <section class="card" aria-labelledby="pwTitle">
+    <h2 id="pwTitle">Password</h2>
+    <p class="small" id="pwState"></p>
+    <form id="pwForm" novalidate style="display:grid;gap:0.85rem">
+      <div class="field" id="curBox" hidden><label for="current">Current password</label><input type="password" id="current" autocomplete="current-password" maxlength="200"></div>
+      <div class="field"><label for="pw1">New password</label><input type="password" id="pw1" autocomplete="new-password" maxlength="200" aria-describedby="pwHint"><span class="hint" id="pwHint">At least 10 characters. A short sentence is easy to remember and hard to guess.</span></div>
+      <div class="field"><label for="pw2">Type it again</label><input type="password" id="pw2" autocomplete="new-password" maxlength="200"></div>
+      <p class="small" id="pwErr" style="color:var(--danger)" hidden></p>
+      <div><button class="btn btn-primary" type="submit" id="pwBtn">Save password</button></div>
+    </form>
+    <p class="small muted" style="margin-top:0.75rem">Saving a password signs you out on your other devices. If you forget it, sign in with an emailed code and set a new one here.</p>
+  </section>
+</div>
+</main>
+<script src="assets/app.js"></script>
+<script>
+(function () {
+  var N = NGRM, $ = N.$;
+  var ROLE = { student: 'Student', mentor: 'Faculty mentor', college_admin: 'College placement cell', employer: 'Employer', researcher: 'Researcher', admin: 'Admin' };
+  function show(me) {
+    $('#who').textContent = me.name + ' · ' + me.email + ' · ' + ROLE[me.role];
+    // Changing a password needs the current one, unless you signed in with an emailed code (the reset route).
+    var needCurrent = me.hasPassword && me.signedInWith !== 'code';
+    $('#curBox').hidden = !needCurrent;
+    $('#pwState').textContent = me.hasPassword ? 'You have a password. You can sign in with it or with an emailed code.' : 'You have no password yet. You sign in with an emailed code. Set one below if you would like to.';
+    $('#pwBtn').textContent = me.hasPassword ? 'Change password' : 'Save password';
+  }
+  N.boot('account', ['student', 'mentor', 'college_admin', 'employer', 'researcher', 'admin']).then(function (ctx) { show(ctx.me); });
+  $('#pwForm').addEventListener('submit', function (e) {
+    e.preventDefault(); var err = $('#pwErr'), fail = function (m) { err.hidden = false; err.textContent = m; };
+    if ($('#pw1').value !== $('#pw2').value) return fail('The two passwords are not the same.');
+    N.api('POST', '/api/me/password', { password: $('#pw1').value, current: $('#current').value }).then(function () {
+      err.hidden = true; ['#pw1', '#pw2', '#current'].forEach(function (i) { $(i).value = ''; });
+      N.toast('Password saved. You can use it next time you sign in.');
+      return N.api('GET', '/api/me').then(function (r) { show(r.user); });
+    }).catch(function (x) { fail(x.message); });
+  });
+})();
+</script>
+</body>
+</html>

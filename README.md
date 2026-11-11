@@ -13,7 +13,7 @@ Requires Node.js 22.13 or newer (tested on 22.13, 22.23 and 24). Nothing else is
 npm install
 cp .env.example .env      # demo settings are already on
 npm start                 # http://localhost:3000
-npm test                  # 58 tests
+npm test                  # 59 tests
 npm run seed              # wipe and reload the sample data
 ```
 
@@ -36,6 +36,8 @@ The sample students (`student1@sample.ngrm.in` to `student383@sample.ngrm.in`) s
 
 There is no open sign-up. An admin adds people on the Admin page, one per line:
 `name, email, role, college or employer, mentor email`. Nothing is saved if any line has a mistake.
+**Two ways to sign in, for all six roles.** An emailed one-time code always works. Anyone who prefers a password can set one on their Account page (click their name, top right) and then use either. Passwords are stored only as salted scrypt hashes, need at least 10 characters, and lock for 15 minutes after five wrong tries. A forgotten password is reset by signing in with a code and setting a new one; changing it signs the person out elsewhere.
+
 Codes are limited to one every 30 seconds and five an hour per email, and lock after five wrong tries.
 Admins can search for an account and remove it (for example when someone leaves or asks to be erased). A mentor's past reviews stay with the student.
 
@@ -80,9 +82,9 @@ AI is optional. When switched on (`GEMINI_API_KEY` and the student's AI consent)
 
 ## Quality checks done
 
-- 58 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
+- 59 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
 - The tests pass on Node 22.13, 22.23 and 24. Node 22.12 and older cannot run the built-in database, and the server says so.
-- A browser walk-through of every page for all six roles (124 checks), at desktop and phone widths, with no server errors.
+- A browser walk-through of every page for all six roles (130 checks), at desktop and phone widths, with no server errors.
 - An automated accessibility scan (axe-core, WCAG 2.1 AA) of every page in normal and high-contrast mode: no violations. Keyboard-only use works.
 - Speed with 20,000 extra students: every page answers in under 0.2 seconds.
 - The Postgres scripts were applied to Postgres 16 and their access rules tested role by role.
@@ -95,7 +97,7 @@ Not yet tested, because they need real services: email delivery, the live Gemini
 
 | Area | Routes |
 |---|---|
-| Sign-in | `POST /api/auth/request-code`, `POST /api/auth/verify`, `POST /api/auth/sign-out`, `GET /api/me` |
+| Sign-in | `POST /api/auth/request-code`, `POST /api/auth/verify`, `POST /api/auth/password`, `POST /api/me/password`, `POST /api/auth/sign-out`, `GET /api/me` |
 | Student | `GET/PUT /api/me/profile`, `POST /api/me/score`, `GET /api/me/score-history`, `GET/POST/PATCH/DELETE /api/me/evidence`, `GET/POST /api/me/intro-requests`, `GET /api/me/recommendations`, `PATCH /api/me/recommendations/:ruleId`, `GET/POST /api/me/consents`, `PATCH /api/me/intro-opt-in`, `POST /api/me/baseline`, `GET /api/me/export`, `DELETE /api/me` |
 | Mentor | `GET /api/mentor/mentees`, `GET /api/mentor/queue`, `POST /api/mentor/assessments`, `PATCH /api/mentor/reviews/:studentId/:ruleId`, `POST /api/mentor/evidence/:id` |
 | College | `GET /api/college/cohort?programme=`, `GET /api/college/intro-requests` |

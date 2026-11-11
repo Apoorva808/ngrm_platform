@@ -70,7 +70,7 @@
       '<button class="menu-btn" type="button" id="menuBtn" aria-expanded="false" aria-controls="mainNav">Menu</button>' +
       '<nav class="main-nav" id="mainNav" aria-label="Main">' +
       links.map(function (n) { return '<a class="nav-link" href="' + n[0] + '"' + (n[2] === page ? ' aria-current="page"' : '') + '>' + n[1] + '</a>'; }).join('') +
-      (me ? '<span class="user-menu"><span class="who" title="' + esc(me.email) + '">' + esc(me.name) + '</span><button class="btn btn-secondary btn-sm" type="button" id="signOut">Sign out</button></span>' : '') +
+      (me ? '<span class="user-menu"><a class="who" href="account.html" title="Your account: ' + esc(me.email) + '">' + esc(me.name) + '</a><button class="btn btn-secondary btn-sm" type="button" id="signOut">Sign out</button></span>' : '') +
       '</nav></div></header>';
     document.body.insertBefore(top, document.body.firstChild);
     // The page title belongs inside the main region, so screen-reader users land on it.

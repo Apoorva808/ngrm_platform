@@ -20,7 +20,12 @@
     <header><h1 id="sTitle" style="font-size:1.6rem">Sign in</h1></header>
     <form id="emailForm" novalidate style="display:grid;gap:0.85rem">
       <div class="field"><label for="email">Your college or work email</label><input type="text" id="email" inputmode="email" autocomplete="email" placeholder="name@college.edu.in"></div>
-      <div><button class="btn btn-primary" type="submit">Send me a code</button></div>
+      <div style="display:flex;gap:0.6rem;flex-wrap:wrap"><button class="btn btn-primary" type="submit">Send me a code</button><button class="btn btn-secondary" type="button" id="usePw">Use my password</button></div>
+    </form>
+    <form id="pwForm" novalidate hidden style="display:grid;gap:0.85rem;margin-top:0.5rem">
+      <div class="field"><label for="password">Password</label><input type="password" id="password" autocomplete="current-password" maxlength="200"></div>
+      <div style="display:flex;gap:0.6rem;flex-wrap:wrap"><button class="btn btn-primary" type="submit">Sign in</button><button class="btn btn-secondary" type="button" id="useCode">Email me a code instead</button></div>
+      <p class="small muted">Forgot it? Use an emailed code, then set a new password on your Account page.</p>
     </form>
     <form id="codeForm" novalidate hidden style="display:grid;gap:0.85rem;margin-top:0.5rem">
       <p class="small" id="sentTo"></p>
@@ -28,7 +33,7 @@
       <div style="display:flex;gap:0.6rem;flex-wrap:wrap"><button class="btn btn-primary" type="submit">Sign in</button><button class="btn btn-secondary" type="button" id="back">Use a different email</button></div>
     </form>
     <p class="small" id="err" style="color:var(--danger);margin-top:0.75rem" hidden></p>
-    <p class="small muted" style="margin-top:1rem">We email you a one-time code; there is no password to remember. Sign-in with APAAR ID or DigiLocker will come later.</p>
+    <p class="small muted" style="margin-top:1rem">Sign in with a one-time code sent to your email. If you prefer a password, sign in with a code once and set one on your Account page. This works the same for students, mentors, placement cells, employers, researchers and admins.</p>
   </section>
   <section class="card" id="demoCard" hidden aria-labelledby="dTitle">
     <header><h2 id="dTitle">Try a sample account</h2><span class="small muted">Demo mode only</span></header>
@@ -56,7 +61,7 @@
     e.preventDefault(); err('');
     var email = $('#email').value.trim();
     N.api('POST', '/api/auth/request-code', { email: email }).then(function (r) {
-      $('#emailForm').hidden = true; $('#codeForm').hidden = false;
+      $('#emailForm').hidden = true; $('#pwForm').hidden = true; $('#codeForm').hidden = false;
       $('#sentTo').textContent = 'If ' + email + ' has an NGRM account, a code is on its way. It expires in 10 minutes.' + (r.devCode ? ' (Development code: ' + r.devCode + ')' : '') + (r.devNote ? ' (Development note: ' + r.devNote + ')' : '');
       $('#code').focus();
     }).catch(function (x) { err(x.message); });
@@ -64,6 +69,12 @@
   $('#codeForm').addEventListener('submit', function (e) {
     e.preventDefault(); err('');
     N.api('POST', '/api/auth/verify', { email: $('#email').value.trim(), code: $('#code').value.trim() }).then(function (r) { go(r.user); }).catch(function (x) { err(x.message); });
+  });
+  $('#usePw').addEventListener('click', function () { err(''); $('#pwForm').hidden = false; $('#codeForm').hidden = true; $('#password').focus(); });
+  $('#useCode').addEventListener('click', function () { err(''); $('#pwForm').hidden = true; $('#email').focus(); });
+  $('#pwForm').addEventListener('submit', function (e) {
+    e.preventDefault(); err('');
+    N.api('POST', '/api/auth/password', { email: $('#email').value.trim(), password: $('#password').value }).then(function (r) { go(r.user); }).catch(function (x) { err(x.message); });
   });
   $('#back').addEventListener('click', function () { $('#codeForm').hidden = true; $('#emailForm').hidden = false; $('#email').focus(); err(''); });
   document.addEventListener('click', function (e) {

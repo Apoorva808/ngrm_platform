@@ -51,8 +51,21 @@ CREATE INDEX IF NOT EXISTS otp_requests_email ON otp_requests(email, at);
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash  TEXT PRIMARY KEY,
   user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  expires_at  INTEGER NOT NULL
+  expires_at  INTEGER NOT NULL,
+  via         TEXT NOT NULL DEFAULT 'code'   -- how the person signed in: 'code' or 'password'
 );
+
+-- Optional passwords (salted scrypt hashes, never the password itself) and wrong tries, to slow guessing.
+CREATE TABLE IF NOT EXISTS passwords (
+  user_id     INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  hash        TEXT NOT NULL,
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS login_failures (
+  email  TEXT NOT NULL,
+  at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS login_failures_email ON login_failures(email, at);
 
 CREATE TABLE IF NOT EXISTS consents (
   id             INTEGER PRIMARY KEY,
