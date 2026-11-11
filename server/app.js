@@ -8,6 +8,7 @@ const { helpers } = require('./db');
 const { makeAuth, readCookie } = require('./auth');
 const ai = require('./ai');
 const mail = require('./mail');
+const { makeFeeds } = require('./feeds');
 
 const COOKIE = 'ngrm_session';
 
@@ -25,6 +26,7 @@ function createApp(db, opts = {}) {
   const FILE_TYPES = { 'application/pdf': ['pdf', (b) => b.subarray(0, 5).toString() === '%PDF-'], 'image/png': ['png', (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))], 'image/jpeg': ['jpg', (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff] };
   const dropFile = (p) => { if (p) fs.rm(path.join(uploadDir, path.basename(p)), { force: true }, () => {}); };
   const auth = makeAuth(h, { audit, sendCode });
+  const feeds = opts.feeds || makeFeeds(h);
   const app = express();
 
   // ---------- Basics ----------
@@ -99,7 +101,15 @@ function createApp(db, opts = {}) {
     const skill = ruleId === 'course' ? D.ROLES[p.role].skills[idx] : 'Communication skills';
     const courses = h.all('SELECT id, title, provider, url, weeks, free FROM courses WHERE role = ? AND ' + (idx === null ? 'skill_index IS NULL' : 'skill_index = ?') + ' ORDER BY id DESC LIMIT 5', ...(idx === null ? [role] : [role, idx]));
     const searches = h.all('SELECT name, url_template FROM course_sources ORDER BY id').map((s) => ({ name: s.name, url: httpsUrl(s.url_template.replace('{q}', encodeURIComponent(skill))) })).filter((s) => s.url);
-    return { skill, courses, searches };
+    const live = feeds.forSkill(skill);
+    return { skill, courses, searches, live: live.courses, liveCheckedAt: live.checkedAt, demand: ruleId === 'course' ? demandFor(p.role)[idx] : null };
+  }
+  // What employers on NGRM are asking for, per skill of a role, from their posts in the last 90 days.
+  function demandFor(role) {
+    const names = D.ROLES[role].skills, out = names.map((name) => ({ skill: name, openings: 0, posts: 0 }));
+    for (const d of h.all("SELECT skills_json, openings FROM demand_posts WHERE role = ? AND created_at > datetime('now', '-90 days')", role))
+      for (const k of parse(d.skills_json, [])) { const i = names.indexOf(k); if (i >= 0) { out[i].openings += d.openings; out[i].posts++; } }
+    return out;
   }
   const pseudo = (id) => 'S-' + crypto.createHmac('sha256', process.env.SESSION_SECRET || 'dev-only-secret-change-me').update('study:' + id).digest('hex').slice(0, 10);
   const small = (n) => (n < D.MIN_GROUP ? null : n); // null = suppressed
@@ -388,6 +398,28 @@ function createApp(db, opts = {}) {
     h.tx(() => { h.run('UPDATE recommendation_states SET mentor_id = NULL WHERE mentor_id = ?', u.id); h.run('DELETE FROM otp_codes WHERE email = ?', u.email); h.run('DELETE FROM otp_requests WHERE email = ?', u.email); h.run('DELETE FROM users WHERE id = ?', u.id); });
   }
 
+  // ---------- Live platform activity ----------
+  const ACTIVITY = { signIns: "action = 'auth.signed_in'", scores: "action = 'score.recorded'", evidence: "action IN ('evidence.added', 'evidence.proof_added', 'evidence.file_uploaded')", decisions: "action LIKE 'recommendation.%'", reviews: "action LIKE 'mentor.review.%' OR action LIKE 'mentor.evidence.%' OR action = 'mentor.assessment_recorded'", demand: "action = 'employer.posted_demand'" };
+  const activityCounts = (since, scope, args) => Object.fromEntries(Object.entries(ACTIVITY).map(([k, where]) => [k, h.get(`SELECT COUNT(*) AS n FROM audit_log WHERE (${where}) AND at > datetime('now', ?)${scope}`, since, ...args).n]));
+  // Admin: the whole platform, exact. No names, only counts.
+  app.get('/api/admin/activity', need('admin'), (req, res) => {
+    const days = h.all(`SELECT date(at) AS day, COUNT(*) AS actions, COUNT(DISTINCT user_id) AS people FROM audit_log WHERE at > datetime('now', '-13 days', 'start of day') GROUP BY date(at) ORDER BY day`);
+    res.json({ today: activityCounts('start of day', '', []), week: activityCounts('-7 days', '', []), days,
+      activeToday: h.get("SELECT COUNT(DISTINCT user_id) AS n FROM audit_log WHERE at > datetime('now', 'start of day') AND user_id IS NOT NULL").n,
+      waiting: { evidence: h.get("SELECT COUNT(*) AS n FROM evidence WHERE status = 'pending'").n, proof: h.get("SELECT COUNT(*) AS n FROM evidence WHERE status = 'needs_proof'").n },
+      asOf: new Date().toISOString() });
+  });
+  // Placement cell: their own college over the last 7 days, hidden under 5 and rounded to 5 like every other college figure.
+  app.get('/api/college/activity', need('college_admin', 'mentor'), (req, res) => {
+    const scope = " AND user_id IN (SELECT id FROM users WHERE role = 'student' AND institution_id = ?)", inst = [req.user.institution_id];
+    const wk = activityCounts('-7 days', scope, inst);
+    res.json({ windowDays: 7, rounding: 5,
+      activeStudents: approx(h.get(`SELECT COUNT(DISTINCT user_id) AS n FROM audit_log WHERE at > datetime('now', '-7 days')${scope}`, ...inst).n),
+      scores: approx(wk.scores), evidence: approx(wk.evidence), decisions: approx(wk.decisions),
+      awaitingCheck: approx(h.get("SELECT COUNT(*) AS n FROM evidence e JOIN users u ON u.id = e.user_id WHERE e.status = 'pending' AND u.institution_id = ?", ...inst).n),
+      asOf: new Date().toISOString() });
+  });
+
   // ---------- Mentor ----------
   const isMentee = (mentorId, studentId) => !!h.get('SELECT 1 FROM mentor_links WHERE mentor_id = ? AND student_id = ?', mentorId, studentId);
   app.get('/api/mentor/mentees', need('mentor'), (req, res) => {
@@ -593,6 +625,15 @@ function createApp(db, opts = {}) {
     h.run('UPDATE rules SET active = ?, threshold = ? WHERE id = ?', active, threshold, r.id);
     audit(req.user.id, 'admin.rule_updated', r.id);
     res.json(h.get('SELECT * FROM rules WHERE id = ?', r.id));
+  });
+
+  // Live course feed: status, and a test an admin can run for any skill.
+  app.get('/api/admin/feeds', need('admin'), (req, res) => res.json(feeds.status()));
+  app.post('/api/admin/feeds/test', need('admin'), async (req, res) => {
+    const skill = String(req.body?.skill || '').trim().slice(0, 80);
+    if (!skill) return fail(res, 400, 'Type a skill to search for.');
+    try { const rows = await feeds.refresh(skill); res.json({ ok: true, courses: rows || [] }); }
+    catch (e) { res.json({ ok: false, message: String(e.message || e).slice(0, 200) }); }
   });
 
   // People and organisations. In the pilot, accounts are added by an admin; there is no open sign-up.

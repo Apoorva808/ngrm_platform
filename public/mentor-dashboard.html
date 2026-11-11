@@ -44,6 +44,11 @@
       <div id="demand" style="display:grid;gap:0.5rem;margin-top:0.6rem"></div>
     </section>
   </div>
+  <section class="card" id="actCard" hidden aria-labelledby="caTitle">
+    <header><h2 id="caTitle">This week at your college</h2><span class="small muted" id="caStamp"></span></header>
+    <div class="grid-4" id="caTiles"></div>
+    <p class="small muted" style="margin-top:0.5rem">Counts are for the last 7 days, hidden under 5 and rounded to the nearest 5.</p>
+  </section>
   <section class="card" id="introCard" hidden aria-labelledby="iTitle">
     <header><h2 id="iTitle">Introduction requests</h2><span class="small muted">Only students who said they’re interested, and only from your college</span></header>
     <div id="intros" style="display:grid;gap:0.75rem"></div>
@@ -129,6 +134,13 @@
       });
     } else {
       loadCohort().catch(function (e) { N.showError($('#cFactors'), e); });
+      $('#actCard').hidden = false;
+      var loadAct = function () { return N.api('GET', '/api/college/activity').then(function (c) {
+        var v = function (n) { return n == null ? '<5' : '~' + n; }, tile = function (n, l) { return '<div class="kpi"><b>' + v(n) + '</b><span>' + l + '</span></div>'; };
+        $('#caTiles').innerHTML = tile(c.activeStudents, 'Students active') + tile(c.scores, 'Scores recorded') + tile(c.evidence, 'Evidence items added') + tile(c.awaitingCheck, 'Items waiting for a mentor');
+        $('#caStamp').textContent = 'Live · updated ' + new Date(c.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+      }); };
+      loadAct().catch(function (e) { N.showError($('#caTiles'), e); }); N.live(loadAct, 30);
       $('#introCard').hidden = false;
       N.api('GET', '/api/college/intro-requests').then(function (list) {
         $('#intros').innerHTML = list.length ? list.map(function (r) {

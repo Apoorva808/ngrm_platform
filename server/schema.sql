@@ -191,3 +191,20 @@ CREATE TABLE IF NOT EXISTS course_sources (
   name          TEXT NOT NULL UNIQUE,
   url_template  TEXT NOT NULL
 );
+
+-- Live course listings fetched from a provider, kept for a day per skill.
+CREATE TABLE IF NOT EXISTS live_courses (
+  skill       TEXT NOT NULL,
+  title       TEXT NOT NULL,
+  provider    TEXT NOT NULL,
+  url         TEXT NOT NULL,
+  fetched_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS live_courses_skill ON live_courses(skill);
+CREATE TABLE IF NOT EXISTS feed_status (
+  name        TEXT PRIMARY KEY,
+  ok          INTEGER,
+  message     TEXT,
+  checked_at  INTEGER
+);
+CREATE INDEX IF NOT EXISTS audit_log_at ON audit_log(at);

@@ -61,13 +61,19 @@
     var L = x.learn, link = function (u, t) { return '<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + esc(t) + '</a>'; };
     var vetted = L.courses.length ? '<ul class="small" style="margin:0.2rem 0 0.4rem;padding-left:1.1rem">' + L.courses.map(function (c) { return '<li>' + link(c.url, c.title) + ' · ' + esc(c.provider) + (c.weeks ? ' · ' + c.weeks + ' weeks' : '') + (c.free ? ' · free to learn' : '') + '</li>'; }).join('') + '</ul>' : '';
     var search = L.searches.length ? '<p class="small" style="margin:0">' + (L.courses.length ? 'More' : 'Find') + ' current courses in ' + esc(L.skill.toLowerCase()) + ': ' + L.searches.map(function (s) { return link(s.url, s.name); }).join(' · ') + ' <span class="muted">(opens the site’s live results)</span></p>' : '';
-    return vetted || search ? '<div class="learn" style="border-left:3px solid var(--accent);padding-left:0.75rem;margin:0.5rem 0">' + (vetted ? '<b class="small">Checked courses for this skill</b>' + vetted : '') + search + '</div>' : '';
+    var live = L.live && L.live.length ? '<b class="small">Live from Coursera' + (L.liveCheckedAt ? ' · checked ' + new Date(L.liveCheckedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '') + '</b><ul class="small" style="margin:0.2rem 0 0.4rem;padding-left:1.1rem">' + L.live.map(function (c) { return '<li>' + link(c.url, c.title) + ' · ' + esc(c.provider) + '</li>'; }).join('') + '</ul>' : '';
+    var asked = L.demand && L.demand.openings ? '<p class="small" style="margin:0 0 0.4rem"><span class="chip success">In demand</span> Employers on NGRM list ' + L.demand.openings + ' opening' + (L.demand.openings === 1 ? '' : 's') + ' asking for ' + esc(L.skill) + ' right now.</p>' : '';
+    return vetted || search || live ? '<div class="learn" style="border-left:3px solid var(--accent);padding-left:0.75rem;margin:0.5rem 0">' + asked + (vetted ? '<b class="small">Checked courses for this skill</b>' + vetted : '') + live + search + '</div>' : '';
   }
   function loadDemand(role) {
     return N.api('GET', '/api/demand/summary?role=' + encodeURIComponent(role)).then(function (d) {
       if (!d.openings) { $('#demand').innerHTML = '<p class="muted">No partner employer has posted openings for ' + esc(meta.roles[d.role].label) + ' in the last 90 days. This updates by itself when one does.</p>'; return; }
       $('#demand').innerHTML = '<div class="grid-3"><div class="kpi"><b>' + d.openings + '</b><span>Openings posted for ' + esc(meta.roles[d.role].label) + ' (last 90 days)</span></div><div class="kpi"><b>' + d.employers + '</b><span>Partner employers hiring</span></div><div class="kpi"><b>' + esc(d.skills[0] ? d.skills[0].name : '—') + '</b><span>Skill asked for most</span></div></div>' +
-        '<p class="small" style="margin-top:0.75rem"><b>Skills employers are asking for:</b> ' + d.skills.map(function (k) { return esc(k.name) + ' (' + k.openings + ' openings)'; }).join(' · ') + '</p>' +
+        '<h3 style="margin-top:1rem;font-size:1rem">Skills employers are asking for, against your level</h3><div class="demand-rows">' + d.skills.map(function (k) {
+          var i = meta.roles[d.role].skills.indexOf(k.name), mine = profile && i >= 0 ? profile.skills[i] : null, max = d.skills[0].openings || 1;
+          return '<div class="bar-row"><div class="lbl"><b>' + esc(k.name) + '</b></div><div class="track"><i style="width:' + Math.round(k.openings / max * 100) + '%"></i></div><span class="val">' + k.openings + ' open</span></div>' +
+            (mine == null ? '' : '<p class="small muted" style="margin:-0.2rem 0 0.5rem">Your level: ' + mine + '/100' + (mine < 60 ? ' · worth building' : mine >= 70 ? ' · a strength' : '') + '</p>');
+        }).join('') + '</div>' +
         '<p class="small muted">Latest: ' + d.latest.map(function (p) { return esc(p.employer) + (p.city ? ', ' + esc(p.city) : '') + ' · ' + p.openings; }).join(' | ') + '. These are posts made on this platform by partner employers, not a national job count.</p>';
     }).catch(function (e) { N.showError($('#demand'), e); });
   }

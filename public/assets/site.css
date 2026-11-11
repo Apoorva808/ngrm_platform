@@ -256,3 +256,9 @@ main > .page-banner:first-child { margin-top: -2rem; margin-bottom: 2rem; }
 
 /* File pickers never push the page wider than the screen */
 input[type="file"] { max-width: 100%; min-width: 0; width: 100%; font-size: 0.9rem; }
+
+/* Activity by day: a small column chart */
+.days { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; align-items: end; height: 7rem; }
+.days .day { display: grid; grid-template-rows: 1fr auto; height: 100%; align-items: end; justify-items: center; gap: 2px; min-width: 0; }
+.days .day i { display: block; width: 100%; max-width: 2.2rem; background: var(--accent); border-radius: 3px 3px 0 0; }
+.days .day span { font-size: 0.7rem; color: var(--muted); font-variant-numeric: tabular-nums; }

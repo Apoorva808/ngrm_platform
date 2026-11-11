@@ -10,6 +10,7 @@ let server, base, h, db;
 const D = require('../server/domain');
 test.before(async () => {
   process.env.DEV_SHOW_OTP = 'true';
+process.env.COURSE_FEED = 'off'; // the live feed is tested below with a stand-in, never the real network
   db = open(':memory:'); seed(db); h = helpers(db);
   server = createApp(db, { demoMode: true, sendCode: () => {}, uploadDir: uploads }).listen(0);
   await new Promise((r) => server.once('listening', r));
@@ -592,4 +593,50 @@ test('the privacy notice is public and names the operator; production will not s
   const { spawnSync } = require('node:child_process');
   const env = { ...process.env, NODE_ENV: 'production', SESSION_SECRET: 'x'.repeat(40), DEMO_MODE: 'false', DEV_SHOW_OTP: 'false', DB_FILE: ':memory:', PORT: '0', ORG_NAME: '', PRIVACY_CONTACT: '' };
   assert.match(spawnSync(process.execPath, ['--no-warnings', 'server/index.js'], { env, timeout: 5000, encoding: 'utf8' }).stderr, /ORG_NAME/);
+});
+
+test('live course feed: fetched once a day per skill, shown on the course step, and safe when the provider fails', async () => {
+  const { makeFeeds, searchCoursera } = require('../server/feeds');
+  const realFetch = global.fetch; let calls = 0, mode = 'ok';
+  global.fetch = async (url, opts) => {
+    if (!String(url).startsWith('https://api.coursera.org/')) return realFetch(url, opts);
+    calls++; assert.match(String(url), /q=search&query=Labour%20law%20basics/); assert.ok(!/ananya|@/i.test(String(url)), 'only the skill name is sent');
+    if (mode === 'down') return new Response('nope', { status: 503 });
+    if (mode === 'odd') return new Response(JSON.stringify({ unexpected: true }), { status: 200 });
+    return new Response(JSON.stringify({ elements: [{ name: 'Employment Law Basics', slug: 'employment-law' }, { name: 'Bad', slug: '../../evil' }, { name: 5, slug: 'x' }] }), { status: 200 });
+  };
+  process.env.COURSE_FEED = 'coursera';
+  try {
+    const rows = await searchCoursera('Labour law basics');
+    assert.deepEqual(rows, [{ title: 'Employment Law Basics', provider: 'Coursera', url: 'https://www.coursera.org/learn/employment-law' }], 'malformed entries are dropped');
+    const feeds = makeFeeds(h);
+    assert.deepEqual(feeds.forSkill('Labour law basics').courses, [], 'nothing stored yet: students are not kept waiting');
+    await new Promise((r) => setTimeout(r, 50));
+    const before = calls;
+    assert.equal(feeds.forSkill('Labour law basics').courses[0].title, 'Employment Law Basics');
+    assert.equal(calls, before, 'a fresh result is reused, not fetched again');
+    assert.equal(feeds.status().ok, 1);
+    mode = 'down'; await assert.rejects(feeds.refresh('Labour law basics')); assert.equal(feeds.status().ok, 0);
+    mode = 'odd'; await assert.rejects(feeds.refresh('Labour law basics'));
+    assert.equal(feeds.forSkill('Labour law basics').courses.length, 1, 'a failure keeps the last good list');
+    const student = await as('ananya@demo.ngrm.in');
+    const step = (await student('GET', '/api/me/recommendations')).body.items.find((x) => x.id === 'course');
+    assert.equal(step.learn.live[0].url, 'https://www.coursera.org/learn/employment-law');
+    assert.equal(step.learn.demand.skill, 'Labour law basics');
+  } finally { global.fetch = realFetch; process.env.COURSE_FEED = 'off'; h.run('DELETE FROM live_courses'); }
+});
+
+test('live activity: exact for admins, rounded and college-only for placement cells, closed to everyone else', async () => {
+  const admin = await as('admin@demo.ngrm.in'), placement = await as('placement@demo.ngrm.in'), student = await as('ananya@demo.ngrm.in'), employer = await as('recruiter@demo.ngrm.in');
+  const before = (await admin('GET', '/api/admin/activity')).body;
+  await student('POST', '/api/me/score');
+  const after = (await admin('GET', '/api/admin/activity')).body;
+  assert.equal(after.today.scores, before.today.scores + 1, 'a new action shows up at once');
+  assert.ok(after.days.length >= 1 && after.days.every((d) => /^\d{4}-\d{2}-\d{2}$/.test(d.day)));
+  assert.ok(!/ananya|@|Rao/i.test(JSON.stringify(after)), 'counts only, no names');
+  const c = (await placement('GET', '/api/college/activity')).body;
+  for (const k of ['activeStudents', 'scores', 'evidence', 'decisions', 'awaitingCheck']) assert.ok(c[k] === null || (c[k] >= 5 && c[k] % 5 === 0), k + ' is hidden or rounded');
+  assert.equal((await student('GET', '/api/admin/activity')).status, 403);
+  assert.equal((await employer('GET', '/api/college/activity')).status, 403);
+  assert.equal((await student('GET', '/api/admin/feeds')).status, 403);
 });

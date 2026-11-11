@@ -13,7 +13,7 @@ Requires Node.js 22.13 or newer (tested on 22.13, 22.23 and 24). Nothing else is
 npm install
 cp .env.example .env      # demo settings are already on
 npm start                 # http://localhost:3000
-npm test                  # 56 tests
+npm test                  # 58 tests
 npm run seed              # wipe and reload the sample data
 ```
 
@@ -73,13 +73,16 @@ AI is optional. When switched on (`GEMINI_API_KEY` and the student's AI consent)
 - **Checked courses.** The step for a student's weakest skill names real courses with links (NPTEL/SWAYAM, Kaggle, freeCodeCamp, Coursera, Google, HubSpot, Poynter, Figma). The starter list is in `server/courses.js`; each title and link was checked on 10 Nov 2026. Admins add and remove courses on the Admin page, and students see changes at once. Providers move and retire courses, so open the links at the start of each semester.
 - **Live search.** Each course step also links to a live search for that exact skill on SWAYAM, Class Central and Coursera, so students always see what is running now. Admins can change the sites.
 - **Live screens.** The plan, evidence, mentor queue and employer pages refresh on their own every 30 seconds (paused while someone is typing or the tab is hidden).
-- **Not included.** There is no automatic feed from SWAYAM or job portals: SWAYAM has no public feed we could rely on, and job-market feeds need paid agreements. Demand shown to students is what employers post on this platform.
+- **Live course feed.** Each course step also lists courses fetched from Coursera's catalogue for that exact skill, refreshed once a day per skill. Only the skill name is sent. The Admin page shows whether the feed is working and has a test box. If the feed is down or changes, students still see the checked courses and search links. Set `COURSE_FEED=off` to switch it off. This feed was built and tested against a stand-in; confirm it on the hosted site with the test box, and check Coursera's terms before relying on it.
+- **Skills in demand.** The plan page ranks the skills partner employers are asking for (openings in the last 90 days) against the student's own level, and the course step says when its skill is in demand. This is demand posted on NGRM, not a national job count.
+- **Live activity.** Admins see people active today, sign-ins, student actions, evidence waiting, and a 14-day chart, exact and without names. Placement cells see their own college's last 7 days, hidden under 5 and rounded to 5.
+- **Not included.** There is no feed from SWAYAM (no public feed we could rely on) and no outside job-market data: the open jobs feed we looked at (Adzuna) restricts republishing its data in aggregated form without written consent. Demand shown to students is what employers post on this platform.
 
 ## Quality checks done
 
-- 56 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
+- 58 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
 - The tests pass on Node 22.13, 22.23 and 24. Node 22.12 and older cannot run the built-in database, and the server says so.
-- A browser walk-through of every page for all six roles (120 checks), at desktop and phone widths, with no server errors.
+- A browser walk-through of every page for all six roles (124 checks), at desktop and phone widths, with no server errors.
 - An automated accessibility scan (axe-core, WCAG 2.1 AA) of every page in normal and high-contrast mode: no violations. Keyboard-only use works.
 - Speed with 20,000 extra students: every page answers in under 0.2 seconds.
 - The Postgres scripts were applied to Postgres 16 and their access rules tested role by role.
@@ -111,6 +114,7 @@ Not yet tested, because they need real services: email delivery, the live Gemini
 | `GEMINI_API_KEY`, `GEMINI_MODEL` | Optional AI rewording |
 | `DB_FILE` | Local database path |
 | `MAIL_FROM`, `RESEND_API_KEY` or `BREVO_API_KEY` | Emails sign-in codes. Without these, codes only appear in the server log (development) and nobody can sign in (production) |
+| `COURSE_FEED` | `coursera` (default) or `off`. Controls the live course feed |
 | `UPLOAD_DIR` | Where proof files are kept. Default: an `uploads` folder beside the database |
 | `ORG_NAME`, `PRIVACY_CONTACT` | Required in production. Shown on the privacy notice: who runs the pilot and whom to write to |
 | `NODE_ENV` | Set to `production` when live. The server will not start in production with demo settings on |

@@ -13,6 +13,13 @@
 <main id="main" tabindex="-1">
 <div class="container stack">
   <section class="grid-4" id="kpis" aria-label="Account totals"></section>
+  <section class="card" aria-labelledby="actTitle">
+    <header><h2 id="actTitle">Live activity</h2><span class="small muted" id="actStamp"></span></header>
+    <div class="grid-4" id="actToday"></div>
+    <h3 style="margin-top:1rem;font-size:1rem">Last 14 days</h3>
+    <div id="actDays" class="days" role="img" aria-label="Actions per day over the last 14 days"></div>
+    <p class="small muted" id="actWeek" style="margin-top:0.5rem"></p>
+  </section>
   <div class="grid-2">
     <section class="card" aria-labelledby="pTitle">
       <header><h2 id="pTitle">Add people</h2><span class="small muted">One person per line</span></header>
@@ -52,6 +59,13 @@
     </form>
     <div class="table-wrap" style="margin-top:1rem"><table><thead><tr><th>Course</th><th>Provider</th><th>Role and skill</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="courses"></tbody></table></div>
     <p class="small muted" style="margin-top:0.5rem">Open each link at the start of a semester: providers move and retire courses.</p>
+    <h3 style="margin-top:1.25rem">Live course feed (Coursera)</h3>
+    <p class="small" id="feedStatus">Checking…</p>
+    <form id="feedForm" novalidate style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:end">
+      <div class="field" style="flex:1;min-width:12rem"><label for="f-skill">Test the feed with a skill</label><input type="text" id="f-skill" maxlength="80" value="SQL"></div>
+      <button class="btn btn-secondary" type="submit">Test now</button>
+    </form>
+    <ul class="small" id="feedOut" style="padding-left:1.1rem"></ul>
     <h3 style="margin-top:1.25rem">Course sites for live search</h3>
     <p class="small muted">Each course step also links to a live search for the skill on these sites. Use {q} where the skill name goes.</p>
     <ul class="small" id="sources" style="padding-left:1.1rem"></ul>
@@ -105,12 +119,29 @@
       $('#sources').innerHTML = d.sources.map(function (x) { return '<li>' + esc(x.name) + ' · <span class="muted">' + esc(x.url_template) + '</span> <button class="btn-link" type="button" data-source="' + x.id + '">Remove</button></li>'; }).join('') || '<li class="muted">No sites listed.</li>';
     });
   }
+  function loadActivity() {
+    return N.api('GET', '/api/admin/activity').then(function (a) {
+      var t = a.today, tile = function (n, label) { return '<div class="kpi"><b>' + n + '</b><span>' + label + '</span></div>'; };
+      $('#actToday').innerHTML = tile(a.activeToday, 'People active today') + tile(t.signIns, 'Sign-ins today') + tile(t.scores + t.evidence + t.decisions, 'Student actions today') + tile(a.waiting.evidence, 'Evidence waiting for a mentor');
+      var max = Math.max.apply(null, a.days.map(function (d) { return d.actions; }).concat([1]));
+      $('#actDays').innerHTML = a.days.map(function (d) { return '<div class="day" title="' + esc(d.day) + ': ' + d.actions + ' actions by ' + d.people + ' people"><i style="height:' + Math.max(4, Math.round(d.actions / max * 100)) + '%"></i><span>' + esc(d.day.slice(8)) + '</span></div>'; }).join('') || '<p class="muted small">No activity yet.</p>';
+      var w = a.week; $('#actWeek').textContent = 'Last 7 days: ' + w.signIns + ' sign-ins, ' + w.scores + ' scores recorded, ' + w.evidence + ' evidence items, ' + w.decisions + ' plan decisions, ' + w.reviews + ' mentor reviews, ' + w.demand + ' employer posts.';
+      $('#actStamp').textContent = 'Live · updated ' + new Date(a.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    });
+  }
+  function loadFeed() {
+    return N.api('GET', '/api/admin/feeds').then(function (f) {
+      $('#feedStatus').innerHTML = !f.enabled ? 'Switched off (COURSE_FEED setting).' : f.ok == null ? 'Not tried yet. It runs the first time a student opens a course step, or test it below.' :
+        (f.ok ? '<span class="chip success">Working</span> ' : '<span class="chip danger">Not working</span> ') + esc(f.message || '') + ' · ' + new Date(f.checked_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + (f.ok ? '' : '. Students still see the checked courses and search links.');
+    });
+  }
   function fail(e) { N.toast(e.message); }
   var me = {};
   $('#findForm').addEventListener('submit', function (e) { e.preventDefault(); loadPeople().catch(fail); });
   N.boot('admin', ['admin']).then(function (ctx) { me = ctx.me; meta = ctx.meta;
     $('#c-role').innerHTML = Object.keys(meta.roles).map(function (k) { return '<option value="' + k + '">' + esc(meta.roles[k].label) + '</option>'; }).join('') + '<option value="communication">Communication (all roles)</option>';
-    skillOptions(); loadCourses().catch(fail); loadPeople().catch(fail); loadRules().catch(fail); loadAudit().catch(fail); });
+    skillOptions(); loadCourses().catch(fail); loadFeed().catch(fail);
+    loadActivity().catch(fail); N.live(loadActivity, 30); loadPeople().catch(fail); loadRules().catch(fail); loadAudit().catch(fail); });
 
   // A line can name a college that itself contains a comma ("Sample College, Bengaluru"), so read
   // name, email and role from the start, the mentor email from the end, and treat the middle as the college.
@@ -128,6 +159,13 @@
     if (!rows.length) { err.hidden = false; err.textContent = 'Add at least one line.'; return; }
     N.api('POST', '/api/admin/users', { rows: rows }).then(function (r) { err.hidden = true; $('#p-rows').value = ''; N.toast('Added ' + r.added + (r.added === 1 ? ' person.' : ' people.') + ' They can sign in with their email.'); loadPeople(); loadAudit(); })
       .catch(function (x) { err.hidden = false; err.textContent = x.message; });
+  });
+  $('#feedForm').addEventListener('submit', function (e) {
+    e.preventDefault(); $('#feedOut').innerHTML = '<li class="muted">Asking Coursera…</li>';
+    N.api('POST', '/api/admin/feeds/test', { skill: $('#f-skill').value }).then(function (r) {
+      $('#feedOut').innerHTML = !r.ok ? '<li>Could not reach the feed: ' + esc(r.message) + '</li>' : r.courses.length ? r.courses.map(function (c) { return '<li><a href="' + esc(c.url) + '" target="_blank" rel="noopener noreferrer">' + esc(c.title) + '</a></li>'; }).join('') : '<li class="muted">The feed answered, with no courses for that skill.</li>';
+      loadFeed();
+    }).catch(fail);
   });
   $('#c-role').addEventListener('change', skillOptions);
   $('#courseForm').addEventListener('submit', function (e) {
