@@ -232,6 +232,9 @@ function createApp(db, opts = {}) {
     const num = (v, lo, hi) => (v === '' || v === null || v === undefined || Number.isNaN(+v) ? null : D.clamp(+v, lo, hi));
     // A field left out of the request keeps its stored value; an empty value clears it.
     const keep = (field, col, hi) => (b[field] === undefined ? cur[col] ?? null : num(b[field], 0, hi));
+    // CGPA and career clarity can be corrected but not cleared once given: a blank is left out of the score,
+    // so clearing a low value would otherwise raise it.
+    const sticky = (field, col, hi) => { const v = keep(field, col, hi); return v === null ? cur[col] ?? null : v; };
     const prevSkills = parse(cur.skills_json, [50, 50, 50, 50]);
     const skills = Array.isArray(b.skills) && b.skills.length === 4 ? b.skills.map((s, i) => Math.round(num(s, 0, 100) ?? (role === cur.target_role ? prevSkills[i] : 50))) : prevSkills.slice();
     // A skill verified by a college assessment keeps the assessed value; the student cannot overwrite it.
@@ -248,7 +251,7 @@ function createApp(db, opts = {}) {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${hasConsent(req.user.id, 'introductions') ? 1 : 0}, datetime('now'))
            ON CONFLICT(user_id) DO UPDATE SET programme=excluded.programme, year=excluded.year, cgpa=excluded.cgpa, target_role=excluded.target_role,
            skills_json=excluded.skills_json, ocean_json=excluded.ocean_json, comm=excluded.comm, clarity=excluded.clarity, updated_at=excluded.updated_at`,
-      req.user.id, prog, Math.min(Math.max(1, parseInt(b.year, 10) || cur.year || 1), years), keep('cgpa', 'cgpa', 10), role, JSON.stringify(skills), ocean ? JSON.stringify(ocean) : null, verifiedComm(req.user.id) ?? keep('comm', 'comm', 100), keep('clarity', 'clarity', 100));
+      req.user.id, prog, Math.min(Math.max(1, parseInt(b.year, 10) || cur.year || 1), years), sticky('cgpa', 'cgpa', 10), role, JSON.stringify(skills), ocean ? JSON.stringify(ocean) : null, verifiedComm(req.user.id), sticky('clarity', 'clarity', 100));
     // A new target role means a different plan: earlier accepted steps and mentor reviews no longer apply.
     if (cur.target_role && cur.target_role !== role) {
       h.run('DELETE FROM recommendation_states WHERE user_id = ?', req.user.id);
@@ -259,8 +262,11 @@ function createApp(db, opts = {}) {
   });
   app.post('/api/me/score', need('student'), needConsent('profile'), (req, res) => {
     const c = computeFor(req.user.id); if (!c) return fail(res, 404, 'Fill in your profile first.');
+    const inputs = JSON.stringify({ profile: c.p, counts: c.result.counts });
+    const last = h.get('SELECT id, formula_version, inputs_json FROM score_runs WHERE user_id = ? ORDER BY id DESC LIMIT 1', req.user.id);
+    if (last && last.formula_version === c.result.version && last.inputs_json === inputs) return res.json({ id: last.id, alreadyRecorded: true, ...c.result });
     const r = h.run('INSERT INTO score_runs (user_id, formula_version, inputs_json, factors_json, index_value) VALUES (?, ?, ?, ?, ?)',
-      req.user.id, c.result.version, JSON.stringify({ profile: c.p, counts: c.result.counts }), JSON.stringify(c.result.factors), c.result.index);
+      req.user.id, c.result.version, inputs, JSON.stringify(c.result.factors), c.result.index);
     audit(req.user.id, 'score.recorded', r.lastInsertRowid);
     res.json({ id: Number(r.lastInsertRowid), ...c.result });
   });
@@ -275,7 +281,14 @@ function createApp(db, opts = {}) {
     if (!has(D.EVIDENCE_TYPES, b.type) || b.type === 'assessment') return fail(res, 400, 'Choose a type of evidence.');
     const title = String(b.title || '').trim().slice(0, 200);
     if (!title) return fail(res, 400, 'Say what the evidence is, for example the course or project name.');
-    const date = /^\d{4}-\d{2}-\d{2}$/.test(b.completedOn || '') ? b.completedOn : null;
+    let date = null;
+    if (b.completedOn) {
+      const d = /^\d{4}-\d{2}-\d{2}$/.test(b.completedOn) ? new Date(b.completedOn + 'T00:00:00Z') : null;
+      if (!d || Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== b.completedOn) return fail(res, 400, 'Enter a real date.');
+      if (d.getTime() > Date.now()) return fail(res, 400, 'The completion date cannot be in the future. Add it once you have finished.');
+      if (d.getUTCFullYear() < 2000) return fail(res, 400, 'Check the year of the completion date.');
+      date = b.completedOn;
+    }
     const r = h.run('INSERT INTO evidence (user_id, type, title, completed_on, file_name) VALUES (?, ?, ?, ?, ?)', req.user.id, b.type, title, date, String(b.fileName || '').trim().slice(0, 200) || null);
     audit(req.user.id, 'evidence.added', r.lastInsertRowid);
     res.status(201).json(evidenceOf(req.user.id));
@@ -526,7 +539,7 @@ function createApp(db, opts = {}) {
     // If only one band is hidden, it could be worked out from the others, so hide the next smallest too.
     const hidden = Object.keys(shown).filter((k) => shown[k] === null);
     if (hidden.length === 1) { const next = Object.keys(shown).filter((k) => shown[k] !== null).sort((a, b) => bands[a] - bands[b])[0]; shown[next] = null; }
-    const factors = {}; for (const F of D.FACTORS) factors[F.k] = Math.round(D.avg(rs.map((r) => r.factors[F.k])));
+    const factors = {}; for (const F of D.FACTORS) { const vals = rs.map((r) => r.factors[F.k]).filter((v) => v !== null); factors[F.k] = vals.length >= D.MIN_GROUP ? Math.round(D.avg(vals)) : null; }
     res.json({ n: approx(rs.length), suppressed: false, smallProgrammesLeftOut: leftOut, avgIndex: Math.round(D.avg(rs.map((r) => r.index))), factors, bands: shown,
       noInternshipPct: safePct(rs.filter((r) => r.counts.internship === 0).length, rs.length), rounding: 5 });
   });
@@ -558,17 +571,20 @@ function createApp(db, opts = {}) {
       return { foundation: approx(t.foundation), intermediate: approx(t.intermediate), strong: approx(t.strong), optedIn: approx(t.optedIn), _opted: t.optedIn };
     };
     const byCollege = insts.map((i) => { const t = tally(rows.filter((r) => r.institution_id === i.id)); delete t._opted; return { college: i.name, ...t }; });
-    const total = tally(rows); const canRequest = total._opted >= D.MIN_GROUP; delete total._opted;
+    const canRequest = tally(rows)._opted >= D.MIN_GROUP;
+    // The total row adds up only the figures shown above it, so it cannot be used to work out a hidden college.
+    const total = Object.fromEntries(['foundation', 'intermediate', 'strong', 'optedIn'].map((k) => { const shown = byCollege.map((c) => c[k]).filter((v) => v !== null); return [k, shown.length ? shown.reduce((a, b) => a + b, 0) : null]; }));
     const skills = rows.length >= D.MIN_GROUP ? D.ROLES[role].skills.map((name, k) => ({ name, sharePct: safePct(rows.filter((r) => (parse(r.skills_json, [])[k] || 0) >= 70).length, rows.length) })) : null;
     audit(req.user.id, 'employer.viewed_supply', role);
-    res.json({ role, byCollege, total, canRequestIntroductions: canRequest, pool: approx(rows.length), skills, rounding: 5 });
+    res.json({ role, byCollege, total, canRequestIntroductions: canRequest, pool: approx(rows.length), skills, rounding: 5, totalIsSumOfShown: true });
   });
   app.post('/api/employer/demand', need('employer'), (req, res) => {
     const b = req.body || {};
     if (!has(D.ROLES, b.role)) return fail(res, 400, 'Choose a role.');
     const skills = (Array.isArray(b.skills) ? b.skills : []).filter((s) => D.ROLES[b.role].skills.includes(s));
     if (!skills.length) return fail(res, 400, 'Pick at least one skill.');
-    const openings = Math.min(500, Math.max(1, parseInt(b.openings, 10) || 1));
+    const openings = Number(b.openings);
+    if (!Number.isInteger(openings) || openings < 1 || openings > 500) return fail(res, 400, 'Openings must be a whole number from 1 to 500.');
     h.run('INSERT INTO demand_posts (employer_id, role, skills_json, openings, city) VALUES (?, ?, ?, ?, ?)', req.user.employer_id, b.role, JSON.stringify(skills), openings, String(b.city || '').trim().slice(0, 80) || null);
     audit(req.user.id, 'employer.posted_demand', b.role);
     res.status(201).json({ ok: true });
@@ -619,9 +635,11 @@ function createApp(db, opts = {}) {
   app.get('/api/research/export', need('researcher'), (req, res) => {
     const rows = h.all("SELECT b.user_id, b.created_at, s.formula_version, s.factors_json, s.index_value, p.programme, p.year, p.target_role FROM baselines b JOIN score_runs s ON s.id = b.score_run_id JOIN profiles p ON p.user_id = b.user_id")
       .filter((r) => hasConsent(r.user_id, 'study'))
-      .map((r) => ({ participant: pseudo(r.user_id), recordedAt: r.created_at, formulaVersion: r.formula_version, programme: r.programme, year: r.year, targetRole: r.target_role, index: r.index_value, factors: parse(r.factors_json, {}) }));
+      .map((r) => ({ participant: pseudo(r.user_id), recordedAt: r.created_at, formulaVersion: r.formula_version, programme: r.programme, year: r.year, targetRole: r.target_role, index: Math.round(r.index_value / 5) * 5,
+        factors: Object.fromEntries(Object.entries(parse(r.factors_json, {})).map(([k, v]) => [k, typeof v === 'number' ? Math.round(v / 5) * 5 : v])) }));
     audit(req.user.id, 'research.exported', rows.length);
-    res.json({ participants: new Set(rows.map((r) => r.participant)).size, rows });
+    // Scores are given in bands of 5: precise enough for the outcome study, too coarse to match one student from a known CGPA.
+    res.json({ participants: new Set(rows.map((r) => r.participant)).size, banding: 5, rows });
   });
 
   // ---------- Admin ----------

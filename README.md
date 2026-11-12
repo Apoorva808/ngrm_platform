@@ -13,7 +13,7 @@ Requires Node.js 22.13 or newer (tested on 22.13, 22.23 and 24). Nothing else is
 npm install
 cp .env.example .env      # demo settings are already on
 npm start                 # http://localhost:3000
-npm test                  # 59 tests
+npm test                  # 63 tests
 npm run seed              # wipe and reload the sample data
 ```
 
@@ -47,7 +47,7 @@ Admins can search for an account and remove it (for example when someone leaves 
 server/
   index.js     start-up, .env loading, refuses unsafe production settings
   app.js       all API routes, role checks, consent checks, audit logging
-  domain.js    scoring formula v0.1, bands, rule library, what-if projections
+  domain.js    scoring formula v0.2, bands, rule library, what-if projections
   auth.js      email codes and sessions
   ai.js        optional Gemini rewording, with a safety check
   db.js        SQLite helpers
@@ -62,13 +62,24 @@ One dependency (Express). The scoring and rules live on the server only, so the 
 
 ## How the five pilot rules are enforced
 
-1. **Same answer every time.** The score is a fixed formula (`server/domain.js`, version `v0.1`). Every saved score stores its inputs, each factor and the formula version, so any number can be traced and re-checked. Students can attach a proof file (PDF, PNG or JPEG, up to 5 MB); only the student and their own mentor can open it, and it is deleted with the item or the account. Evidence counts as soon as it is added; if a mentor asks for proof, it stops counting until the student adds it. A mentor records college assessment results (a role skill or communication); that score is then locked and the student cannot change or delete it.
+1. **Same answer every time.** The score is a fixed formula (`server/domain.js`, version `v0.2`). Every saved score stores its inputs, each factor and the formula version, so any number can be traced and re-checked. Students can attach a proof file (PDF, PNG or JPEG, up to 5 MB); only the student and their own mentor can open it, and it is deleted with the item or the account. Evidence counts only once a mentor has verified it. A mentor records college assessment results (a role skill or communication); that score is then locked and the student cannot change or delete it.
 2. **Students decide.** Recommendations come from a rule library, ranked by how much each would raise the score. Students accept or decline each one. A mentor cannot override a decline (the API returns 409).
 3. **Consent first.** Each use needs its own consent: profile, personality questions, AI wording, employer introductions, research study. Under-18s must name a guardian, and that status is kept on every later consent change. Consent can be withdrawn and is stored as a history. Withdrawing questionnaire consent removes the answers everywhere, including earlier recorded scores and the study baseline. Questionnaire results are saved only when the student has set all five traits; nothing is filled in for them.
 4. **No individual data for employers or colleges.** Employers and placement cells see counts only. Any group under 5 is hidden, and employer counts are rounded to the nearest 5 so one total cannot be subtracted from another to find a small group. Colleges never see programmes with fewer than 5 students, for the same reason, and college counts are also rounded to 5, averages to whole numbers, and percentages shown only when both sides have 5 or more students, so comparing views over time cannot reveal one student. Introduction requests need at least 5 students who opted in. Students who opted in see the request and choose "I'm interested"; only their own placement cell then sees their name, and puts them in touch. The employer sees only how many replied.
 5. **Everything is logged and reversible.** Sign-ins, score runs, consent changes, reviews, verifications, exports and deletions are written to an audit log. Students can download all their data or delete their account.
 
 AI is optional. When switched on (`GEMINI_API_KEY` and the student's AI consent), Gemini only rewords the reason for a step. The new wording is rejected if it adds a number, a link or changes length too much, and the original is used instead. AI never changes a score or a ranking.
+
+## Scoring formula v0.2
+
+Eight factors: academic 20, technical/role skills 20, projects 15, experience 15, personality 10, communication 10, leadership 5, career clarity 5.
+
+- **Unanswered is left out, never guessed.** A factor with no answer (CGPA not entered, personality not entered or consent withdrawn, communication not yet assessed, clarity not rated) is "not yet rated". The score is the weighted average of the rated factors, and the page shows what share of the formula it covers.
+- **Only verified evidence counts.** Projects score 35 each, internships 50 each, leadership roles 50 each, capped at 100, and only after a mentor verifies them. With none verified these factors are 0.
+- **Communication** comes only from a college assessment a mentor records. Students cannot enter it.
+- **CGPA and career clarity** can be corrected but not cleared once entered, so a low value cannot be hidden.
+- **Known limit.** Because unanswered factors are left out, a student who never enters personality results (or withdraws that consent) is scored without it, which can be higher or lower than with it. Completeness is shown beside every score so mentors can see this.
+- Every recorded score stores its inputs and formula version. Scores recorded under v0.1 keep that label.
 
 ## Real courses and live updates
 
@@ -82,9 +93,9 @@ AI is optional. When switched on (`GEMINI_API_KEY` and the student's AI consent)
 
 ## Quality checks done
 
-- 59 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
+- 63 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
 - The tests pass on Node 22.13, 22.23 and 24. Node 22.12 and older cannot run the built-in database, and the server says so.
-- A browser walk-through of every page for all six roles (130 checks), at desktop and phone widths, with no server errors.
+- A browser walk-through of every page for all six roles (133 checks), at desktop and phone widths, with no server errors.
 - An automated accessibility scan (axe-core, WCAG 2.1 AA) of every page in normal and high-contrast mode: no violations. Keyboard-only use works.
 - Speed with 20,000 extra students: every page answers in under 0.2 seconds.
 - The Postgres scripts were applied to Postgres 16 and their access rules tested role by role.

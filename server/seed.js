@@ -69,19 +69,25 @@ function seed(db) {
       n++;
       const uid = user(`student${n}@sample.ngrm.in`, name, 'student', inst);
       const optIn = R() < 0.22;
+      // How far along this sample student is, so the cohort spreads across all three bands.
+      const drive = R();
       consent(uid, 'profile'); consent(uid, 'psychometric'); if (optIn) consent(uid, 'introductions');
-      profile(uid, { prog, year: R() < 0.5 ? 1 : 2, cgpa: Math.round((5.6 + R() * 3.6) * 10) / 10, role, skills: D.ROLES[role].skills.map(() => Math.round(30 + R() * 60)),
+      profile(uid, { prog, year: R() < 0.5 ? 1 : 2, cgpa: Math.round((5.6 + R() * 3.6) * 10) / 10, role, skills: D.ROLES[role].skills.map(() => Math.round(30 + drive * 25 + R() * 40)),
         ocean: { o: Math.round(35 + R() * 50), c: Math.round(35 + R() * 50), e: Math.round(30 + R() * 55), a: Math.round(40 + R() * 45), n: Math.round(25 + R() * 50) },
         comm: R() < 0.4 ? Math.round(50 + R() * 40) : null, clarity: Math.round(35 + R() * 60) }, optIn);
+      const assessed = h.get('SELECT comm FROM profiles WHERE user_id = ?', uid).comm;
+      if (assessed != null) evidence(uid, 'assessment', `Communication assessment: ${assessed}/100`, 'verified', 'College assessment', { role: 'communication', value: assessed });
       for (let i = 0; i < Math.floor(R() * 3); i++) evidence(uid, 'course', 'NPTEL course', 'verified', 'Course certificate');
       if (R() < 0.3) evidence(uid, 'certificate', 'Skill certificate', 'verified', 'Issuer');
-      for (let i = 0; i < Math.floor(R() * 3); i++) evidence(uid, 'project', 'Course project', R() < 0.7 ? 'verified' : 'pending', 'Faculty mentor');
-      if (R() < 0.33) evidence(uid, 'internship', 'Summer internship', 'verified', 'Placement cell');
-      if (R() < 0.4) evidence(uid, 'role', 'NSS volunteer', 'verified', 'NSS programme officer');
+      for (let i = 0; i < Math.min(3, Math.floor(R() * 2 + drive * 2.4)); i++) evidence(uid, 'project', 'Course project', R() < 0.8 ? 'verified' : 'pending', 'Faculty mentor');
+      if (R() < 0.1 + 0.7 * drive) evidence(uid, 'internship', 'Summer internship', 'verified', 'Placement cell');
+      if (drive > 0.6 && R() < 0.5) evidence(uid, 'internship', 'Winter internship', 'verified', 'Placement cell');
+      if (R() < 0.2 + 0.6 * drive) evidence(uid, 'role', 'NSS volunteer', 'verified', 'NSS programme officer');
+      if (drive > 0.7 && R() < 0.4) evidence(uid, 'role', 'Club coordinator', 'verified', 'Faculty in charge');
       if (R() < 0.3) {
         consent(uid, 'study');
         const p = JSON.parse(JSON.stringify(h.get('SELECT * FROM profiles WHERE user_id = ?', uid)));
-        const ev = h.all('SELECT type FROM evidence WHERE user_id = ?', uid);
+        const ev = h.all('SELECT type, status FROM evidence WHERE user_id = ?', uid);
         const prof = { prog: p.programme, year: p.year, cgpa: p.cgpa, role: p.target_role, skills: JSON.parse(p.skills_json), ocean: JSON.parse(p.ocean_json), comm: p.comm, clarity: p.clarity };
         const s = D.score(prof, ev);
         const run = h.run('INSERT INTO score_runs (user_id, formula_version, inputs_json, factors_json, index_value) VALUES (?, ?, ?, ?, ?)', uid, s.version, JSON.stringify({ profile: prof, counts: s.counts }), JSON.stringify(s.factors), s.index);

@@ -100,7 +100,8 @@
       }
       $('#kpis').innerHTML = '<div class="kpi"><b>~' + c.n + '</b><span>Students in view (to nearest 5)</span></div><div class="kpi"><b>' + c.avgIndex + '</b><span>Average score</span></div><div class="kpi"><b>' + (c.noInternshipPct == null ? '—' : '~' + c.noInternshipPct + '%') + '</b><span>' + (c.noInternshipPct == null ? 'Internship share hidden (small group)' : 'With no internship yet') + '</span></div>' +
         (pending != null ? '<div class="kpi"><b>' + pending + '</b><span>Items awaiting your review</span></div>' : '<div class="kpi"><b>' + esc(meta.formulaVersion) + '</b><span>Scoring formula</span></div>');
-      var avgs = meta.factors.map(function (F) { return { F: F, v: c.factors[F.k] }; });
+      // A factor too few students have a rating for (for example communication before assessments) is left off.
+      var avgs = meta.factors.map(function (F) { return { F: F, v: c.factors[F.k] }; }).filter(function (x) { return x.v != null; });
       var low = avgs.filter(function (x) { return x.F.k !== 'psychometric'; }).sort(function (a, b) { return a.v - b.v; }).slice(0, 2);
       $('#cFactors').innerHTML = avgs.map(function (x) { var isLow = low.some(function (l) { return l.F.k === x.F.k; });
         return '<div class="bar-row' + (isLow ? ' low' : '') + '"><div class="lbl"><b>' + x.F.label + '</b><small>Weight ' + x.F.w + '%</small></div><div class="track"><i style="width:' + Math.min(100, x.v) + '%"></i></div><span class="val">' + x.v + '</span></div>'; }).join('');

@@ -1,18 +1,18 @@
 // Reference data, the scoring formula (v0.1) and the recommendation rules.
 // The score is pure arithmetic. Nothing in this file calls an AI model.
 
-const FORMULA_VERSION = 'v0.1';
+const FORMULA_VERSION = 'v0.2';
 const MIN_GROUP = 5; // aggregates for groups smaller than this are suppressed
 
 const FACTORS = [
-  { k: 'academic', label: 'Academic', w: 20, how: 'CGPA × 10. If CGPA is missing, the factor is marked incomplete and scored 0.' },
-  { k: 'technical', label: 'Technical / role skills', w: 20, how: 'Average of your four role-skill scores, plus 3 per certificate and 1.5 per NPTEL/SWAYAM course. Capped at 100. 70 if no skills are rated.' },
-  { k: 'projects', label: 'Projects', w: 15, how: '70, plus 10 for each completed project. Capped at 100.' },
-  { k: 'experience', label: 'Experience', w: 15, how: '70, plus 15 for each internship. Capped at 100.' },
-  { k: 'psychometric', label: 'Psychometric', w: 10, how: 'Average of the five personality traits, with neuroticism reversed (100 − neuroticism). 75 until you enter questionnaire results. Used for fit, never as something to fix.' },
-  { k: 'communication', label: 'Communication', w: 10, how: 'College communication assessment. Until assessed, the average of extraversion and agreeableness (estimated), or 72 if neither is available.' },
-  { k: 'leadership', label: 'Leadership', w: 5, how: '95 with an NSS, NCC, club or committee role on record. Otherwise 75.' },
-  { k: 'clarity', label: 'Career clarity', w: 5, how: 'Your own rating of how sure you are about your career direction. 80 if not given.' },
+  { k: 'academic', label: 'Academic', w: 20, how: 'CGPA × 10. Not yet rated until you enter your CGPA.' },
+  { k: 'technical', label: 'Technical / role skills', w: 20, how: 'Average of your four role-skill scores, plus 3 per verified certificate and 1.5 per verified NPTEL/SWAYAM course. Capped at 100.' },
+  { k: 'projects', label: 'Projects', w: 15, how: '35 for each project your mentor has verified, capped at 100. None verified scores 0.' },
+  { k: 'experience', label: 'Experience', w: 15, how: '50 for each internship your mentor has verified, capped at 100. None verified scores 0.' },
+  { k: 'psychometric', label: 'Psychometric', w: 10, how: 'Average of the five personality traits you entered, with neuroticism reversed (100 − neuroticism). Not yet rated until you enter all five.' },
+  { k: 'communication', label: 'Communication', w: 10, how: 'Your college communication assessment, recorded by your mentor. Not yet rated until then.' },
+  { k: 'leadership', label: 'Leadership', w: 5, how: '50 for each verified NSS, NCC, club or committee role, capped at 100. None verified scores 0.' },
+  { k: 'clarity', label: 'Career clarity', w: 5, how: 'Your own rating of how sure you are about your career direction. Not yet rated until you give one.' },
 ];
 
 const ROLES = {
@@ -62,38 +62,37 @@ const clamp = (v, lo = 0, hi = 100) => Math.min(hi, Math.max(lo, v));
 const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
 const round1 = (n) => Math.round(n * 10) / 10;
 
+// Only evidence a mentor (or the college) has verified counts. Claims waiting for a check add nothing yet.
 function counts(evidence) {
   const c = { course: 0, certificate: 0, project: 0, internship: 0, role: 0 };
-  // Evidence a mentor has sent back for proof stops counting until the student adds proof.
-  for (const e of evidence || []) if (c[e.type] != null && e.status !== 'needs_proof') c[e.type]++;
+  for (const e of evidence || []) if (c[e.type] != null && e.status === 'verified') c[e.type]++;
   return c;
 }
-
-/**
- * Score a profile. `p` = { cgpa, skills[4], ocean{o,c,e,a,n}|null, comm|null, clarity|null }.
- * Returns factor scores (0-100), the index (0-100, one decimal) and flags.
- */
+const given = (v) => v !== null && v !== undefined && v !== '' && !Number.isNaN(+v);
+// Formula v0.2.
+// 1. Only evidence a mentor has verified counts.
+// 2. A factor the student has not answered is "not yet rated" (null): it is left out, and the score is the
+//    weighted average of the rated factors. `completeness` says how much of the full formula that covers.
+// 3. Projects, experience and leadership start at 0 and rise with each verified item.
 function score(p, evidence) {
   const c = counts(evidence);
   const f = {};
-  const cgpaKnown = p.cgpa !== null && p.cgpa !== undefined && p.cgpa !== '' && !Number.isNaN(+p.cgpa);
-  f.academic = cgpaKnown ? clamp(+p.cgpa * 10) : 0;
+  f.academic = given(p.cgpa) ? clamp(+p.cgpa * 10) : null;
   const skills = (p.skills || []).map(Number).filter((n) => !Number.isNaN(n));
-  f.technical = Math.min(100, (skills.length ? avg(skills) : 70) + c.certificate * 3 + c.course * 1.5);
-  f.projects = Math.min(100, 70 + 10 * c.project);
-  f.experience = Math.min(100, 70 + 15 * c.internship);
+  f.technical = skills.length ? Math.min(100, avg(skills) + c.certificate * 3 + c.course * 1.5) : null;
+  f.projects = Math.min(100, 35 * c.project);
+  f.experience = Math.min(100, 50 * c.internship);
   const o = p.ocean;
-  f.psychometric = o ? (o.o + o.c + o.e + o.a + (100 - o.n)) / 5 : 75;
-  const commKnown = p.comm !== null && p.comm !== undefined && p.comm !== '' && !Number.isNaN(+p.comm);
-  f.communication = commKnown ? clamp(+p.comm) : o ? Math.min(100, (o.e + o.a) / 2) : 72;
-  f.leadership = c.role > 0 ? 95 : 75;
-  const clarityKnown = p.clarity !== null && p.clarity !== undefined && p.clarity !== '' && !Number.isNaN(+p.clarity);
-  f.clarity = clarityKnown ? clamp(+p.clarity) : 80;
-  let index = 0;
-  for (const F of FACTORS) index += (f[F.k] * F.w) / 100;
-  for (const k of Object.keys(f)) f[k] = round1(f[k]);
-  return { version: FORMULA_VERSION, factors: f, index: round1(index), counts: c,
-    flags: { cgpaMissing: !cgpaKnown, commEstimated: !commKnown, psychometricMissing: !o } };
+  f.psychometric = o ? (o.o + o.c + o.e + o.a + (100 - o.n)) / 5 : null;
+  f.communication = given(p.comm) ? clamp(+p.comm) : null;
+  f.leadership = Math.min(100, 50 * c.role);
+  f.clarity = given(p.clarity) ? clamp(+p.clarity) : null;
+  let sum = 0, weight = 0;
+  for (const F of FACTORS) if (f[F.k] !== null) { sum += f[F.k] * F.w; weight += F.w; }
+  for (const k of Object.keys(f)) if (f[k] !== null) f[k] = round1(f[k]);
+  return { version: FORMULA_VERSION, factors: f, index: weight ? round1(sum / weight) : 0, counts: c, ratedWeight: weight, completeness: weight,
+    notRated: FACTORS.filter((F) => f[F.k] === null).map((F) => F.k),
+    flags: { cgpaMissing: !given(p.cgpa), commUnrated: f.communication === null, psychometricMissing: !o, clarityMissing: !given(p.clarity) } };
 }
 
 function band(i) {
@@ -106,14 +105,14 @@ function band(i) {
 // Each rule: when it applies, how its effect is simulated (to rank by score gain), and its text.
 // Thresholds, timing, effort and on/off live in the `rules` table so an admin can change them.
 const weakest = (p) => p.skills.reduce((w, s, i, a) => (+s < +a[w] ? i : w), 0);
-const withEv = (ev, type) => ev.concat([{ type }]);
+const withEv = (ev, type) => ev.concat([{ type, status: 'verified' }]);
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
 const RULES = {
   course: {
     applies: (p, r, t) => p.skills.length && +p.skills[weakest(p)] < t,
     sim: (p, ev) => { const q = clone(p); const i = weakest(q); q.skills[i] = Math.min(100, +q.skills[i] + 15); return [q, withEv(ev, 'course')]; },
-    assume: 'Assumes the course lifts that skill by 15 points.',
+    assume: 'Assumes the course lifts that skill by 15 points and the certificate is verified.',
     title: (p) => `Take an NPTEL or SWAYAM course in ${ROLES[p.role].skills[weakest(p)].toLowerCase()}`,
     what: () => 'Pick a course on this skill and sit the proctored exam, so the certificate counts as verified evidence.',
     why: (p) => { const i = weakest(p); return `${ROLES[p.role].skills[i]} is your weakest role skill at ${p.skills[i]}/100, against a target of ${ROLES[p.role].target[i]}. Technical and role skills carry 20% of your score.`; },
@@ -121,26 +120,27 @@ const RULES = {
   project: {
     applies: (p, r, t) => r.counts.project < t,
     sim: (p, ev) => [p, withEv(ev, 'project')],
-    assume: 'Counts one more completed project.',
+    assume: 'Counts one more project, once your mentor has verified it.',
     title: () => 'Do one applied project',
     what: (p) => `${ROLES[p.role].project}.`,
-    why: (p, r) => `Projects carry 15% of your score. You have ${r.counts.project} completed project${r.counts.project === 1 ? '' : 's'}, which gives ${Math.round(r.factors.projects)}/100.`,
+    why: (p, r) => `Projects carry 15% of your score. You have ${r.counts.project} completed project${r.counts.project === 1 ? '' : 's'}, which gives ${Math.round(r.factors.projects)}/100. Each verified project adds 35.`,
   },
   internship: {
     applies: (p, r, t) => r.counts.internship < t,
     sim: (p, ev) => [p, withEv(ev, 'internship')],
-    assume: 'Counts one internship.',
+    assume: 'Counts one internship, once your mentor has verified it.',
     title: () => 'Line up a summer internship',
     what: (p) => `Aim for ${ROLES[p.role].internship}. Start with your placement cell; the AICTE internship portal also lists openings for students.`,
-    why: (p, r) => `Experience carries 15% of your score. ${r.counts.internship === 0 ? 'You have no internships yet, so this factor sits at its starting value of 70.' : `You are at ${Math.round(r.factors.experience)}/100.`}`,
+    why: (p, r) => `Experience carries 15% of your score. ${r.counts.internship === 0 ? 'You have no verified internships yet, so this factor is at 0.' : `You are at ${Math.round(r.factors.experience)}/100.`}`,
   },
   communication: {
-    applies: (p, r, t) => r.factors.communication < t,
-    sim: (p, ev) => { const q = clone(p); q.comm = Math.round(Math.min(100, score(p, ev).factors.communication + 12)); return [q, ev]; },
-    assume: 'Assumes a 12-point gain after a semester of practice.',
-    title: () => 'Practise speaking, then get assessed',
-    what: () => 'Join a debate, theatre or public-speaking club for a semester, then take the college communication assessment so your score is measured rather than estimated.',
-    why: (p, r) => `${r.flags.commEstimated ? `Your communication score is estimated at ${Math.round(r.factors.communication)}/100 because you have not been assessed yet.` : `Your assessed communication score is ${Math.round(r.factors.communication)}/100.`} It carries 10% of your score.`,
+    // Shown when the student has not been assessed, or was assessed below the threshold.
+    applies: (p, r, t) => r.factors.communication === null || r.factors.communication < t,
+    sim: (p, ev) => { if (!given(p.comm)) return [p, ev]; const q = clone(p); q.comm = Math.round(Math.min(100, +p.comm + 12)); return [q, ev]; },
+    assume: 'Assumes a 12-point gain at your next assessment. No points are projected until you have been assessed once.',
+    title: (p) => (given(p.comm) ? 'Practise speaking, then get re-assessed' : 'Take the college communication assessment'),
+    what: (p) => (given(p.comm) ? 'Join a debate, theatre or public-speaking club for a semester, then ask your mentor for a fresh communication assessment.' : 'Ask your mentor when the college communication assessment runs. A debate, theatre or public-speaking club is good practice beforehand.'),
+    why: (p, r) => (r.flags.commUnrated ? 'Communication carries 10% of the score, but yours has not been assessed yet, so it is left out of your total for now.' : `Your assessed communication score is ${Math.round(r.factors.communication)}/100. It carries 10% of your score.`),
   },
   academic: {
     applies: (p, r, t) => !r.flags.cgpaMissing && +p.cgpa < t,
@@ -153,13 +153,13 @@ const RULES = {
   leadership: {
     applies: (p, r) => r.counts.role === 0,
     sim: (p, ev) => [p, withEv(ev, 'role')],
-    assume: 'Moves leadership from 75 to 95.',
+    assume: 'Moves leadership from 0 to 50, once your mentor has verified the role.',
     title: () => 'Take on a responsibility role',
     what: () => 'Volunteer with NSS or NCC, or lead a club event or a student committee this year.',
-    why: () => 'Leadership carries 5% of your score. With no role on record it sits at 75/100; one role moves it to 95.',
+    why: () => 'Leadership carries 5% of your score. With no verified role on record it is at 0; one role moves it to 50.',
   },
   clarity: {
-    applies: (p, r, t) => r.factors.clarity < t,
+    applies: (p, r, t) => r.factors.clarity !== null && r.factors.clarity < t,
     sim: (p, ev) => { const q = clone(p); q.clarity = Math.min(100, (+q.clarity || 0) + 20); return [q, ev]; },
     assume: 'Assumes your confidence rating rises by 20.',
     title: () => 'Test your career direction',
@@ -173,7 +173,7 @@ const RULES = {
     assume: 'Not scored. Always available.',
     title: () => 'Talk to a human career counsellor',
     what: () => 'Book a session with your college counsellor. You can do this at any time, with or without the rest of the plan.',
-    why: (p, r, t) => (t != null && r.factors.clarity < t
+    why: (p, r, t) => (t != null && r.factors.clarity !== null && r.factors.clarity < t
       ? 'Your career clarity is low. A conversation with a person often helps more than any score.'
       : 'A conversation with a person can test this plan against what you actually want. No score can do that.'),
     always: true,

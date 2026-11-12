@@ -17,7 +17,7 @@
 <body>
 <div class="page-banner"><div class="container">
   <div><span class="eyebrow">Graduate Readiness Index · <span id="ver"></span></span><h1>My score</h1>
-  <p class="lead">Your score is calculated on our server with a fixed formula. Change anything on the left and it updates. Courses, projects, internships and roles come from your <a href="skill-credentials.html">evidence</a>.</p></div>
+  <p class="lead">Your score is calculated on our server with a fixed formula. Change anything in the form and it updates. Courses, projects, internships and roles come from your <a href="skill-credentials.html">evidence</a>, and count once your mentor has verified them. Anything you have not answered is left out, not guessed.</p></div>
 </div></div>
 <main id="main" tabindex="-1">
 <div class="container" id="gate"></div>
@@ -33,7 +33,7 @@
     </fieldset></div>
     <div class="form-group"><fieldset><legend>Role skills (0–100)</legend><div id="skillsBox" style="display:grid;gap:0.75rem"></div></fieldset></div>
     <div class="form-group"><fieldset id="psyBox"><legend>Personality (Big Five)</legend>
-      <p class="small muted" id="psyNote" style="margin-top:-0.4rem">Your results (0–100 each) from a Big Five questionnaire given by your college or counsellor. Used to understand fit, never as something to fix.</p>
+      <p class="small muted" id="psyNote" style="margin-top:-0.4rem">Your results (0–100 each) from a Big Five questionnaire given by your college or counsellor. It counts for 10% of your score once all five are entered.</p>
       <div class="field"><label for="o-o">Openness</label><div class="slider"><input type="range" id="o-o" min="0" max="100"><output for="o-o"></output></div></div>
       <div class="field"><label for="o-c">Conscientiousness</label><div class="slider"><input type="range" id="o-c" min="0" max="100"><output for="o-c"></output></div></div>
       <div class="field"><label for="o-e">Extraversion</label><div class="slider"><input type="range" id="o-e" min="0" max="100"><output for="o-e"></output></div></div>
@@ -41,7 +41,7 @@
       <div class="field"><label for="o-n">Neuroticism</label><div class="slider"><input type="range" id="o-n" min="0" max="100"><output for="o-n"></output></div></div>
     </fieldset></div>
     <div class="form-group"><fieldset><legend>Communication and direction</legend>
-      <div class="field"><label for="f-comm">College communication assessment</label><input type="number" id="f-comm" min="0" max="100" placeholder="Not taken yet" aria-describedby="commHint"><span class="hint" id="commHint">Leave blank until you take it. Once your mentor records the result, it is locked.</span></div>
+      <div class="field"><label for="f-comm">College communication assessment</label><input type="number" id="f-comm" min="0" max="100" placeholder="Not assessed yet" aria-describedby="commHint" disabled><span class="hint" id="commHint">Leave blank until you take it. Once your mentor records the result, it is locked.</span></div>
       <div class="field"><label for="f-clarity">How sure are you about your career direction?</label><div class="slider"><input type="range" id="f-clarity" min="0" max="100"><output for="f-clarity"></output></div></div>
     </fieldset></div>
     <p class="small muted" id="saveState" aria-live="polite">Changes save automatically.</p>
@@ -94,23 +94,24 @@
     var o = p.ocean || { o: 50, c: 50, e: 50, a: 50, n: 50 };
     touched = p.ocean ? TRAITS.slice() : [];
     TRAITS.forEach(function (k) { $('#o-' + k).value = o[k]; $('#o-' + k).disabled = !consents.psychometric; });
-    $('#psyNote').innerHTML = consents.psychometric ? 'Your results (0–100 each) from a Big Five questionnaire given by your college or counsellor. Used to understand fit, never as something to fix.' : 'You haven’t agreed to store questionnaire results, so this factor uses its default of 75. You can change that on <a href="skill-credentials.html">Evidence &amp; privacy</a>.';
-    $('#f-comm').value = p.comm == null ? '' : p.comm; $('#f-comm').disabled = !!p.commVerified;
-    $('#commHint').innerHTML = p.commVerified ? '<span class="chip success">Verified by assessment</span> Recorded by your mentor.' : 'Leave blank until you take it. Once your mentor records the result, it is locked.'; $('#f-clarity').value = p.clarity == null ? 80 : p.clarity;
+    $('#psyNote').innerHTML = consents.psychometric ? 'Your results (0–100 each) from a Big Five questionnaire given by your college or counsellor. It counts for 10% of your score once all five are entered.' : 'You haven’t agreed to store questionnaire results, so this factor is left out of your score. You can change that on <a href="skill-credentials.html">Evidence &amp; privacy</a>.';
+    $('#f-comm').value = p.comm == null ? '' : p.comm; $('#f-comm').disabled = true;
+    $('#commHint').innerHTML = p.commVerified ? '<span class="chip success">Verified by assessment</span> Recorded by your mentor.' : 'Your mentor records this after the college assessment. Until then it is left out of your score.'; $('#f-clarity').value = p.clarity == null ? 50 : p.clarity;
     outputs();
   }
-  var TRAITS = ['o', 'c', 'e', 'a', 'n'], touched = [];
+  var TRAITS = ['o', 'c', 'e', 'a', 'n'], touched = [], clarityTouched = false;
   function outputs() {
     $$('#profileForm output').forEach(function (o) { var id = o.getAttribute('for'), i = document.getElementById(id); if (!i) return;
-      o.textContent = /^o-/.test(id) && touched.indexOf(id.slice(2)) < 0 ? 'not set' : i.value; });
-    if (consents && consents.psychometric && touched.length && touched.length < 5) $('#psyNote').textContent = 'Set all five traits to save your results (' + touched.length + ' of 5 set). Until then this factor uses its default of 75.';
+      o.textContent = (/^o-/.test(id) && touched.indexOf(id.slice(2)) < 0) || (id === 'f-clarity' && !clarityTouched && data && data.profile.clarity == null) ? 'not set' : i.value; });
+    if (consents && consents.psychometric && touched.length && touched.length < 5) $('#psyNote').textContent = 'Set all five traits to save your results (' + touched.length + ' of 5 set). Until then this factor is left out of your score.';
   }
   function read() {
     var role = $('#f-role').value;
     return { prog: $('#f-prog').value, year: +$('#f-year').value, cgpa: $('#f-cgpa').value, role: role,
       skills: [0, 1, 2, 3].map(function (i) { var el = $('#sk-' + i); return el ? el.value : 50; }),
       ocean: !consents.psychometric ? null : touched.length === 5 ? { o: $('#o-o').value, c: $('#o-c').value, e: $('#o-e').value, a: $('#o-a').value, n: $('#o-n').value } : undefined,
-      comm: $('#f-comm').value, clarity: $('#f-clarity').value };
+      // Career clarity is sent only once the student has set it, so an untouched slider is never saved as an answer.
+      clarity: clarityTouched || (data && data.profile.clarity != null) ? $('#f-clarity').value : undefined };
   }
   function render() {
     var p = data.profile, s = data.score;
@@ -118,13 +119,15 @@
     $('#sName').textContent = me.name;
     var prog = meta.programmes.filter(function (x) { return x.id === p.prog; })[0];
     $('#sMeta').textContent = (prog ? prog.label : '') + ' · ' + N.ordinal(p.year) + ' year · Target: ' + meta.roles[p.role].label;
-    $('#sBand').innerHTML = '<span class="chip ' + N.bandCls[data.band.k] + '">' + data.band.label + '</span>' + (s.flags.cgpaMissing ? ' <span class="chip warning">CGPA missing</span>' : '');
+    $('#sBand').innerHTML = '<span class="chip ' + N.bandCls[data.band.k] + '">' + data.band.label + '</span>' + (s.flags.cgpaMissing ? ' <span class="chip warning">CGPA missing</span>' : '') +
+      (s.completeness < 100 ? '<p class="small muted" style="margin:0.4rem 0 0">Based on ' + s.completeness + '% of the formula, scaled to 100. Not yet rated: ' + s.notRated.map(function (k) { return meta.factors.filter(function (F) { return F.k === k; })[0].label; }).join(', ') + '.</p>' : '');
     $('#lastRec').textContent = data.lastRecorded ? 'Last recorded ' + N.f1(data.lastRecorded.index_value) + ' on ' + new Date(data.lastRecorded.created_at.replace(' ', 'T') + 'Z').toLocaleDateString('en-IN') : 'Not recorded yet';
     $('#factors').innerHTML = meta.factors.map(function (F) {
       var v = s.factors[F.k], extra = '';
-      if (F.k === 'communication' && s.flags.commEstimated) extra = ' <span class="chip warning">estimated</span>';
-      if (F.k === 'psychometric') extra = s.flags.psychometricMissing ? ' <span class="chip">default</span>' : ' <span class="chip">for fit only</span>';
-      var src = { projects: s.counts.project + ' on record', experience: s.counts.internship + ' on record', leadership: s.counts.role ? 'role on record' : 'no role on record' }[F.k];
+      if (v === null) return '<div class="bar-row"><div class="lbl"><b>' + F.label + ' <span class="chip">not yet rated</span></b><small>Weight ' + F.w + '% · left out of your score for now</small></div>' +
+        '<div class="track mint" role="img" aria-label="' + F.label + ' not yet rated"><i style="width:0%"></i></div><span class="val">— / ' + F.w + '</span>' +
+        '<details><summary>How this is calculated</summary><p style="margin-top:0.3rem">' + esc(F.how) + '</p></details></div>';
+      var src = { projects: s.counts.project + ' verified', experience: s.counts.internship + ' verified', leadership: s.counts.role + ' verified' }[F.k];
       return '<div class="bar-row"><div class="lbl"><b>' + F.label + extra + '</b><small>Weight ' + F.w + '% · ' + N.f0(v) + '/100' + (src ? ' · ' + src : '') + '</small></div>' +
         '<div class="track mint" role="img" aria-label="' + F.label + ' ' + N.f0(v) + ' out of 100"><i style="width:' + Math.min(100, v) + '%"></i></div><span class="val">' + N.f1(v * F.w / 100) + ' / ' + F.w + '</span>' +
         '<details><summary>How this is calculated</summary><p style="margin-top:0.3rem">' + esc(F.how) + '</p></details></div>';
@@ -170,6 +173,7 @@
   });
   $('#profileForm').addEventListener('input', function (e) {
     if (e.target.id === 'f-prog') years(e.target.value, +$('#f-year').value);
+    if (e.target.id === 'f-clarity') clarityTouched = true;
     if (/^o-[ocean]$/.test(e.target.id) && touched.indexOf(e.target.id.slice(2)) < 0) touched.push(e.target.id.slice(2));
     if (e.target.id === 'f-role') { data.profile.role = e.target.value; data.profile.skills = [50, 50, 50, 50]; data.profile.verifiedSkills = []; skills(data.profile); }
     outputs(); clearTimeout(timer); timer = setTimeout(save, 450);
@@ -178,7 +182,7 @@
   $('#profileForm').addEventListener('focusout', function () { setTimeout(function () { if (data && !timer) sync(data.profile); }, 0); });
   $('#recordBtn').addEventListener('click', function () {
     // Save any edit still waiting, so the recorded score matches what is on screen.
-    (timer ? save() : pending || Promise.resolve()).then(function () { return N.api('POST', '/api/me/score'); }).then(function (r) { history(); N.toast('Recorded ' + N.f1(r.index) + ' with formula ' + r.version + '.'); return N.api('GET', '/api/me/profile'); })
+    (timer ? save() : pending || Promise.resolve()).then(function () { return N.api('POST', '/api/me/score'); }).then(function (r) { history(); N.toast(r.alreadyRecorded ? 'This score is already recorded. Nothing has changed since.' : 'Recorded ' + N.f1(r.index) + ' with formula ' + r.version + '.'); return N.api('GET', '/api/me/profile'); })
       .then(function (d) { data = d; render(); }).catch(function (e) { N.toast(e.message); });
   });
 })();
