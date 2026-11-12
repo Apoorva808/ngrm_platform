@@ -34,10 +34,13 @@ const production = process.env.NODE_ENV === 'production';
 // Sample data only outside production (or when asked for explicitly with SEED_SAMPLE=true, for a demo server).
 if ((!production || process.env.SEED_SAMPLE === 'true') && seed(db)) console.log('First run: loaded sample data (all people, colleges and employers are fictional).');
 const admin = bootstrap(db);
-if (admin) console.log(`Created the first admin account: ${admin}`);
+if (admin) console.log(`Created the first admin account: ${admin}` + (process.env.ADMIN_PASSWORD ? '. Sign in with ADMIN_PASSWORD; you will be asked to choose a new password.' : ''));
+const codes = process.env.EMAIL_CODES === 'on';
+if (!codes && process.env.ADMIN_EMAIL && !db.prepare('SELECT 1 FROM passwords p JOIN users u ON u.id = p.user_id WHERE u.email = ?').get(String(process.env.ADMIN_EMAIL).trim().toLowerCase())) console.warn('The admin account has no password yet, so nobody can sign in to it. Set ADMIN_PASSWORD and restart.');
 if (production && !db.prepare("SELECT 1 FROM users WHERE role = 'admin'").get()) console.warn('No admin account yet. Set ADMIN_EMAIL (and ADMIN_NAME) and restart.');
 const mailer = require('./mail').provider();
-console.log(mailer ? `Sign-in codes are emailed through ${mailer}.` : 'No email provider set (MAIL_FROM plus RESEND_API_KEY or BREVO_API_KEY).' + (production ? ' Nobody can sign in until one is set.' : ' Codes appear in this log.'));
+if (!codes) console.log('Sign-in is by email and password. No codes are emailed (set EMAIL_CODES=on to add them).');
+else console.log(mailer ? `Emailed codes are on, sent through ${mailer}.` : 'EMAIL_CODES=on but no email provider is set (MAIL_FROM plus RESEND_API_KEY or BREVO_API_KEY).' + (production ? ' Codes cannot be delivered until one is set.' : ' Codes appear in this log.'));
 const port = Number(process.env.PORT) || 3000;
 const app = createApp(db);
 // Behind a hosting proxy (Render, Railway, nginx), trust it so per-address limits see the real visitor address.

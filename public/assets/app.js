@@ -106,6 +106,8 @@
         var meta = r[0], me = r[1];
         if (roles && !me) { location.href = 'login.html?next=' + encodeURIComponent(location.pathname.split('/').pop()); return new Promise(function () {}); }
         if (roles && roles.indexOf(me.user.role) < 0) { location.href = HOME[me.user.role] || 'index.html'; return new Promise(function () {}); }
+        // On a temporary password, the only place to go is the Account page, to choose a real one.
+        if (me && me.user.mustChangePassword && page !== 'account') { location.href = 'account.html'; return new Promise(function () {}); }
         chrome(page, me && me.user, meta);
         return { meta: meta, me: me && me.user, consents: me && me.consents };
       });

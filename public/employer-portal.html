@@ -21,7 +21,7 @@
   </section>
   <div class="grid-2">
     <section class="card" aria-labelledby="supTitle">
-      <header><h2 id="supTitle">Students building this skill set</h2><span class="small muted">By average of the four role skills</span></header>
+      <header><h2 id="supTitle">Students building this skill set</h2><span class="small muted">By average of college-assessed role skills</span></header>
       <div class="table-wrap"><table><thead><tr><th>College</th><th class="n">Foundation<br><span class="small">below 50</span></th><th class="n">Intermediate<br><span class="small">50–69</span></th><th class="n">Strong<br><span class="small">70+</span></th><th class="n">Opted in</th></tr></thead><tbody id="supply"><tr><td colspan="5" class="loading">Loading…</td></tr></tbody></table></div>
       <div style="display:flex;flex-wrap:wrap;gap:0.6rem;align-items:center;margin-top:1rem"><button class="btn btn-primary" type="button" id="introBtn">Request introductions</button><span class="small muted" id="introNote"></span></div>
       <div id="myIntros" style="margin-top:1rem"></div>
@@ -55,7 +55,7 @@
       $('#introBtn').disabled = !s.canRequestIntroductions;
       $('#introNote').textContent = s.canRequestIntroductions ? 'Goes to each placement cell. Students decide whether to reply.' : 'Fewer than 5 students have opted in for this role, so introductions are not available yet.';
       $('#scarce').innerHTML = s.skills ? s.skills.map(function (k) { return '<div class="bar-row' + (k.sharePct != null && k.sharePct < 25 ? ' low' : '') + '"><div class="lbl"><b>' + esc(k.name) + '</b></div><div class="track"><i style="width:' + (k.sharePct || 0) + '%"></i></div><span class="val">' + (k.sharePct == null ? 'hidden' : '~' + k.sharePct + '%') + '</span></div>'; }).join('') : '<p class="muted">Too few students target this role to show skill shares.</p>';
-      $('#poolNote').textContent = 'Based on ' + (s.pool == null ? 'fewer than 5' : 'about ' + s.pool) + ' students targeting this role across partner colleges. Amber bars mark skills fewer than a quarter of them have at 70 or above.';
+      $('#poolNote').textContent = 'Based on ' + (s.pool == null ? 'fewer than 5' : 'about ' + s.pool) + ' students targeting this role across partner colleges. Only skills a college has assessed are counted; a student’s own ratings are not. Amber bars mark skills fewer than a quarter of them have at 70 or above.';
     }).catch(function (e) { N.showError($('#scarce'), e); });
     $('#d-skills').innerHTML = meta.roles[role].skills.map(function (n, k) { return '<label class="check"><input type="checkbox" id="ds-' + k + '" value="' + esc(n) + '"> <span>' + esc(n) + '</span></label>'; }).join('');
   }

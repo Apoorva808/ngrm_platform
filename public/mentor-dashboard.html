@@ -55,12 +55,12 @@
   </section>
   <section class="card" id="menteeCard" hidden aria-labelledby="mTitle">
     <header><h2 id="mTitle">My mentees</h2><span class="small muted">Visible only to the student’s own mentor</span></header>
-    <div class="table-wrap"><table><thead><tr><th>Student</th><th>Programme</th><th>Year</th><th>Target role</th><th class="n">Score</th><th>Band</th></tr></thead><tbody id="mentees"></tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Student</th><th>Programme</th><th>Year</th><th>Target role</th><th class="n">Score</th><th>Band</th><th>Waiting for you</th></tr></thead><tbody id="mentees"></tbody></table></div>
     <form id="assessForm" novalidate style="display:grid;gap:0.75rem;margin-top:1.25rem;border-top:1px solid var(--border);padding-top:1rem">
-      <h3>Record a college assessment</h3>
-      <p class="small muted" style="margin:0">The result replaces the student’s own rating for that skill and is shown as verified. Students cannot change it.</p>
+      <h3>Confirm a CGPA or record a college assessment</h3>
+      <p class="small muted" style="margin:0">A student’s CGPA and skills count towards their score only once you confirm them here. Enter the figure from college records or the assessment result; it replaces what the student typed, and they cannot change an assessed skill.</p>
       <div class="row-2"><div class="field"><label for="as-student">Student</label><select id="as-student"></select></div><div class="field"><label for="as-what">What was assessed</label><select id="as-what"></select></div></div>
-      <div class="row-2"><div class="field"><label for="as-score">Score (0–100)</label><input type="number" id="as-score" min="0" max="100" inputmode="numeric"></div><div class="field" style="align-self:end"><button class="btn btn-primary" type="submit">Record result</button></div></div>
+      <div class="row-2"><div class="field"><label for="as-score" id="as-scoreLbl">Score (0–100)</label><input type="number" id="as-score" min="0" max="100" step="any" inputmode="decimal"></div><div class="field" style="align-self:end"><button class="btn btn-primary" type="submit">Record result</button></div></div>
       <p class="small" id="as-err" style="color:var(--danger)" hidden></p>
     </form>
   </section>
@@ -128,10 +128,10 @@
       // New items appear on their own, unless a note is being drafted (so nothing typed is lost).
       N.live(function () { var drafting = N.$$('#queue textarea').some(function (t) { return t.value.trim(); }); if (!drafting) return loadQueue(); }, 30);
       N.api('GET', '/api/mentor/mentees').then(function (list) {
-        if (!list.length) { $('#mentees').innerHTML = '<tr><td colspan="6" class="muted">No mentees linked to you yet. Your admin links students to mentors.</td></tr>'; $('#assessForm').hidden = true; return; }
+        if (!list.length) { $('#mentees').innerHTML = '<tr><td colspan="7" class="muted">No mentees linked to you yet. Your admin links students to mentors.</td></tr>'; $('#assessForm').hidden = true; return; }
         mentees = list;
         $('#as-student').innerHTML = list.map(function (s) { return '<option value="' + s.id + '">' + esc(s.name) + '</option>'; }).join(''); whatOptions();
-        $('#mentees').innerHTML = list.map(function (s) { return '<tr><td>' + esc(s.name) + '</td><td>' + esc(progLabel(s.programme)) + '</td><td>' + N.ordinal(s.year) + '</td><td>' + esc(meta.roles[s.role].label) + '</td><td class="n">' + N.f1(s.index) + '</td><td><span class="chip ' + N.bandCls[s.band.k] + '">' + s.band.label + '</span></td></tr>'; }).join('');
+        menteeRows(list);
       });
     } else {
       loadCohort().catch(function (e) { N.showError($('#cFactors'), e); });
@@ -153,16 +153,35 @@
     }
   });
   var mentees = [];
-  function whatOptions() {
-    var s = mentees.filter(function (m) { return String(m.id) === $('#as-student').value; })[0]; if (!s) return;
-    $('#as-what').innerHTML = meta.roles[s.role].skills.map(function (k, i) { return '<option value="' + i + '">' + esc(k) + '</option>'; }).join('') + '<option value="communication">Communication</option>';
+  function waiting(s) {
+    var w = [], n = s.skillsVerified.filter(function (v) { return !v; }).length;
+    if (s.cgpa != null && !s.cgpaConfirmed) w.push('CGPA ' + s.cgpa + ' to confirm'); else if (s.cgpa == null) w.push('CGPA not entered');
+    if (n) w.push(n + (n === 1 ? ' skill' : ' skills') + ' to assess');
+    if (!s.commAssessed) w.push('communication to assess');
+    return w.length ? esc(w.join(' · ')) : '<span class="muted">Nothing</span>';
+  }
+  function menteeRows(list) {
+    $('#mentees').innerHTML = list.map(function (s) { return '<tr><td>' + esc(s.name) + '</td><td>' + esc(progLabel(s.programme)) + '</td><td>' + N.ordinal(s.year) + '</td><td>' + esc(meta.roles[s.role].label) + '</td><td class="n">' + N.f1(s.index) + '</td><td><span class="chip ' + N.bandCls[s.band.k] + '">' + s.band.label + '</span></td><td class="small">' + waiting(s) + '</td></tr>'; }).join('');
+  }
+  function current() { return mentees.filter(function (m) { return String(m.id) === $('#as-student').value; })[0]; }
+  function whatOptions(keep) {
+    var s = current(); if (!s) return; var was = keep === true ? $('#as-what').value : null;
+    $('#as-what').innerHTML = '<option value="cgpa">CGPA' + (s.cgpaConfirmed ? ' (confirmed: ' + s.cgpa + ')' : s.cgpa != null ? ' (student entered ' + s.cgpa + ')' : '') + '</option>' +
+      meta.roles[s.role].skills.map(function (k, i) { return '<option value="' + i + '">' + esc(k) + (s.skillsVerified[i] ? ' (assessed: ' + s.skills[i] + ')' : ' (not assessed)') + '</option>'; }).join('') + '<option value="communication">Communication' + (s.commAssessed ? ' (assessed)' : ' (not assessed)') + '</option>';
+    if (was != null) $('#as-what').value = was;
+    whatShape();
+  }
+  function whatShape() {
+    var cg = $('#as-what').value === 'cgpa', sc = $('#as-score');
+    $('#as-scoreLbl').textContent = cg ? 'CGPA from college records (0–10)' : 'Score (0–100)'; sc.max = cg ? 10 : 100;
   }
   $('#as-student').addEventListener('change', whatOptions);
+  $('#as-what').addEventListener('change', whatShape);
   $('#assessForm').addEventListener('submit', function (e) {
     e.preventDefault(); var err = $('#as-err');
     N.api('POST', '/api/mentor/assessments', { studentId: +$('#as-student').value, what: $('#as-what').value, value: $('#as-score').value })
-      .then(function (r) { err.hidden = true; $('#as-score').value = ''; N.toast('Recorded: ' + r.label + ' ' + r.score + '/100.'); return N.api('GET', '/api/mentor/mentees'); })
-      .then(function (list) { mentees = list; $('#mentees').innerHTML = list.map(function (s) { return '<tr><td>' + esc(s.name) + '</td><td>' + esc(progLabel(s.programme)) + '</td><td>' + N.ordinal(s.year) + '</td><td>' + esc(meta.roles[s.role].label) + '</td><td class="n">' + N.f1(s.index) + '</td><td><span class="chip ' + N.bandCls[s.band.k] + '">' + s.band.label + '</span></td></tr>'; }).join(''); })
+      .then(function (r) { err.hidden = true; $('#as-score').value = ''; N.toast(r.cgpa ? 'CGPA confirmed: ' + r.score + '.' : 'Recorded: ' + r.label + ' ' + r.score + '/100.'); return N.api('GET', '/api/mentor/mentees'); })
+      .then(function (list) { mentees = list; menteeRows(list); whatOptions(true); })
       .catch(function (x) { err.hidden = false; err.textContent = x.message; });
   });
   $('#progFilter').addEventListener('change', loadCohort);

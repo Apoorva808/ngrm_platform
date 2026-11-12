@@ -17,7 +17,7 @@
 <body>
 <div class="page-banner"><div class="container">
   <div><span class="eyebrow">Graduate Readiness Index · <span id="ver"></span></span><h1>My score</h1>
-  <p class="lead">Your score is calculated on our server with a fixed formula. Change anything in the form and it updates. Courses, projects, internships and roles come from your <a href="skill-credentials.html">evidence</a>, and count once your mentor has verified them. Anything you have not answered is left out, not guessed.</p></div>
+  <p class="lead">Your score is calculated on our server with a fixed formula. Change anything in the form and it updates. Your CGPA counts once your mentor confirms it, and each skill once your college assesses it. Courses, projects, internships and roles come from your <a href="skill-credentials.html">evidence</a>, and count once your mentor has verified them. Anything you have not answered is left out, not guessed.</p></div>
 </div></div>
 <main id="main" tabindex="-1">
 <div class="container" id="gate"></div>
@@ -27,11 +27,12 @@
       <div class="field"><label for="f-prog">Programme</label><select id="f-prog"></select></div>
       <div class="row-2">
         <div class="field"><label for="f-year">Year</label><select id="f-year"></select></div>
-        <div class="field"><label for="f-cgpa">CGPA (out of 10)</label><input type="number" id="f-cgpa" min="0" max="10" step="0.1" inputmode="decimal"></div>
+        <div class="field"><label for="f-cgpa">CGPA (out of 10)</label><input type="number" id="f-cgpa" min="0" max="10" step="0.01" inputmode="decimal" aria-describedby="cgpaState"></div>
       </div>
+      <p class="hint" id="cgpaState" style="margin:-0.3rem 0 0.2rem"></p>
       <div class="field"><label for="f-role">Target role</label><select id="f-role" aria-describedby="roleHint"></select><span class="hint" id="roleHint">Changing role starts a fresh plan: steps you accepted and mentor reviews are cleared.</span></div>
     </fieldset></div>
-    <div class="form-group"><fieldset><legend>Role skills (0–100)</legend><div id="skillsBox" style="display:grid;gap:0.75rem"></div></fieldset></div>
+    <div class="form-group"><fieldset><legend>Role skills (0–100)</legend><p class="small muted" style="margin:0 0 0.6rem">Rate yourself honestly: your ratings shape your plan. A skill counts towards your score once your college has assessed it.</p><div id="skillsBox" style="display:grid;gap:0.75rem"></div></fieldset></div>
     <div class="form-group"><fieldset id="psyBox"><legend>Personality (Big Five)</legend>
       <p class="small muted" id="psyNote" style="margin-top:-0.4rem">Your results (0–100 each) from a Big Five questionnaire given by your college or counsellor. It counts for 10% of your score once all five are entered.</p>
       <div class="field"><label for="o-o">Openness</label><div class="slider"><input type="range" id="o-o" min="0" max="100"><output for="o-o"></output></div></div>
@@ -77,13 +78,16 @@
   function skills(p) {
     $('#skillsBox').innerHTML = meta.roles[p.role].skills.map(function (s, i) {
       var v = (p.verifiedSkills || []).indexOf(i) > -1;
-      return '<div class="skillrow"><label for="sk-' + i + '">' + esc(s) + '</label><input type="number" id="sk-' + i + '" min="0" max="100" value="' + p.skills[i] + '"' + (v ? ' disabled title="Set by your college assessment"' : '') + '><span class="src">' + (v ? '<span class="chip success">Verified by assessment</span>' : '<span class="chip">Self-rated</span>') + '</span></div>';
+      return '<div class="skillrow"><label for="sk-' + i + '">' + esc(s) + '</label><input type="number" id="sk-' + i + '" min="0" max="100" value="' + p.skills[i] + '"' + (v ? ' disabled title="Set by your college assessment"' : '') + '><span class="src">' + (v ? '<span class="chip success">Assessed by your college · counts</span>' : '<span class="chip">Your own rating · counts once assessed</span>') + '</span></div>';
     }).join('');
   }
   function years(prog, year) {
     var P = meta.programmes.filter(function (x) { return x.id === prog; })[0], n = P ? P.years : 3, list = [];
     for (var y = 1; y <= n; y++) list.push([y, N.ordinal(y) + ' year']);
     sel($('#f-year'), list, Math.min(year, n));
+  }
+  function cgpaState(p, flags) {
+    $('#cgpaState').innerHTML = p.cgpa == null ? 'Enter it, then your mentor confirms it against college records.' : p.cgpaConfirmed ? '<span class="chip success">Confirmed by your mentor · counts</span> Changing it sends it for confirmation again.' : '<span class="chip warning">Waiting for your mentor to confirm</span> It counts once confirmed.';
   }
   function fill(p) {
     sel($('#f-prog'), meta.programmes.map(function (x) { return [x.id, x.label]; }), p.prog);
@@ -119,15 +123,16 @@
     $('#sName').textContent = me.name;
     var prog = meta.programmes.filter(function (x) { return x.id === p.prog; })[0];
     $('#sMeta').textContent = (prog ? prog.label : '') + ' · ' + N.ordinal(p.year) + ' year · Target: ' + meta.roles[p.role].label;
-    $('#sBand').innerHTML = '<span class="chip ' + N.bandCls[data.band.k] + '">' + data.band.label + '</span>' + (s.flags.cgpaMissing ? ' <span class="chip warning">CGPA missing</span>' : '') +
+    $('#sBand').innerHTML = '<span class="chip ' + N.bandCls[data.band.k] + '">' + data.band.label + '</span>' + (s.flags.cgpaMissing ? ' <span class="chip warning">CGPA missing</span>' : s.flags.cgpaUnconfirmed ? ' <span class="chip warning">CGPA waiting for confirmation</span>' : '') + (s.flags.skillsUnassessed ? ' <span class="chip">' + s.skillsAssessed + ' of ' + (s.skillsAssessed + s.flags.skillsUnassessed) + ' skills assessed</span>' : '') +
       (s.completeness < 100 ? '<p class="small muted" style="margin:0.4rem 0 0">Based on ' + s.completeness + '% of the formula, scaled to 100. Not yet rated: ' + s.notRated.map(function (k) { return meta.factors.filter(function (F) { return F.k === k; })[0].label; }).join(', ') + '.</p>' : '');
+    cgpaState(p, s.flags);
     $('#lastRec').textContent = data.lastRecorded ? 'Last recorded ' + N.f1(data.lastRecorded.index_value) + ' on ' + new Date(data.lastRecorded.created_at.replace(' ', 'T') + 'Z').toLocaleDateString('en-IN') : 'Not recorded yet';
     $('#factors').innerHTML = meta.factors.map(function (F) {
       var v = s.factors[F.k], extra = '';
       if (v === null) return '<div class="bar-row"><div class="lbl"><b>' + F.label + ' <span class="chip">not yet rated</span></b><small>Weight ' + F.w + '% · left out of your score for now</small></div>' +
         '<div class="track mint" role="img" aria-label="' + F.label + ' not yet rated"><i style="width:0%"></i></div><span class="val">— / ' + F.w + '</span>' +
         '<details><summary>How this is calculated</summary><p style="margin-top:0.3rem">' + esc(F.how) + '</p></details></div>';
-      var src = { projects: s.counts.project + ' verified', experience: s.counts.internship + ' verified', leadership: s.counts.role + ' verified' }[F.k];
+      var src = { technical: s.skillsAssessed + ' of ' + (s.skillsAssessed + s.flags.skillsUnassessed) + ' skills assessed', projects: s.counts.project + ' verified', experience: s.counts.internship + ' verified', leadership: s.counts.role + ' verified' }[F.k];
       return '<div class="bar-row"><div class="lbl"><b>' + F.label + extra + '</b><small>Weight ' + F.w + '% · ' + N.f0(v) + '/100' + (src ? ' · ' + src : '') + '</small></div>' +
         '<div class="track mint" role="img" aria-label="' + F.label + ' ' + N.f0(v) + ' out of 100"><i style="width:' + Math.min(100, v) + '%"></i></div><span class="val">' + N.f1(v * F.w / 100) + ' / ' + F.w + '</span>' +
         '<details><summary>How this is calculated</summary><p style="margin-top:0.3rem">' + esc(F.how) + '</p></details></div>';

@@ -26,7 +26,7 @@ services:
         sync: false
       - key: ADMIN_NAME
         sync: false
-      - key: MAIL_FROM         # the sender address verified with Brevo or Resend
+      - key: ADMIN_PASSWORD    # password for your first sign-in; you choose your own straight after
         sync: false
-      - key: BREVO_API_KEY     # or delete this and add RESEND_API_KEY
-        sync: false
+      # Sign-in is by email and password; no codes are sent. To add emailed codes, set EMAIL_CODES=on,
+      # MAIL_FROM and BREVO_API_KEY (or RESEND_API_KEY) in the Render dashboard.

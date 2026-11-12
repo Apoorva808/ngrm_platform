@@ -12,7 +12,8 @@ test.before(async () => {
   process.env.DEV_SHOW_OTP = 'true';
 process.env.COURSE_FEED = 'off'; // the live feed is tested below with a stand-in, never the real network
   db = open(':memory:'); seed(db); h = helpers(db);
-  server = createApp(db, { demoMode: true, sendCode: () => {}, uploadDir: uploads }).listen(0);
+  // Most tests run with emailed codes switched on; the password-only default has its own tests at the end.
+  server = createApp(db, { demoMode: true, emailCodes: true, sendCode: () => {}, uploadDir: uploads }).listen(0);
   await new Promise((r) => server.once('listening', r));
   base = 'http://localhost:' + server.address().port;
 });
@@ -148,7 +149,7 @@ test('every recorded score keeps its formula version and inputs', async () => {
   const student = await as('ananya@demo.ngrm.in');
   const r = await student('POST', '/api/me/score');
   const row = h.get('SELECT * FROM score_runs WHERE id = ?', r.body.id);
-  assert.equal(row.formula_version, 'v0.2');
+  assert.equal(row.formula_version, 'v0.3');
   assert.ok(JSON.parse(row.inputs_json).profile);
   assert.equal(row.index_value, r.body.index);
 });
@@ -177,7 +178,7 @@ test('a skill verified by assessment cannot be overwritten, and saving keeps que
   assert.equal(r.body.profile.skills[1], 72);
   assert.deepEqual(r.body.profile.verifiedSkills, [1]);
   assert.deepEqual(r.body.profile.ocean, { o: 72, c: 68, e: 48, a: 74, n: 55 });
-  assert.equal(r.body.score.index, 45.8);
+  assert.equal(r.body.score.index, 36.9);
 });
 
 test('out-of-range and junk profile values are cleaned, and a clarity of 0 counts as 0', async () => {
@@ -351,7 +352,7 @@ test('a new production database gets the rules and the first admin, and no sampl
   const db2 = open(':memory:'), h2 = helpers(db2);
   assert.equal(bootstrap(db2, { ADMIN_EMAIL: 'First@Admin.org', ADMIN_NAME: 'First Admin' }), 'first@admin.org');
   assert.equal(bootstrap(db2, { ADMIN_EMAIL: 'first@admin.org' }), null, 'running again changes nothing');
-  assert.equal(h2.get('SELECT COUNT(*) AS n FROM rules').n, 8);
+  assert.equal(h2.get('SELECT COUNT(*) AS n FROM rules').n, 9);
   assert.deepEqual(h2.all('SELECT email, role FROM users').map((u) => ({ ...u })), [{ email: 'first@admin.org', role: 'admin' }]);
 });
 
@@ -424,7 +425,7 @@ test('API answers are never cached by the browser', async () => {
 
 test('one network cannot flood inboxes with sign-in codes', async () => {
   const db2 = open(':memory:'); seed(db2);
-  const s2 = createApp(db2, { demoMode: true, sendCode: () => {} }).listen(0); await new Promise((r) => s2.once('listening', r));
+  const s2 = createApp(db2, { demoMode: true, emailCodes: true, sendCode: () => {} }).listen(0); await new Promise((r) => s2.once('listening', r));
   const b2 = 'http://localhost:' + s2.address().port; const statuses = [];
   for (let i = 0; i < 31; i++) statuses.push((await fetch(b2 + '/api/auth/request-code', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: `x${i}@example.com` }) })).status);
   s2.close();
@@ -754,7 +755,7 @@ test('research export: no record stands alone on programme, year, role and rough
   const hidden = count((r) => (r.factors.academic == null ? q(r) : 'shown')); delete hidden.shown;
   assert.ok(Object.values(hidden).every((n) => n >= 5), 'withheld academic scores hide in groups of 5 or more');
   assert.ok(rows.every((r) => /^\d{4}-\d{2}$/.test(r.recordedAt)));
-  assert.ok(rows.filter((r) => r.factors.academic != null).length > rows.length / 3, 'still useful: most groups keep their academic band');
+  assert.ok(rows.filter((r) => r.factors.academic != null).length > rows.length / 5, 'still useful: a fair share keep their academic band');
 });
 
 test('sign-up: a student confirms their email and gets an account with the password they chose', async () => {
@@ -827,4 +828,86 @@ test('sign-up can be closed, and student sign-up can be limited to college email
   assert.equal(await call({ signUp: 'off' }, body), 403);
   assert.equal(await call({ signUpDomains: 'college.edu.in' }, body), 400);
   assert.equal(await call({ signUpDomains: 'college.edu.in' }, { ...body, email: 'a@students.college.edu.in' }), 200);
+});
+
+test('default mode: email and password only, with no codes anywhere', async () => {
+  const db2 = open(':memory:'); seed(db2); const h2 = helpers(db2);
+  const s = createApp(db2, { demoMode: true, sendCode: () => { throw new Error('no code may be sent'); }, uploadDir: uploads }).listen(0); await new Promise((r) => s.once('listening', r));
+  const b2 = 'http://localhost:' + s.address().port;
+  const mk = () => { let cookie = ''; return async (method, url, body) => { const r = await fetch(b2 + url, { method, headers: { 'content-type': 'application/json', cookie }, body: body ? JSON.stringify(body) : undefined });
+    const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0]; let json = null; try { json = await r.json(); } catch {} return { status: r.status, body: json }; }; };
+  try {
+    const c = mk(), inst = h2.get('SELECT id FROM institutions LIMIT 1').id, pw = 'four quiet mango trains';
+    assert.equal((await c('GET', '/api/meta')).body.emailCodes, false);
+    assert.equal((await c('POST', '/api/auth/request-code', { email: 'ananya@demo.ngrm.in' })).status, 404);
+    assert.equal((await c('POST', '/api/auth/verify', { email: 'ananya@demo.ngrm.in', code: '123456' })).status, 404);
+    // A student signs up and is in at once.
+    const up = await c('POST', '/api/auth/sign-up', { role: 'student', name: 'Meera Nair', email: 'meera@newcollege.edu', institutionId: inst, password: pw });
+    assert.equal(up.status, 200); assert.equal(up.body.user.role, 'student'); assert.equal(up.body.devCode, undefined);
+    assert.equal((await c('GET', '/api/me')).body.user.email, 'meera@newcollege.edu');
+    assert.equal((await mk()('POST', '/api/auth/password', { email: 'meera@newcollege.edu', password: pw })).status, 200);
+    assert.equal((await mk()('POST', '/api/auth/sign-up', { role: 'student', name: 'Copy Cat', email: 'meera@newcollege.edu', institutionId: inst, password: 'another long pass phrase' })).status, 409);
+    // Staff wait for the admin, and nobody can take over a waiting request.
+    const staff = mk(); assert.deepEqual((await staff('POST', '/api/auth/sign-up', { role: 'mentor', name: 'Dr. New Mentor', email: 'mentor@newcollege.edu', institutionId: inst, password: pw })).body, { pending: true });
+    assert.equal((await staff('GET', '/api/me')).body.user, null);
+    assert.equal((await staff('POST', '/api/auth/password', { email: 'mentor@newcollege.edu', password: pw })).status, 403);
+    assert.equal((await mk()('POST', '/api/auth/sign-up', { role: 'mentor', name: 'Impostor', email: 'mentor@newcollege.edu', institutionId: inst, password: 'another long pass phrase' })).status, 409);
+    const admin = mk(); await admin('POST', '/api/auth/demo', { email: 'admin@demo.ngrm.in' });
+    assert.equal((await admin('POST', '/api/admin/signups/decide', { email: 'mentor@newcollege.edu', approve: true })).status, 200);
+    assert.equal((await staff('POST', '/api/auth/password', { email: 'mentor@newcollege.edu', password: pw })).status, 200);
+    // People an admin adds get a temporary password, shown once, which they must change before doing anything else.
+    const added = await admin('POST', '/api/admin/users', { rows: [{ name: 'Asha Rao', email: 'asha@newcollege.edu', role: 'student', org: h2.get('SELECT name FROM institutions WHERE id = ?', inst).name }] });
+    assert.equal(added.status, 201); const temp = added.body.passwords[0].password; assert.match(temp, /^[a-z2-9]{4}-[a-z2-9]{4}-[a-z2-9]{4}$/);
+    assert.ok(!JSON.stringify(h2.all('SELECT * FROM passwords')).includes(temp), 'only a hash is stored');
+    const asha = mk(); const first = await asha('POST', '/api/auth/password', { email: 'asha@newcollege.edu', password: temp });
+    assert.equal(first.status, 200); assert.equal(first.body.mustChange, true);
+    assert.equal((await asha('GET', '/api/me')).body.user.mustChangePassword, true);
+    assert.equal((await asha('POST', '/api/me/consents', { purposes: { profile: true }, isAdult: true })).status, 403);
+    assert.equal((await asha('POST', '/api/me/password', { password: temp })).status, 400, 'the temporary password cannot be kept');
+    assert.equal((await asha('POST', '/api/me/password', { password: 'nine brave paper boats' })).status, 200);
+    assert.equal((await asha('GET', '/api/me')).body.user.mustChangePassword, false);
+    assert.notEqual((await asha('POST', '/api/me/consents', { purposes: { profile: true }, isAdult: true })).status, 403);
+    // Forgotten password: the admin resets it; the old one stops working and open sessions end.
+    const id = h2.get("SELECT id FROM users WHERE email = 'asha@newcollege.edu'").id;
+    assert.equal((await asha('POST', '/api/admin/users/' + id + '/reset-password')).status, 403);
+    const reset = await admin('POST', '/api/admin/users/' + id + '/reset-password'); assert.equal(reset.status, 200);
+    assert.equal((await asha('GET', '/api/me')).body.user, null);
+    assert.equal((await mk()('POST', '/api/auth/password', { email: 'asha@newcollege.edu', password: 'nine brave paper boats' })).status, 400);
+    assert.equal((await mk()('POST', '/api/auth/password', { email: 'asha@newcollege.edu', password: reset.body.password })).body.mustChange, true);
+  } finally { s.close(); }
+});
+
+test('the first admin gets a password from ADMIN_PASSWORD and must change it', () => {
+  const { bootstrap } = require('../server/seed'); const db3 = open(':memory:'), h3 = helpers(db3);
+  assert.equal(bootstrap(db3, { ADMIN_EMAIL: 'Lead@ngrm.example', ADMIN_PASSWORD: 'first-start-secret' }), 'lead@ngrm.example');
+  const row = h3.get('SELECT p.hash, p.must_change FROM passwords p JOIN users u ON u.id = p.user_id WHERE u.email = ?', 'lead@ngrm.example');
+  assert.equal(row.must_change, 1); assert.ok(!row.hash.includes('first-start-secret'));
+  // A later restart does not overwrite the password the admin chose.
+  h3.run("UPDATE passwords SET hash = 'chosen', must_change = 0");
+  assert.equal(bootstrap(db3, { ADMIN_EMAIL: 'lead@ngrm.example', ADMIN_PASSWORD: 'first-start-secret' }), null);
+  assert.equal(h3.get('SELECT hash FROM passwords').hash, 'chosen');
+});
+
+test('confirmation: a typed CGPA and self-rated skills count only once the mentor confirms them', async () => {
+  const mentor = await as('kavya@demo.ngrm.in'), ananya = await as('ananya@demo.ngrm.in');
+  const id = h.get("SELECT id FROM users WHERE email = 'ananya@demo.ngrm.in'").id;
+  const before = (await ananya('GET', '/api/me/profile')).body;
+  // Typing a higher CGPA or perfect skills raises nothing, and the changed CGPA drops out until confirmed.
+  const typed = (await ananya('PUT', '/api/me/profile', { cgpa: 9.9, skills: [100, 100, 100, 100] })).body;
+  assert.equal(typed.profile.cgpaConfirmed, false); assert.equal(typed.score.factors.academic, null);
+  assert.equal(typed.score.factors.technical, before.score.factors.technical);
+  assert.ok(typed.score.flags.cgpaUnconfirmed);
+  assert.equal((await ananya('GET', '/api/me/recommendations')).body.items[0].id, 'confirm');
+  assert.equal((await ananya('POST', '/api/mentor/assessments', { studentId: id, what: 'cgpa', value: 9.9 })).status, 403);
+  // The mentor sees what is waiting, and confirms the figure from college records.
+  const row = (await mentor('GET', '/api/mentor/mentees')).body.find((m) => m.id === id);
+  assert.equal(row.cgpaConfirmed, false); assert.equal(row.cgpa, 9.9);
+  assert.equal((await mentor('POST', '/api/mentor/assessments', { studentId: id, what: 'cgpa', value: 11 })).status, 400);
+  assert.equal((await mentor('POST', '/api/mentor/assessments', { studentId: id, what: 'cgpa', value: 7.6 })).status, 201);
+  const after = (await ananya('GET', '/api/me/profile')).body;
+  assert.equal(after.profile.cgpa, 7.6); assert.equal(after.profile.cgpaConfirmed, true); assert.equal(after.score.factors.academic, 76);
+  // Each assessed skill adds to the technical factor.
+  assert.equal((await mentor('POST', '/api/mentor/assessments', { studentId: id, what: '3', value: 40 })).status, 201);
+  const more = (await ananya('GET', '/api/me/profile')).body;
+  assert.ok(more.score.factors.technical > after.score.factors.technical); assert.equal(more.score.skillsAssessed, after.score.skillsAssessed + 1);
 });

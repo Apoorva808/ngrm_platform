@@ -20,12 +20,12 @@
     <header><h1 id="sTitle" style="font-size:1.6rem">Sign in</h1></header>
     <form id="emailForm" novalidate style="display:grid;gap:0.85rem">
       <div class="field"><label for="email">Your college or work email</label><input type="text" id="email" inputmode="email" autocomplete="email" placeholder="name@college.edu.in"></div>
-      <div style="display:flex;gap:0.6rem;flex-wrap:wrap"><button class="btn btn-primary" type="submit">Send me a code</button><button class="btn btn-secondary" type="button" id="usePw">Use my password</button></div>
+      <div style="display:flex;gap:0.6rem;flex-wrap:wrap" id="codeBtns"><button class="btn btn-primary" type="submit">Send me a code</button><button class="btn btn-secondary" type="button" id="usePw">Use my password</button></div>
     </form>
     <form id="pwForm" novalidate hidden style="display:grid;gap:0.85rem;margin-top:0.5rem">
       <div class="field"><label for="password">Password</label><input type="password" id="password" autocomplete="current-password" maxlength="200"></div>
       <div style="display:flex;gap:0.6rem;flex-wrap:wrap"><button class="btn btn-primary" type="submit">Sign in</button><button class="btn btn-secondary" type="button" id="useCode">Email me a code instead</button></div>
-      <p class="small muted">Forgot it? Use an emailed code, then set a new password on your Account page.</p>
+      <p class="small muted" id="forgot">Forgot it? Use an emailed code, then set a new password on your Account page.</p>
     </form>
     <form id="codeForm" novalidate hidden style="display:grid;gap:0.85rem;margin-top:0.5rem">
       <p class="small" id="sentTo"></p>
@@ -34,7 +34,7 @@
     </form>
     <p class="small" id="err" style="color:var(--danger);margin-top:0.75rem" hidden></p>
     <p id="newHere" style="margin-top:1rem" hidden>New here? <a href="signup.html">Create an account</a> with your email and a password.</p>
-    <p class="small muted" style="margin-top:0.5rem">Sign in with your password or with a one-time code sent to your email. Both work for students, mentors, placement cells, employers, researchers and admins.</p>
+    <p class="small muted" style="margin-top:0.5rem" id="how">Sign in with your password or with a one-time code sent to your email. Both work for students, mentors, placement cells, employers, researchers and admins.</p>
   </section>
   <section class="card" id="demoCard" hidden aria-labelledby="dTitle">
     <header><h2 id="dTitle">Try a sample account</h2><span class="small muted">Demo mode only</span></header>
@@ -53,14 +53,23 @@
   N.boot('login').then(function (ctx) {
     if (ctx.me) return go(ctx.me);
     $('#newHere').hidden = !ctx.meta.signUp;
+    codes = !!ctx.meta.emailCodes;
+    if (!codes) {
+      // Email and password only: one form, no codes.
+      $('#codeBtns').hidden = true; $('#useCode').hidden = true; $('#pwForm').hidden = false;
+      $('#forgot').textContent = 'Forgot it? Ask your NGRM admin for a temporary password' + (ctx.meta.operator && ctx.meta.operator.contact ? ' (' + ctx.meta.operator.contact + ')' : '') + '. You will choose a new one when you sign in.';
+      $('#how').textContent = 'Sign in with your email and password. This works the same for students, mentors, placement cells, employers, researchers and admins.';
+    }
     if (ctx.meta.demoMode) N.api('GET', '/api/auth/demo-users').then(function (list) {
       $('#demoCard').hidden = false;
       $('#demoList').innerHTML = list.map(function (u) { return '<button class="btn btn-secondary" type="button" data-email="' + esc(u.email) + '"><span>' + esc(u.name) + '</span><small>' + esc(ROLE[u.role]) + '</small></button>'; }).join('');
     });
   });
+  var codes = true;
   function err(m) { var e = $('#err'); e.hidden = !m; e.textContent = m || ''; }
   $('#emailForm').addEventListener('submit', function (e) {
     e.preventDefault(); err('');
+    if (!codes) { $('#password').focus(); return; }
     var email = $('#email').value.trim();
     N.api('POST', '/api/auth/request-code', { email: email }).then(function (r) {
       $('#emailForm').hidden = true; $('#pwForm').hidden = true; $('#codeForm').hidden = false;
@@ -76,7 +85,7 @@
   $('#useCode').addEventListener('click', function () { err(''); $('#pwForm').hidden = true; $('#email').focus(); });
   $('#pwForm').addEventListener('submit', function (e) {
     e.preventDefault(); err('');
-    N.api('POST', '/api/auth/password', { email: $('#email').value.trim(), password: $('#password').value }).then(function (r) { go(r.user); }).catch(function (x) { err(x.message); });
+    N.api('POST', '/api/auth/password', { email: $('#email').value.trim(), password: $('#password').value }).then(function (r) { if (r.mustChange) location.href = 'account.html'; else go(r.user); }).catch(function (x) { err(x.message); });
   });
   $('#back').addEventListener('click', function () { $('#codeForm').hidden = true; $('#emailForm').hidden = false; $('#email').focus(); err(''); });
   document.addEventListener('click', function (e) {

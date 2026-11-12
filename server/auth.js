@@ -133,10 +133,32 @@ function makeAuth(h, { audit, sendCode }) {
   // Sets or changes a password and signs the person out everywhere else.
   function setPassword(user, pw, keepToken) {
     const problem = passwordProblem(pw, user.email); if (problem) return { error: problem };
-    h.run("INSERT INTO passwords (user_id, hash) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET hash = excluded.hash, updated_at = datetime('now')", user.id, hashPassword(pw));
+    if (checkPassword(user.id, pw)) return { error: 'Choose a password different from your current one.' };
+    h.run("INSERT INTO passwords (user_id, hash, must_change) VALUES (?, ?, 0) ON CONFLICT(user_id) DO UPDATE SET hash = excluded.hash, must_change = 0, updated_at = datetime('now')", user.id, hashPassword(pw));
     h.run('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?', user.id, keepToken ? hash(keepToken) : '');
     audit(user.id, 'auth.password_set');
     return { ok: true };
+  }
+  // A temporary password an admin hands to someone. It is shown once, stored only as a hash, and must be changed at first sign-in.
+  function setTempPassword(userId) {
+    const A = 'abcdefghjkmnpqrstuvwxyz23456789', pick = () => Array.from({ length: 4 }, () => A[crypto.randomInt(0, A.length)]).join('');
+    const pw = [pick(), pick(), pick()].join('-');
+    h.run("INSERT INTO passwords (user_id, hash, must_change) VALUES (?, ?, 1) ON CONFLICT(user_id) DO UPDATE SET hash = excluded.hash, must_change = 1, updated_at = datetime('now')", userId, hashPassword(pw));
+    h.run('DELETE FROM sessions WHERE user_id = ?', userId);
+    return pw;
+  }
+  const mustChange = (userId) => !!(h.get('SELECT must_change FROM passwords WHERE user_id = ?', userId) || {}).must_change;
+  // Sign-up without emailed codes: the account (or, for staff roles, the request) is made at once.
+  function signUpDirect({ name, email, role, institutionId, orgName, password }) {
+    const problem = passwordProblem(password, email); if (problem) return { error: problem, status: 400 };
+    if (h.get('SELECT id FROM users WHERE email = ?', email)) return { error: 'This email already has an account. Sign in instead.', status: 409 };
+    if (h.get("SELECT 1 FROM signups WHERE email = ? AND status = 'waiting'", email)) return { error: 'This email already has a request waiting for approval.', status: 409 };
+    h.run('DELETE FROM signups WHERE email = ?', email);
+    h.run("INSERT INTO signups (email, name, role, institution_id, org_name, pw_hash, code_hash, expires_at, attempts, status) VALUES (?, ?, ?, ?, ?, ?, '', 0, 0, ?)",
+      email, name, role, institutionId ?? null, orgName || null, hashPassword(password), role === 'student' ? 'unverified' : 'waiting');
+    if (role !== 'student') { audit(null, 'auth.sign_up_waiting', role); return { pending: true }; }
+    const user = createFromSignup(h.get('SELECT * FROM signups WHERE email = ?', email), institutionId, null);
+    return { token: startSession(user.id, 'password'), user };
   }
   const checkPassword = (userId, pw) => passwordMatches((h.get('SELECT hash FROM passwords WHERE user_id = ?', userId) || {}).hash, pw);
   function signInWithPassword(email, pw) {
@@ -168,10 +190,10 @@ function makeAuth(h, { audit, sendCode }) {
     const s = h.get('SELECT user_id, expires_at, via FROM sessions WHERE token_hash = ?', hash(token));
     if (!s || s.expires_at < Date.now()) return null;
     const u = h.get('SELECT id, email, name, role, institution_id, employer_id FROM users WHERE id = ?', s.user_id);
-    return u ? { ...u, via: s.via } : null;
+    return u ? { ...u, via: s.via, mustChange: mustChange(u.id) } : null;
   }
 
-  return { requestCode, verifyCode, startSession, endSession, userFromToken, signInWithPassword, setPassword, checkPassword, hasPassword, signUpStart, signUpVerify, createFromSignup, waitingWith, SESSION_TTL_MS };
+  return { requestCode, verifyCode, startSession, endSession, userFromToken, signInWithPassword, setPassword, checkPassword, hasPassword, signUpStart, signUpVerify, signUpDirect, setTempPassword, mustChange, createFromSignup, waitingWith, SESSION_TTL_MS };
 }
 
 function readCookie(req, name) {
@@ -183,4 +205,4 @@ function readCookie(req, name) {
   return null;
 }
 
-module.exports = { makeAuth, readCookie };
+module.exports = { makeAuth, readCookie, hashPassword };

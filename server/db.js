@@ -20,6 +20,9 @@ function migrate(db) {
   if (!db.prepare('PRAGMA table_info(sessions)').all().some((c) => c.name === 'via')) db.exec("ALTER TABLE sessions ADD COLUMN via TEXT NOT NULL DEFAULT 'code'");
   // Formula v0.2: a communication score counts only when a mentor recorded it, so self-entered ones are cleared.
   db.exec("UPDATE profiles SET comm = NULL WHERE comm IS NOT NULL AND user_id NOT IN (SELECT user_id FROM evidence WHERE type = 'assessment' AND status = 'verified' AND skill_role = 'communication')");
+  if (!db.prepare('PRAGMA table_info(passwords)').all().some((c) => c.name === 'must_change')) db.exec('ALTER TABLE passwords ADD COLUMN must_change INTEGER NOT NULL DEFAULT 0');
+  // Formula v0.3: a CGPA counts only once a mentor confirms it. Existing ones start unconfirmed.
+  if (!db.prepare('PRAGMA table_info(profiles)').all().some((c) => c.name === 'cgpa_confirmed')) db.exec('ALTER TABLE profiles ADD COLUMN cgpa_confirmed INTEGER NOT NULL DEFAULT 0');
   for (const c of ['file_path', 'file_type']) if (!cols.includes(c)) db.exec(`ALTER TABLE evidence ADD COLUMN ${c} TEXT`);
 }
 

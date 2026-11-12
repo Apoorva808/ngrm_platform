@@ -29,7 +29,7 @@
       <div class="field"><label for="code">6-digit code</label><input type="text" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></div>
       <div style="display:flex;gap:0.6rem;flex-wrap:wrap"><button class="btn btn-primary" type="submit">Confirm my email</button><button class="btn btn-secondary" type="button" id="back">Change my details</button></div>
     </form>
-    <div id="waiting" hidden><h2 style="font-size:1.15rem">Your email is confirmed</h2><p>Your account now waits for approval by the NGRM admin, because it gives access to information about students. You can sign in with your email and password once it is approved.</p><p><a class="btn btn-secondary" href="index.html">Back to home</a></p></div>
+    <div id="waiting" hidden><h2 style="font-size:1.15rem">Request received</h2><p>Your account now waits for approval by the NGRM admin, because it gives access to information about students. You can sign in with your email and password once it is approved.</p><p><a class="btn btn-secondary" href="index.html">Back to home</a></p></div>
     <p class="small" id="err" role="alert" style="color:var(--danger);margin-top:0.75rem" hidden></p>
     <p class="small muted" style="margin-top:1rem">Already have an account? <a href="login.html">Sign in</a>. Read the <a href="privacy.html">privacy notice</a> to see what is kept and why.</p>
   </section>
@@ -62,7 +62,10 @@
     if ($('#password').value !== $('#password2').value) return err('The two passwords do not match.');
     var email = $('#email').value.trim();
     N.api('POST', '/api/auth/sign-up', { role: $('#role').value, name: $('#name').value, email: email, institutionId: $('#inst').value, orgName: $('#org').value, password: $('#password').value }).then(function (r) {
-      $('#form').hidden = true; $('#codeForm').hidden = false;
+      if (r.user) { location.href = N.HOME[r.user.role]; return; }
+      $('#form').hidden = true;
+      if (r.pending) { $('#waiting').hidden = false; return; }
+      $('#codeForm').hidden = false;
       $('#sentTo').textContent = 'We sent a 6-digit code to ' + email + '. Enter it here to confirm the email is yours. It expires in 10 minutes.' + (r.devCode ? ' (Development code: ' + r.devCode + ')' : '') + (r.devNote ? ' (Development note: ' + r.devNote + ')' : '');
       $('#code').value = ''; $('#code').focus();
     }).catch(function (x) { err(x.message); });

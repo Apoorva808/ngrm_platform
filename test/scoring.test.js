@@ -5,20 +5,22 @@ const { isSafeRewrite } = require('../server/ai');
 
 const V = (type, n = 1) => Array(n).fill({ type, status: 'verified' });
 
-test('sample student matches the hand-worked score (45.8) under formula v0.2', () => {
-  const p = { prog: 'ba-psy', year: 2, cgpa: 7.6, role: 'hr', skills: [55, 72, 60, 45], ocean: { o: 72, c: 68, e: 48, a: 74, n: 55 }, comm: null, clarity: 55 };
+const ALL = [true, true, true, true];
+test('sample student matches the hand-worked score (36.9) under formula v0.3', () => {
+  const p = { prog: 'ba-psy', year: 2, cgpa: 7.6, cgpaConfirmed: true, role: 'hr', skills: [55, 72, 60, 45], skillsVerified: [false, true, false, false], ocean: { o: 72, c: 68, e: 48, a: 74, n: 55 }, comm: null, clarity: 55 };
   const r = D.score(p, [...V('course'), ...V('project'), ...V('assessment')]);
-  assert.equal(r.version, 'v0.2');
-  assert.deepEqual(r.factors, { academic: 76, technical: 59.5, projects: 35, experience: 0, psychometric: 61.4, communication: null, leadership: 0, clarity: 55 });
-  // (76×20 + 59.5×20 + 35×15 + 0×15 + 61.4×10 + 0×5 + 55×5) ÷ 90 rated weight = 4124 ÷ 90 = 45.82
-  assert.equal(r.index, 45.8);
+  assert.equal(r.version, 'v0.3');
+  assert.deepEqual(r.factors, { academic: 76, technical: 19.5, projects: 35, experience: 0, psychometric: 61.4, communication: null, leadership: 0, clarity: 55 });
+  // Technical: only the one assessed skill counts, 72 ÷ 4 skills = 18, plus 1.5 for the verified course.
+  // (76×20 + 19.5×20 + 35×15 + 0×15 + 61.4×10 + 0×5 + 55×5) ÷ 90 rated weight = 3324 ÷ 90 = 36.93
+  assert.equal(r.index, 36.9);
   assert.equal(r.completeness, 90);
   assert.deepEqual(r.notRated, ['communication']);
 });
 
 test('a blank never beats an honest answer: unanswered factors are left out, not given a default', () => {
   const full = { cgpa: 7.6, skills: [55, 72, 60, 45], ocean: { o: 72, c: 68, e: 48, a: 74, n: 55 }, comm: 61, clarity: 55 };
-  const r = D.score({ cgpa: null, skills: [50, 50, 50, 50], ocean: null, comm: null, clarity: null }, []);
+  const r = D.score({ cgpa: null, skills: [50, 50, 50, 50], skillsVerified: ALL, ocean: null, comm: null, clarity: null }, []);
   assert.deepEqual(r.notRated, ['academic', 'psychometric', 'communication', 'clarity']);
   assert.equal(r.factors.academic, null); assert.equal(r.flags.cgpaMissing, true);
   assert.equal(r.completeness, 55);
@@ -32,7 +34,7 @@ test('a blank never beats an honest answer: unanswered factors are left out, not
 });
 
 test('only verified evidence counts, starting from zero, with caps at 100', () => {
-  const base = { cgpa: 8, skills: [90, 90, 90, 90], ocean: null, comm: 80, clarity: 80 };
+  const base = { cgpa: 8, cgpaConfirmed: true, skills: [90, 90, 90, 90], skillsVerified: ALL, ocean: null, comm: 80, clarity: 80 };
   const none = D.score(base, [{ type: 'internship', status: 'pending' }, { type: 'project', status: 'needs_proof' }, { type: 'role' }]);
   assert.deepEqual([none.factors.projects, none.factors.experience, none.factors.leadership], [0, 0, 0]);
   const one = D.score(base, [...V('project'), ...V('internship'), ...V('role')]);
@@ -46,20 +48,20 @@ test('only verified evidence counts, starting from zero, with caps at 100', () =
 
 test('bands are reachable at both ends', () => {
   const weak = D.score({ cgpa: 5.5, skills: [35, 40, 30, 45], ocean: null, comm: null, clarity: 40 }, []);
-  const strong = D.score({ cgpa: 8.8, skills: [85, 80, 90, 78], ocean: { o: 70, c: 80, e: 60, a: 75, n: 30 }, comm: 82, clarity: 85 }, [...V('project', 3), ...V('internship', 2), ...V('role', 2), ...V('course', 2)]);
+  const strong = D.score({ cgpa: 8.8, cgpaConfirmed: true, skills: [85, 80, 90, 78], skillsVerified: ALL, ocean: { o: 70, c: 80, e: 60, a: 75, n: 30 }, comm: 82, clarity: 85 }, [...V('project', 3), ...V('internship', 2), ...V('role', 2), ...V('course', 2)]);
   assert.equal(D.band(weak.index).k, 'building');
   assert.equal(D.band(strong.index).k, 'ready');
 });
 
 test('recommendations are ranked by real score gain and never invent numbers', () => {
-  const p = { role: 'hr', cgpa: 7.6, skills: [55, 72, 60, 45], ocean: { o: 72, c: 68, e: 48, a: 74, n: 55 }, comm: null, clarity: 55 };
+  const p = { role: 'hr', cgpa: 7.6, cgpaConfirmed: true, skills: [55, 72, 60, 45], skillsVerified: [false, true, false, false], ocean: { o: 72, c: 68, e: 48, a: 74, n: 55 }, comm: null, clarity: 55 };
   const ev = [...V('course'), ...V('project')];
   const settings = D.DEFAULT_RULE_SETTINGS.map((s) => ({ ...s, active: 1 }));
   const list = D.recommend(p, ev, settings).filter((x) => !x.always);
   assert.ok(list.length > 0 && list.length <= 5);
   for (let i = 1; i < list.length; i++) assert.ok(list[i - 1].gain >= list[i].gain);
   assert.equal(list[0].id, 'internship');
-  // One verified internship: experience 0 → 50, weight 15 of 90 rated: 45.8 → 54.2
+  // One verified internship: experience 0 → 50, weight 15 of 90 rated: 36.9 → 45.3
   assert.equal(list[0].gain, 8.4);
 });
 
@@ -86,4 +88,23 @@ test('the counsellor referral is always included, even for a strong profile', ()
   const p = { role: 'hr', cgpa: 9.5, skills: [95, 95, 95, 95], ocean: null, comm: 95, clarity: 95 };
   const list = D.recommend(p, [], D.DEFAULT_RULE_SETTINGS.map((s) => ({ ...s, active: 1 })));
   assert.ok(list.some((x) => x.id === 'counsellor'));
+});
+
+test('what a student types about themselves counts only once confirmed', () => {
+  const typed = { role: 'hr', cgpa: 7.6, cgpaConfirmed: false, skills: [55, 72, 60, 45], skillsVerified: [false, false, false, false], ocean: null, comm: null, clarity: 55 };
+  const r = D.score(typed, []);
+  assert.equal(r.factors.academic, null); assert.equal(r.factors.technical, 0);
+  assert.deepEqual(r.notRated, ['academic', 'psychometric', 'communication']);
+  assert.equal(r.flags.cgpaUnconfirmed, true); assert.equal(r.flags.skillsUnassessed, 4);
+  // Typing a perfect CGPA and perfect skills changes nothing.
+  assert.equal(D.score({ ...typed, cgpa: 10, skills: [100, 100, 100, 100] }, []).index, r.index);
+  // Being assessed in a weak skill never lowers the score: each assessment can only add.
+  assert.ok(D.score({ ...typed, skillsVerified: [false, true, false, true] }, []).index > D.score({ ...typed, skillsVerified: [false, true, false, false] }, []).index);
+  // Confirmation is what moves the score.
+  const confirmed = D.score({ ...typed, cgpaConfirmed: true, skillsVerified: [true, true, false, false] }, []);
+  assert.equal(confirmed.factors.academic, 76); assert.equal(confirmed.factors.technical, 31.8); assert.equal(confirmed.skillsAssessed, 2);
+  // The plan puts confirmation first and projects no gain for it.
+  const list = D.recommend(typed, [], D.DEFAULT_RULE_SETTINGS.map((s) => ({ ...s, active: 1 })));
+  assert.equal(list[0].id, 'confirm'); assert.equal(list[0].gain, 0); assert.match(list[0].title, /CGPA confirmed and your skills assessed/);
+  assert.ok(!D.recommend({ ...typed, cgpaConfirmed: true, skillsVerified: ALL }, [], D.DEFAULT_RULE_SETTINGS.map((s) => ({ ...s, active: 1 }))).some((x) => x.id === 'confirm'));
 });

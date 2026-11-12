@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS passwords (
   user_id     INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   hash        TEXT NOT NULL,
+  must_change INTEGER NOT NULL DEFAULT 0,   -- 1 for a temporary password handed out by an admin
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 -- People who are signing up. A row is 'unverified' until the emailed code is entered. Students then get an account at once;
@@ -98,6 +99,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   programme      TEXT NOT NULL DEFAULT 'ba-psy',
   year           INTEGER NOT NULL DEFAULT 1,
   cgpa           REAL,
+  cgpa_confirmed INTEGER NOT NULL DEFAULT 0,   -- 1 once a mentor has confirmed the CGPA against college records
   target_role    TEXT NOT NULL DEFAULT 'hr',
   skills_json    TEXT NOT NULL DEFAULT '[50,50,50,50]',
   ocean_json     TEXT,

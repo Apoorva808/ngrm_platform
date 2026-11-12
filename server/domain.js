@@ -1,12 +1,12 @@
-// Reference data, the scoring formula (v0.1) and the recommendation rules.
+// Reference data, the scoring formula and the recommendation rules.
 // The score is pure arithmetic. Nothing in this file calls an AI model.
 
-const FORMULA_VERSION = 'v0.2';
+const FORMULA_VERSION = 'v0.3';
 const MIN_GROUP = 5; // aggregates for groups smaller than this are suppressed
 
 const FACTORS = [
-  { k: 'academic', label: 'Academic', w: 20, how: 'CGPA × 10. Not yet rated until you enter your CGPA.' },
-  { k: 'technical', label: 'Technical / role skills', w: 20, how: 'Average of your four role-skill scores, plus 3 per verified certificate and 1.5 per verified NPTEL/SWAYAM course. Capped at 100.' },
+  { k: 'academic', label: 'Academic', w: 20, how: 'CGPA × 10, once your mentor has confirmed your CGPA against college records. Not yet rated until then.' },
+  { k: 'technical', label: 'Technical / role skills', w: 20, how: 'Average of your four role skills, where a skill counts only once your college has assessed it and a skill not yet assessed counts as 0. Plus 3 per verified certificate and 1.5 per verified NPTEL/SWAYAM course. Capped at 100. Your own ratings guide your plan but do not count.' },
   { k: 'projects', label: 'Projects', w: 15, how: '35 for each project your mentor has verified, capped at 100. None verified scores 0.' },
   { k: 'experience', label: 'Experience', w: 15, how: '50 for each internship your mentor has verified, capped at 100. None verified scores 0.' },
   { k: 'psychometric', label: 'Psychometric', w: 10, how: 'Average of the five personality traits you entered, with neuroticism reversed (100 − neuroticism). Not yet rated until you enter all five.' },
@@ -69,7 +69,9 @@ function counts(evidence) {
   return c;
 }
 const given = (v) => v !== null && v !== undefined && v !== '' && !Number.isNaN(+v);
-// Formula v0.2.
+// Formula v0.3.
+// 0. Nothing the student types in about their own marks or skills counts until it is confirmed: CGPA by a mentor
+//    against college records, each role skill by a college assessment.
 // 1. Only evidence a mentor has verified counts.
 // 2. A factor the student has not answered is "not yet rated" (null): it is left out, and the score is the
 //    weighted average of the rated factors. `completeness` says how much of the full formula that covers.
@@ -77,9 +79,10 @@ const given = (v) => v !== null && v !== undefined && v !== '' && !Number.isNaN(
 function score(p, evidence) {
   const c = counts(evidence);
   const f = {};
-  f.academic = given(p.cgpa) ? clamp(+p.cgpa * 10) : null;
-  const skills = (p.skills || []).map(Number).filter((n) => !Number.isNaN(n));
-  f.technical = skills.length ? Math.min(100, avg(skills) + c.certificate * 3 + c.course * 1.5) : null;
+  f.academic = given(p.cgpa) && p.cgpaConfirmed ? clamp(+p.cgpa * 10) : null;
+  const assessed = (p.skills || []).filter((s, i) => p.skillsVerified && p.skillsVerified[i]).map(Number).filter((n) => !Number.isNaN(n));
+  // Averaged over all the role's skills, so each new assessment can only add; being assessed in a weak skill never lowers the score.
+  f.technical = Math.min(100, assessed.reduce((x, y) => x + y, 0) / Math.max(1, (p.skills || []).length) + c.certificate * 3 + c.course * 1.5);
   f.projects = Math.min(100, 35 * c.project);
   f.experience = Math.min(100, 50 * c.internship);
   const o = p.ocean;
@@ -92,7 +95,8 @@ function score(p, evidence) {
   for (const k of Object.keys(f)) if (f[k] !== null) f[k] = round1(f[k]);
   return { version: FORMULA_VERSION, factors: f, index: weight ? round1(sum / weight) : 0, counts: c, ratedWeight: weight, completeness: weight,
     notRated: FACTORS.filter((F) => f[F.k] === null).map((F) => F.k),
-    flags: { cgpaMissing: !given(p.cgpa), commUnrated: f.communication === null, psychometricMissing: !o, clarityMissing: !given(p.clarity) } };
+    skillsAssessed: assessed.length,
+    flags: { cgpaMissing: !given(p.cgpa), cgpaUnconfirmed: given(p.cgpa) && !p.cgpaConfirmed, skillsUnassessed: (p.skills || []).length - assessed.length, commUnrated: f.communication === null, psychometricMissing: !o, clarityMissing: !given(p.clarity) } };
 }
 
 function band(i) {
@@ -109,13 +113,23 @@ const withEv = (ev, type) => ev.concat([{ type, status: 'verified' }]);
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
 const RULES = {
+  confirm: {
+    applies: (p, r) => r.flags.cgpaUnconfirmed || r.flags.skillsUnassessed > 0,
+    // No gain is projected: the result depends on what the college finds, which may be higher or lower than the student's own figures.
+    sim: (p, ev) => [p, ev],
+    assume: 'Not projected. Your score changes by whatever your college confirms.',
+    always: true, first: true,
+    title: (p, r) => (r.flags.cgpaUnconfirmed && r.flags.skillsUnassessed ? 'Get your CGPA confirmed and your skills assessed' : r.flags.cgpaUnconfirmed ? 'Get your CGPA confirmed' : 'Get your remaining skills assessed'),
+    what: (p, r) => [r.flags.cgpaUnconfirmed ? 'Show your mentor your latest marks card so they can confirm your CGPA.' : '', r.flags.skillsUnassessed ? `Ask when the college assessment runs for ${p.skills.map((s, i) => (p.skillsVerified && p.skillsVerified[i] ? null : ROLES[p.role].skills[i].toLowerCase())).filter(Boolean).join(', ')}.` : ''].filter(Boolean).join(' '),
+    why: (p, r) => `What you enter about yourself does not count until your college confirms it. ${r.flags.cgpaUnconfirmed ? 'Your CGPA is waiting for confirmation, so the academic 20% is left out of your score. ' : ''}${r.flags.skillsUnassessed ? `${r.skillsAssessed} of your ${p.skills.length} role skills ${r.skillsAssessed === 1 ? 'has' : 'have'} been assessed; a skill not yet assessed counts as 0 towards the technical 20%.` : ''}`.trim(),
+  },
   course: {
     applies: (p, r, t) => p.skills.length && +p.skills[weakest(p)] < t,
-    sim: (p, ev) => { const q = clone(p); const i = weakest(q); q.skills[i] = Math.min(100, +q.skills[i] + 15); return [q, withEv(ev, 'course')]; },
-    assume: 'Assumes the course lifts that skill by 15 points and the certificate is verified.',
+    sim: (p, ev) => { const q = clone(p); const i = weakest(q); q.skills[i] = Math.min(100, +q.skills[i] + 15); q.skillsVerified = (q.skillsVerified || q.skills.map(() => false)).slice(); q.skillsVerified[i] = true; return [q, withEv(ev, 'course')]; },
+    assume: 'Assumes the course lifts that skill by 15 points, your college then assesses it at that level, and the certificate is verified. The assessed result may differ.',
     title: (p) => `Take an NPTEL or SWAYAM course in ${ROLES[p.role].skills[weakest(p)].toLowerCase()}`,
     what: () => 'Pick a course on this skill and sit the proctored exam, so the certificate counts as verified evidence.',
-    why: (p) => { const i = weakest(p); return `${ROLES[p.role].skills[i]} is your weakest role skill at ${p.skills[i]}/100, against a target of ${ROLES[p.role].target[i]}. Technical and role skills carry 20% of your score.`; },
+    why: (p) => { const i = weakest(p), a = p.skillsVerified && p.skillsVerified[i]; return `${ROLES[p.role].skills[i]} is your weakest role skill at ${p.skills[i]}/100${a ? '' : ' by your own rating'}, against a target of ${ROLES[p.role].target[i]}. Technical and role skills carry 20% of your score${a ? '' : ', and this skill starts counting once your college assesses it'}.`; },
   },
   project: {
     applies: (p, r, t) => r.counts.project < t,
@@ -143,9 +157,9 @@ const RULES = {
     why: (p, r) => (r.flags.commUnrated ? 'Communication carries 10% of the score, but yours has not been assessed yet, so it is left out of your total for now.' : `Your assessed communication score is ${Math.round(r.factors.communication)}/100. It carries 10% of your score.`),
   },
   academic: {
-    applies: (p, r, t) => !r.flags.cgpaMissing && +p.cgpa < t,
+    applies: (p, r, t) => r.factors.academic !== null && +p.cgpa < t,
     sim: (p, ev) => { const q = clone(p); q.cgpa = Math.min(10, +q.cgpa + 0.5); return [q, ev]; },
-    assume: 'Assumes your CGPA rises by 0.5.',
+    assume: 'Assumes your CGPA rises by 0.5 and your mentor confirms the new figure.',
     title: () => 'Lift your CGPA by half a point',
     what: () => 'Use tutorial hours for your two weakest papers and plan revision a month before end-semester exams.',
     why: (p, r) => `Academic performance carries 20% of your score. A CGPA of ${p.cgpa} gives ${Math.round(r.factors.academic)}/100.`,
@@ -181,6 +195,7 @@ const RULES = {
 };
 
 const DEFAULT_RULE_SETTINGS = [
+  { id: 'confirm', factor: 'academic', slot: 'now', effort: 'One meeting with your mentor', threshold: null },
   { id: 'course', factor: 'technical', slot: 'now', effort: '6–8 weeks, about 3 hours a week', threshold: 60 },
   { id: 'project', factor: 'projects', slot: 'next', effort: 'One semester', threshold: 3 },
   { id: 'internship', factor: 'experience', slot: 'summer', effort: '6–8 weeks over summer', threshold: 2 },
@@ -204,11 +219,11 @@ function recommend(p, evidence, settings) {
     const [q, ev] = rule.sim(p, evidence);
     const gain = round1(score(q, ev).index - r.index);
     if (gain <= 0.05 && !rule.always) continue;
-    out.push({ id: s.id, factor: s.factor, slot: s.slot, effort: s.effort, gain, always: !!rule.always,
+    out.push({ id: s.id, factor: s.factor, slot: s.slot, effort: s.effort, gain, always: !!rule.always, first: !!rule.first,
       title: rule.title(p, r), what: rule.what(p, r), why: rule.why(p, r, s.threshold), assume: rule.assume });
   }
   const scored = out.filter((x) => !x.always).sort((a, b) => b.gain - a.gain).slice(0, 5);
-  return scored.concat(out.filter((x) => x.always));
+  return out.filter((x) => x.first).concat(scored, out.filter((x) => x.always && !x.first));
 }
 
 /** Score after completing the given accepted rules, applied in turn. */

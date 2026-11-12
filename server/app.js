@@ -51,6 +51,8 @@ function createApp(db, opts = {}) {
   const need = (...roles) => (req, res, next) => {
     if (!req.user) return fail(res, 401, 'Please sign in.');
     if (roles.length && !roles.includes(req.user.role)) return fail(res, 403, 'Your account does not have access to this.');
+    // Someone on a temporary password can do nothing but choose their own.
+    if (req.user.mustChange && req.path !== '/api/me/password') return fail(res, 403, 'Choose your own password first, on your Account page.');
     next();
   };
   const setCookie = (res, token) => res.cookie(COOKIE, token, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: auth.SESSION_TTL_MS, path: '/' });
@@ -67,7 +69,8 @@ function createApp(db, opts = {}) {
   const hasConsent = (userId, purpose) => consents(userId)[purpose] === true;
   function profileRow(userId) { return h.get('SELECT * FROM profiles WHERE user_id = ?', userId); }
   function toDomain(row) {
-    return { prog: row.programme, year: row.year, cgpa: row.cgpa, role: row.target_role, skills: parse(row.skills_json, [50, 50, 50, 50]),
+    const vs = verifiedSkills(row.user_id, row.target_role);
+    return { prog: row.programme, year: row.year, cgpa: row.cgpa, cgpaConfirmed: !!row.cgpa_confirmed, role: row.target_role, skills: parse(row.skills_json, [50, 50, 50, 50]), skillsVerified: [0, 1, 2, 3].map((i) => i in vs),
       ocean: parse(row.ocean_json, null), comm: row.comm, clarity: row.clarity };
   }
   const evidenceOf = (userId) => h.all('SELECT id, type, title, completed_on, file_name, status, verified_by, verified_at, skill_index, skill_role, skill_value, file_path IS NOT NULL AS has_file FROM evidence WHERE user_id = ? ORDER BY id', userId);
@@ -121,12 +124,15 @@ function createApp(db, opts = {}) {
   // Sign-up is open unless SIGNUP=off. SIGNUP_DOMAINS (comma-separated, e.g. "college.edu.in") limits student sign-up to those email domains.
   const signUpOpen = (opts.signUp ?? process.env.SIGNUP) !== 'off';
   const signUpDomains = String(opts.signUpDomains ?? process.env.SIGNUP_DOMAINS ?? '').toLowerCase().split(',').map((x) => x.trim().replace(/^@/, '')).filter(Boolean);
+  // Sign-in is by email and password. Emailed one-time codes (to confirm an address at sign-up, and as a second way in)
+  // are used only when EMAIL_CODES=on, which needs an email provider.
+  const emailCodes = opts.emailCodes ?? process.env.EMAIL_CODES === 'on';
   const SIGNUP_ROLES = ['student', 'mentor', 'college_admin', 'employer', 'researcher'];
 
   // ---------- Public ----------
   app.get('/api/meta', (req, res) => res.json({
     formulaVersion: D.FORMULA_VERSION, minGroup: D.MIN_GROUP, factors: D.FACTORS, roles: D.ROLES, programmes: D.PROGRAMMES,
-    evidenceTypes: D.EVIDENCE_TYPES, slots: D.SLOTS, consentPurposes: D.CONSENT_PURPOSES, demoMode, signUp: signUpOpen,
+    evidenceTypes: D.EVIDENCE_TYPES, slots: D.SLOTS, consentPurposes: D.CONSENT_PURPOSES, demoMode, signUp: signUpOpen, emailCodes,
     // Who runs this pilot and whom to contact about personal data (shown on the privacy notice).
     operator: { name: String(process.env.ORG_NAME || '').slice(0, 120) || null, contact: String(process.env.PRIVACY_CONTACT || '').slice(0, 160) || null },
   }));
@@ -137,10 +143,10 @@ function createApp(db, opts = {}) {
   // ---------- Auth ----------
   // Per-address limit too, so one sender cannot flood many inboxes with codes (30 an hour).
   const ipHits = new Map();
-  function ipLimited(req, res) {
-    const now = Date.now(), ip = req.ip || 'unknown';
+  function ipLimited(req, res, kind = 'code', max = 30) {
+    const now = Date.now(), ip = kind + ':' + (req.ip || 'unknown');
     const hits = (ipHits.get(ip) || []).filter((t) => now - t < 60 * 60 * 1000);
-    if (hits.length >= 30) { fail(res, 429, 'Too many sign-in codes asked for from this network. Try again in an hour.'); return true; }
+    if (hits.length >= max) { fail(res, 429, kind === 'code' ? 'Too many sign-in codes asked for from this network. Try again in an hour.' : 'Too many accounts created from this network in the last hour. Try again later.'); return true; }
     hits.push(now); ipHits.set(ip, hits);
     if (ipHits.size > 10000) for (const [k, v] of ipHits) if (!v.some((t) => now - t < 60 * 60 * 1000)) ipHits.delete(k);
     return false;
@@ -164,18 +170,28 @@ function createApp(db, opts = {}) {
     if (role === 'employer') { orgName = String(b.orgName || '').trim().replace(/\s+/g, ' ').slice(0, 160); if (orgName.length < 2) return fail(res, 400, 'Enter your company name.'); }
     if (role === 'student' && signUpDomains.length && !signUpDomains.some((d) => email.endsWith('@' + d) || email.endsWith('.' + d)))
       return fail(res, 400, 'Students sign up with their college email (' + signUpDomains.map((d) => '@' + d).join(', ') + ').');
-    if (ipLimited(req, res)) return;
-    const r = auth.signUpStart({ name, email, role, institutionId, orgName, password: b.password });
+    if (emailCodes) {
+      if (ipLimited(req, res)) return;
+      const r = auth.signUpStart({ name, email, role, institutionId, orgName, password: b.password });
+      if (r.error) return fail(res, r.status, r.error);
+      return res.json(r);
+    }
+    // Without codes the account is made at once. A whole college lab may share one address, so the limit is generous.
+    if (ipLimited(req, res, 'signup', 120)) return;
+    const r = auth.signUpDirect({ name, email, role, institutionId, orgName, password: b.password });
     if (r.error) return fail(res, r.status, r.error);
-    res.json(r);
+    if (r.pending) return res.json({ pending: true });
+    setCookie(res, r.token); res.json({ user: { id: r.user.id, name: r.user.name, role: r.user.role } });
   });
   app.post('/api/auth/sign-up/verify', (req, res) => {
+    if (!emailCodes) return fail(res, 404, 'Not available.');
     const r = auth.signUpVerify(req.body?.email, req.body?.code);
     if (r.error) return fail(res, 400, r.error);
     if (r.pending) return res.json({ pending: true });
     setCookie(res, r.token); res.json({ user: { id: r.user.id, name: r.user.name, role: r.user.role } });
   });
   app.post('/api/auth/request-code', (req, res) => {
+    if (!emailCodes) return fail(res, 404, 'Sign in with your email and password.');
     if (ipLimited(req, res)) return;
     const email = String(req.body?.email || '').trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return fail(res, 400, 'Enter a valid email address.');
@@ -184,6 +200,7 @@ function createApp(db, opts = {}) {
     res.json(r);
   });
   app.post('/api/auth/verify', (req, res) => {
+    if (!emailCodes) return fail(res, 404, 'Sign in with your email and password.');
     const r = auth.verifyCode(req.body?.email, req.body?.code);
     if (r.error) return fail(res, 400, r.error);
     setCookie(res, r.token); res.json({ user: { id: r.user.id, name: r.user.name, role: r.user.role } });
@@ -194,12 +211,12 @@ function createApp(db, opts = {}) {
     // Said only to someone who knows the password they chose, so it gives nothing away to anyone else.
     if (r.error && r.status === 400 && auth.waitingWith(req.body?.email, req.body?.password)) return fail(res, 403, 'Your email is confirmed and your account is waiting for approval by the NGRM admin. You will be able to sign in once it is approved.');
     if (r.error) return fail(res, r.status, r.error);
-    setCookie(res, r.token); res.json({ user: { id: r.user.id, name: r.user.name, role: r.user.role } });
+    setCookie(res, r.token); res.json({ user: { id: r.user.id, name: r.user.name, role: r.user.role }, mustChange: auth.mustChange(r.user.id) });
   });
   // Set or change your own password. Changing one needs the current password, unless you just signed in
   // with an emailed code: that is how a forgotten password is reset.
   app.post('/api/me/password', need(), (req, res) => {
-    if (auth.hasPassword(req.user.id) && req.user.via !== 'code' && !auth.checkPassword(req.user.id, req.body?.current))
+    if (auth.hasPassword(req.user.id) && req.user.via !== 'code' && !req.user.mustChange && !auth.checkPassword(req.user.id, req.body?.current))
       return fail(res, 400, 'Your current password is not right. Forgot it? Sign out, sign in with an emailed code, and set a new one.');
     const r = auth.setPassword(req.user, req.body?.password, req.token);
     if (r.error) return fail(res, 400, r.error);
@@ -221,7 +238,7 @@ function createApp(db, opts = {}) {
     const u = req.user;
     const inst = u.institution_id ? h.get('SELECT name, city FROM institutions WHERE id = ?', u.institution_id) : null;
     const emp = u.employer_id ? h.get('SELECT name FROM employers WHERE id = ?', u.employer_id) : null;
-    res.json({ user: { id: u.id, name: u.name, email: u.email, role: u.role, institution: inst, employer: emp, hasPassword: auth.hasPassword(u.id), signedInWith: u.via }, consents: u.role === 'student' ? consents(u.id) : undefined });
+    res.json({ user: { id: u.id, name: u.name, email: u.email, role: u.role, institution: inst, employer: emp, hasPassword: auth.hasPassword(u.id), signedInWith: u.via, mustChangePassword: !!u.mustChange }, consents: u.role === 'student' ? consents(u.id) : undefined });
   });
 
   // ---------- Student: consent ----------
@@ -280,6 +297,7 @@ function createApp(db, opts = {}) {
     // CGPA and career clarity can be corrected but not cleared once given: a blank is left out of the score,
     // so clearing a low value would otherwise raise it.
     const sticky = (field, col, hi) => { const v = keep(field, col, hi); return v === null ? cur[col] ?? null : v; };
+    const newCgpa = sticky('cgpa', 'cgpa', 10);
     const prevSkills = parse(cur.skills_json, [50, 50, 50, 50]);
     const skills = Array.isArray(b.skills) && b.skills.length === 4 ? b.skills.map((s, i) => Math.round(num(s, 0, 100) ?? (role === cur.target_role ? prevSkills[i] : 50))) : prevSkills.slice();
     // A skill verified by a college assessment keeps the assessed value; the student cannot overwrite it.
@@ -296,7 +314,9 @@ function createApp(db, opts = {}) {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${hasConsent(req.user.id, 'introductions') ? 1 : 0}, datetime('now'))
            ON CONFLICT(user_id) DO UPDATE SET programme=excluded.programme, year=excluded.year, cgpa=excluded.cgpa, target_role=excluded.target_role,
            skills_json=excluded.skills_json, ocean_json=excluded.ocean_json, comm=excluded.comm, clarity=excluded.clarity, updated_at=excluded.updated_at`,
-      req.user.id, prog, Math.min(Math.max(1, parseInt(b.year, 10) || cur.year || 1), years), sticky('cgpa', 'cgpa', 10), role, JSON.stringify(skills), ocean ? JSON.stringify(ocean) : null, verifiedComm(req.user.id), sticky('clarity', 'clarity', 100));
+      req.user.id, prog, Math.min(Math.max(1, parseInt(b.year, 10) || cur.year || 1), years), newCgpa, role, JSON.stringify(skills), ocean ? JSON.stringify(ocean) : null, verifiedComm(req.user.id), sticky('clarity', 'clarity', 100));
+    // A changed CGPA has to be confirmed again by the mentor before it counts.
+    if (newCgpa !== (cur.cgpa ?? null)) h.run('UPDATE profiles SET cgpa_confirmed = 0 WHERE user_id = ?', req.user.id);
     // A new target role means a different plan: earlier accepted steps and mentor reviews no longer apply.
     if (cur.target_role && cur.target_role !== role) {
       h.run('DELETE FROM recommendation_states WHERE user_id = ?', req.user.id);
@@ -503,7 +523,8 @@ function createApp(db, opts = {}) {
     const rows = h.all('SELECT u.id, u.name FROM mentor_links m JOIN users u ON u.id = m.student_id WHERE m.mentor_id = ? ORDER BY u.name', req.user.id);
     const out = rows.filter((r) => hasConsent(r.id, 'profile')).map((r) => {
       const c = computeFor(r.id); if (!c) return null;
-      return { id: r.id, name: r.name, programme: c.p.prog, year: c.p.year, role: c.p.role, index: c.result.index, band: D.band(c.result.index) };
+      return { id: r.id, name: r.name, programme: c.p.prog, year: c.p.year, role: c.p.role, index: c.result.index, band: D.band(c.result.index),
+        cgpa: c.p.cgpa, cgpaConfirmed: c.p.cgpaConfirmed, skills: c.p.skills, skillsVerified: c.p.skillsVerified, commAssessed: c.result.factors.communication !== null };
     }).filter(Boolean);
     audit(req.user.id, 'mentor.viewed_mentees');
     res.json(out);
@@ -552,6 +573,18 @@ function createApp(db, opts = {}) {
     const sid = +req.body?.studentId, what = req.body?.what, value = Number(req.body?.value);
     if (!isMentee(req.user.id, sid) || !hasConsent(sid, 'profile')) return fail(res, 404, 'Not found.');
     const row = profileRow(sid); if (!row) return fail(res, 404, 'This student has not set up a profile yet.');
+    if (what === 'cgpa') {
+      // Confirming a CGPA: the mentor enters the figure from college records. It replaces what the student typed.
+      if (req.body?.value === '' || req.body?.value == null || !Number.isFinite(value) || value < 0 || value > 10) return fail(res, 400, 'Enter the CGPA from college records, from 0 to 10.');
+      const cgpa = Math.round(value * 100) / 100;
+      h.tx(() => {
+        h.run("DELETE FROM evidence WHERE user_id = ? AND type = 'assessment' AND skill_role = 'cgpa'", sid);
+        h.run("INSERT INTO evidence (user_id, type, title, completed_on, status, verified_by, verified_at, skill_index, skill_role, skill_value) VALUES (?, 'assessment', ?, date('now'), 'verified', ?, datetime('now'), NULL, 'cgpa', ?)", sid, `CGPA confirmed: ${cgpa}`, req.user.name, Math.round(cgpa * 10));
+        h.run('UPDATE profiles SET cgpa = ?, cgpa_confirmed = 1 WHERE user_id = ?', cgpa, sid);
+      });
+      audit(req.user.id, 'mentor.cgpa_confirmed', sid);
+      return res.status(201).json({ ok: true, label: 'CGPA', score: cgpa, cgpa: true });
+    }
     const isComm = what === 'communication', idx = isComm ? null : Number(what);
     if (!isComm && !(Number.isInteger(idx) && idx >= 0 && idx <= 3)) return fail(res, 400, 'Choose what was assessed.');
     if (req.body?.value === '' || req.body?.value == null || !Number.isFinite(value) || value < 0 || value > 100) return fail(res, 400, 'Enter a score from 0 to 100.');
@@ -614,19 +647,23 @@ function createApp(db, opts = {}) {
     const insts = h.all('SELECT id, name FROM institutions ORDER BY id');
     const rows = h.all("SELECT u.id, u.institution_id, p.skills_json, p.opt_in_intros FROM users u JOIN profiles p ON p.user_id = u.id WHERE u.role = 'student' AND p.target_role = ?", role)
       .filter((r) => hasConsent(r.id, 'profile'));
+    // Only skills a college has assessed are counted. A student with none assessed is in the pool but in no level.
+    const assessedBy = {};
+    for (const e of h.all("SELECT user_id, skill_index, skill_value FROM evidence WHERE type = 'assessment' AND status = 'verified' AND skill_role = ? AND skill_index BETWEEN 0 AND 3", role)) (assessedBy[e.user_id] = assessedBy[e.user_id] || {})[e.skill_index] = e.skill_value;
+    for (const r of rows) r.assessed = assessedBy[r.id] || {};
     const level = (sk) => { const a = D.avg(sk); return a < 50 ? 'foundation' : a < 70 ? 'intermediate' : 'strong'; };
     const tally = (list) => {
       const t = { foundation: 0, intermediate: 0, strong: 0, optedIn: 0 };
-      for (const r of list) { t[level(parse(r.skills_json, []))]++; if (r.opt_in_intros && hasConsent(r.id, 'introductions')) t.optedIn++; }
+      for (const r of list) { const sk = Object.values(r.assessed); if (sk.length) t[level(sk)]++; if (r.opt_in_intros && hasConsent(r.id, 'introductions')) t.optedIn++; }
       return { foundation: approx(t.foundation), intermediate: approx(t.intermediate), strong: approx(t.strong), optedIn: approx(t.optedIn), _opted: t.optedIn };
     };
     const byCollege = insts.map((i) => { const t = tally(rows.filter((r) => r.institution_id === i.id)); delete t._opted; return { college: i.name, ...t }; });
     const canRequest = tally(rows)._opted >= D.MIN_GROUP;
     // The total row adds up only the figures shown above it, so it cannot be used to work out a hidden college.
     const total = Object.fromEntries(['foundation', 'intermediate', 'strong', 'optedIn'].map((k) => { const shown = byCollege.map((c) => c[k]).filter((v) => v !== null); return [k, shown.length ? shown.reduce((a, b) => a + b, 0) : null]; }));
-    const skills = rows.length >= D.MIN_GROUP ? D.ROLES[role].skills.map((name, k) => ({ name, sharePct: safePct(rows.filter((r) => (parse(r.skills_json, [])[k] || 0) >= 70).length, rows.length) })) : null;
+    const skills = rows.length >= D.MIN_GROUP ? D.ROLES[role].skills.map((name, k) => ({ name, sharePct: safePct(rows.filter((r) => (r.assessed[k] ?? 0) >= 70).length, rows.length) })) : null;
     audit(req.user.id, 'employer.viewed_supply', role);
-    res.json({ role, byCollege, total, canRequestIntroductions: canRequest, pool: approx(rows.length), skills, rounding: 5, totalIsSumOfShown: true });
+    res.json({ role, byCollege, total, canRequestIntroductions: canRequest, pool: approx(rows.length), skills, rounding: 5, totalIsSumOfShown: true, assessedOnly: true });
   });
   app.post('/api/employer/demand', need('employer'), (req, res) => {
     const b = req.body || {};
@@ -815,7 +852,19 @@ function createApp(db, opts = {}) {
       }
     });
     audit(req.user.id, 'admin.users_added', clean.length);
-    res.status(201).json({ added: clean.length });
+    // Without emailed codes, each new person gets a temporary password for the admin to hand over. It is shown only here.
+    const passwords = emailCodes ? undefined : clean.map((r) => ({ name: r.name, email: r.email, password: auth.setTempPassword(r.id) }));
+    res.status(201).json({ added: clean.length, passwords });
+  });
+  // Forgotten password: an admin gives the person a new temporary one, which they must change at their next sign-in.
+  app.post('/api/admin/users/:id/reset-password', need('admin'), (req, res) => {
+    const u = h.get('SELECT id, name, email FROM users WHERE id = ?', +req.params.id);
+    if (!u) return fail(res, 404, 'Not found.');
+    if (u.id === req.user.id) return fail(res, 400, 'Change your own password on your Account page.');
+    const password = auth.setTempPassword(u.id);
+    h.run('DELETE FROM login_failures WHERE email = ?', u.email);
+    audit(req.user.id, 'admin.password_reset', u.id);
+    res.json({ name: u.name, email: u.email, password });
   });
 
   // Set, change or clear a student's mentor. The mentor must be at the same college.

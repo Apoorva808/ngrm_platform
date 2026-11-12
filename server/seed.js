@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { open, helpers } = require('./db');
 const D = require('./domain');
+const { hashPassword } = require('./auth');
 
 function rng(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
@@ -21,11 +22,12 @@ function bootstrap(db, env = process.env) {
   if (!h.get('SELECT 1 FROM courses') && !h.get("SELECT 1 FROM audit_log WHERE action IN ('admin.course_added', 'admin.course_removed')"))
     for (const [role, idx, title, provider, url, free] of require('./courses')) h.run('INSERT INTO courses (title, provider, url, role, skill_index, free) VALUES (?, ?, ?, ?, ?, ?)', title, provider, url, role, idx, free);
   const email = String(env.ADMIN_EMAIL || '').trim().toLowerCase();
-  if (email && !h.get('SELECT id FROM users WHERE email = ?', email)) {
-    h.run("INSERT INTO users (email, name, role, is_sample) VALUES (?, ?, 'admin', 0)", email, String(env.ADMIN_NAME || 'NGRM admin').trim());
-    return email;
-  }
-  return null;
+  if (!email) return null;
+  let u = h.get('SELECT id FROM users WHERE email = ?', email), created = false;
+  if (!u) { u = { id: h.run("INSERT INTO users (email, name, role, is_sample) VALUES (?, ?, 'admin', 0)", email, String(env.ADMIN_NAME || 'NGRM admin').trim()).lastInsertRowid }; created = true; }
+  // The first admin signs in with ADMIN_PASSWORD and must then choose their own. Once they have a password, ADMIN_PASSWORD is ignored.
+  if (env.ADMIN_PASSWORD && !h.get('SELECT 1 FROM passwords WHERE user_id = ?', u.id)) h.run('INSERT INTO passwords (user_id, hash, must_change) VALUES (?, ?, 1)', u.id, hashPassword(String(env.ADMIN_PASSWORD)));
+  return created ? email : null;
 }
 
 function seed(db) {
@@ -40,8 +42,8 @@ function seed(db) {
       .map(([n, c]) => Number(h.run('INSERT INTO employers (name, city) VALUES (?, ?)', n, c).lastInsertRowid));
     const user = (email, name, role, inst, emp) => Number(h.run('INSERT INTO users (email, name, role, institution_id, employer_id) VALUES (?, ?, ?, ?, ?)', email, name, role, inst ?? null, emp ?? null).lastInsertRowid);
     const consent = (uid, purpose) => h.run('INSERT INTO consents (user_id, purpose, granted, is_adult) VALUES (?, ?, 1, 1)', uid, purpose);
-    const profile = (uid, p, optIn) => h.run('INSERT INTO profiles (user_id, programme, year, cgpa, target_role, skills_json, ocean_json, comm, clarity, opt_in_intros) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      uid, p.prog, p.year, p.cgpa, p.role, JSON.stringify(p.skills), p.ocean ? JSON.stringify(p.ocean) : null, p.comm ?? null, p.clarity ?? null, optIn ? 1 : 0);
+    const profile = (uid, p, optIn) => h.run('INSERT INTO profiles (user_id, programme, year, cgpa, cgpa_confirmed, target_role, skills_json, ocean_json, comm, clarity, opt_in_intros) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      uid, p.prog, p.year, p.cgpa, p.cgpaConfirmed ? 1 : 0, p.role, JSON.stringify(p.skills), p.ocean ? JSON.stringify(p.ocean) : null, p.comm ?? null, p.clarity ?? null, optIn ? 1 : 0);
     const evidence = (uid, type, title, status, by, extra = {}) => h.run('INSERT INTO evidence (user_id, type, title, completed_on, status, verified_by, verified_at, skill_index, skill_role, skill_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       uid, type, title, extra.date || null, status, by || null, status === 'verified' ? '2026-10-01 10:00:00' : null, extra.skill ?? null, extra.role ?? null, extra.value ?? null);
 
@@ -54,7 +56,7 @@ function seed(db) {
     user('admin@demo.ngrm.in', 'NGRM admin', 'admin');
 
     consent(ananya, 'profile'); consent(ananya, 'psychometric');
-    profile(ananya, { prog: 'ba-psy', year: 2, cgpa: 7.6, role: 'hr', skills: [55, 72, 60, 45], ocean: { o: 72, c: 68, e: 48, a: 74, n: 55 }, comm: null, clarity: 55 }, false);
+    profile(ananya, { prog: 'ba-psy', year: 2, cgpa: 7.6, cgpaConfirmed: true, role: 'hr', skills: [55, 72, 60, 45], ocean: { o: 72, c: 68, e: 48, a: 74, n: 55 }, comm: null, clarity: 55 }, false);
     evidence(ananya, 'course', 'NPTEL course in research methods', 'verified', 'Course certificate', { date: '2026-05-20' });
     evidence(ananya, 'project', 'Survey study on exam stress among first-year students', 'verified', 'Dr. Kavya S.', { date: '2026-09-15' });
     evidence(ananya, 'assessment', 'Research methods skill check', 'verified', 'Department of Psychology', { date: '2026-10-02', skill: 1, role: 'hr', value: 72 });
@@ -72,9 +74,13 @@ function seed(db) {
       // How far along this sample student is, so the cohort spreads across all three bands.
       const drive = R();
       consent(uid, 'profile'); consent(uid, 'psychometric'); if (optIn) consent(uid, 'introductions');
-      profile(uid, { prog, year: R() < 0.5 ? 1 : 2, cgpa: Math.round((5.6 + R() * 3.6) * 10) / 10, role, skills: D.ROLES[role].skills.map(() => Math.round(30 + drive * 25 + R() * 40)),
+      // Most sample students have had their CGPA confirmed and most of their skills assessed; the rest are still waiting.
+      const skillVals = D.ROLES[role].skills.map(() => Math.round(30 + drive * 25 + R() * 40));
+      const C = rng(n * 7919), cgpaConfirmed = C() < 0.85, skillsVerified = skillVals.map(() => C() < 0.85);
+      profile(uid, { prog, year: R() < 0.5 ? 1 : 2, cgpa: Math.round((5.6 + R() * 3.6) * 10) / 10, cgpaConfirmed, role, skills: skillVals,
         ocean: { o: Math.round(35 + R() * 50), c: Math.round(35 + R() * 50), e: Math.round(30 + R() * 55), a: Math.round(40 + R() * 45), n: Math.round(25 + R() * 50) },
         comm: R() < 0.4 ? Math.round(50 + R() * 40) : null, clarity: Math.round(35 + R() * 60) }, optIn);
+      skillVals.forEach((v, i) => { if (skillsVerified[i]) evidence(uid, 'assessment', `${D.ROLES[role].skills[i]} assessment: ${v}/100`, 'verified', 'College assessment', { skill: i, role, value: v }); });
       const assessed = h.get('SELECT comm FROM profiles WHERE user_id = ?', uid).comm;
       if (assessed != null) evidence(uid, 'assessment', `Communication assessment: ${assessed}/100`, 'verified', 'College assessment', { role: 'communication', value: assessed });
       for (let i = 0; i < Math.floor(R() * 3); i++) evidence(uid, 'course', 'NPTEL course', 'verified', 'Course certificate');
@@ -88,7 +94,7 @@ function seed(db) {
         consent(uid, 'study');
         const p = JSON.parse(JSON.stringify(h.get('SELECT * FROM profiles WHERE user_id = ?', uid)));
         const ev = h.all('SELECT type, status FROM evidence WHERE user_id = ?', uid);
-        const prof = { prog: p.programme, year: p.year, cgpa: p.cgpa, role: p.target_role, skills: JSON.parse(p.skills_json), ocean: JSON.parse(p.ocean_json), comm: p.comm, clarity: p.clarity };
+        const prof = { prog: p.programme, year: p.year, cgpa: p.cgpa, cgpaConfirmed, role: p.target_role, skills: JSON.parse(p.skills_json), skillsVerified, ocean: JSON.parse(p.ocean_json), comm: p.comm, clarity: p.clarity };
         const s = D.score(prof, ev);
         const run = h.run('INSERT INTO score_runs (user_id, formula_version, inputs_json, factors_json, index_value) VALUES (?, ?, ?, ?, ?)', uid, s.version, JSON.stringify({ profile: prof, counts: s.counts }), JSON.stringify(s.factors), s.index);
         h.run('INSERT INTO baselines (user_id, score_run_id) VALUES (?, ?)', uid, run.lastInsertRowid);

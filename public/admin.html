@@ -34,6 +34,12 @@
         <p class="small" id="p-err" style="color:var(--danger)" hidden></p>
         <div><button class="btn btn-primary" type="submit">Add people</button></div>
       </form>
+      <div id="tempBox" hidden style="margin-top:1rem;border-top:1px solid var(--border);padding-top:0.9rem">
+        <h3 style="font-size:1rem">Temporary passwords</h3>
+        <p class="small">Give each person theirs privately. They are shown only now and are not kept in readable form. Each person chooses their own password at first sign-in.</p>
+        <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Temporary password</th></tr></thead><tbody id="tempRows"></tbody></table></div>
+        <div style="margin-top:0.6rem;display:flex;gap:0.6rem;flex-wrap:wrap"><button class="btn btn-secondary btn-sm" type="button" id="tempCopy">Copy the list</button><button class="btn btn-secondary btn-sm" type="button" id="tempHide">I have saved these. Hide them</button></div>
+      </div>
     </section>
     <section class="card" aria-labelledby="oTitle">
       <header><h2 id="oTitle">Colleges and employers</h2></header>
@@ -98,9 +104,20 @@
       $('#kpis').innerHTML = ['student', 'mentor', 'college_admin', 'employer'].map(function (k) { return '<div class="kpi"><b>' + (n[k] || 0) + '</b><span>' + ROLE[k] + '</span></div>'; }).join('');
       $('#orgs').innerHTML = '<div><b class="small">Colleges</b><ul class="small" style="margin:0.25rem 0 0;padding-left:1.1rem">' + d.institutions.map(function (i) { return '<li>' + esc(i.name) + ' · ' + i.students + ' students</li>'; }).join('') + '</ul></div>' +
         '<div><b class="small">Employers</b><ul class="small" style="margin:0.25rem 0 0;padding-left:1.1rem">' + d.employers.map(function (e) { return '<li>' + esc(e.name) + '</li>'; }).join('') + '</ul></div>';
-      $('#recent').innerHTML = d.recent.map(function (u) { return '<tr><td>' + esc(u.name) + '</td><td>' + esc(u.email) + '</td><td>' + esc(u.role) + '</td><td>' + esc(u.org || '—') + '</td><td>' + (u.role === 'student' ? '<form data-mentor="' + u.id + '" novalidate style="display:flex;gap:0.3rem"><input type="email" value="' + esc(u.mentor || '') + '" placeholder="No mentor" aria-label="Mentor email for ' + esc(u.name) + '" style="min-width:11rem"><button class="btn btn-secondary btn-sm" type="submit">Save</button></form>' : '—') + '</td><td>' + (u.id === me.id ? '' : '<button class="btn-link" type="button" data-remove="' + u.id + '" data-name="' + esc(u.name) + '">Remove</button>') + '</td></tr>'; }).join('') || '<tr><td colspan="6" class="muted">No matching accounts.</td></tr>';
+      $('#recent').innerHTML = d.recent.map(function (u) { return '<tr><td>' + esc(u.name) + '</td><td>' + esc(u.email) + '</td><td>' + esc(u.role) + '</td><td>' + esc(u.org || '—') + '</td><td>' + (u.role === 'student' ? '<form data-mentor="' + u.id + '" novalidate style="display:flex;gap:0.3rem"><input type="email" value="' + esc(u.mentor || '') + '" placeholder="No mentor" aria-label="Mentor email for ' + esc(u.name) + '" style="min-width:11rem"><button class="btn btn-secondary btn-sm" type="submit">Save</button></form>' : '—') + '</td><td>' + (u.id === me.id ? '' : '<button class="btn-link" type="button" data-reset="' + u.id + '" data-name="' + esc(u.name) + '">Reset password</button> · <button class="btn-link" type="button" data-remove="' + u.id + '" data-name="' + esc(u.name) + '">Remove</button>') + '</td></tr>'; }).join('') || '<tr><td colspan="6" class="muted">No matching accounts.</td></tr>';
     });
   }
+  var tempList = [];
+  function showTemp(list) {
+    tempList = list; $('#tempBox').hidden = false;
+    $('#tempRows').innerHTML = list.map(function (p) { return '<tr><td>' + esc(p.name) + '</td><td>' + esc(p.email) + '</td><td class="num"><code>' + esc(p.password) + '</code></td></tr>'; }).join('');
+    $('#tempBox').scrollIntoView({ block: 'nearest' });
+  }
+  $('#tempHide').addEventListener('click', function () { tempList = []; $('#tempRows').innerHTML = ''; $('#tempBox').hidden = true; });
+  $('#tempCopy').addEventListener('click', function () {
+    var text = tempList.map(function (p) { return p.name + ', ' + p.email + ', ' + p.password; }).join('\n');
+    (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(function () { N.toast('Copied.'); }).catch(function () { N.toast('Could not copy. Select the table and copy it by hand.'); });
+  });
   function loadSignups() {
     return N.api('GET', '/api/admin/signups').then(function (list) {
       $('#signups').innerHTML = list.length ? '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>College or company</th><th>Asked</th><th></th></tr></thead><tbody>' + list.map(function (s) {
@@ -168,7 +185,7 @@
     e.preventDefault(); var err = $('#p-err');
     var rows = $('#p-rows').value.split('\n').map(function (l) { return l.trim(); }).filter(Boolean).map(parseLine);
     if (!rows.length) { err.hidden = false; err.textContent = 'Add at least one line.'; return; }
-    N.api('POST', '/api/admin/users', { rows: rows }).then(function (r) { err.hidden = true; $('#p-rows').value = ''; N.toast('Added ' + r.added + (r.added === 1 ? ' person.' : ' people.') + ' They can sign in with their email.'); loadPeople(); loadAudit(); })
+    N.api('POST', '/api/admin/users', { rows: rows }).then(function (r) { err.hidden = true; $('#p-rows').value = ''; N.toast('Added ' + r.added + (r.added === 1 ? ' person.' : ' people.') + (r.passwords ? ' Their temporary passwords are listed below.' : ' They can sign in with their email.')); if (r.passwords) showTemp(r.passwords); loadPeople(); loadAudit(); })
       .catch(function (x) { err.hidden = false; err.textContent = x.message; });
   });
   $('#feedForm').addEventListener('submit', function (e) {
@@ -212,10 +229,17 @@
       N.api('POST', '/api/admin/signups/decide', { email: em, approve: yes }).then(function () { N.toast(yes ? 'Approved. ' + em + ' can now sign in.' : 'Declined ' + em + '.'); loadSignups(); loadPeople(); loadAudit(); }).catch(fail);
       return;
     }
+    var rs = e.target.closest('[data-reset]');
+    if (rs) {
+      if (armed !== rs) { if (armed) armed.textContent = armed.hasAttribute('data-reset') ? 'Reset password' : 'Remove'; armed = rs; rs.textContent = 'Click again to reset ' + rs.dataset.name + '’s password'; return; }
+      armed = null;
+      N.api('POST', '/api/admin/users/' + rs.dataset.reset + '/reset-password').then(function (r) { rs.textContent = 'Reset password'; N.toast('Password reset for ' + r.name + '.'); showTemp([r]); loadAudit(); }).catch(fail);
+      return;
+    }
     var rm = e.target.closest('[data-remove]');
     if (rm) {
       // Two clicks: the first asks for confirmation in place, the second removes.
-      if (armed !== rm) { if (armed) armed.textContent = 'Remove'; armed = rm; rm.textContent = 'Click again to remove ' + rm.dataset.name; return; }
+      if (armed !== rm) { if (armed) armed.textContent = armed.hasAttribute('data-reset') ? 'Reset password' : 'Remove'; armed = rm; rm.textContent = 'Click again to remove ' + rm.dataset.name; return; }
       armed = null;
       N.api('DELETE', '/api/admin/users/' + rm.dataset.remove).then(function () { N.toast('Removed ' + rm.dataset.name + '.'); loadPeople(); loadAudit(); }).catch(fail);
       return;

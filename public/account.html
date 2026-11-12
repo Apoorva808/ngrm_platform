@@ -8,10 +8,11 @@
 </head>
 <body>
 <div class="page-banner"><div class="container">
-  <div><span class="eyebrow">Account</span><h1>Your account</h1><p class="lead">How you sign in. An emailed code always works; a password is optional.</p></div>
+  <div><span class="eyebrow">Account</span><h1>Your account</h1><p class="lead" id="lead">How you sign in.</p></div>
 </div></div>
 <main id="main" tabindex="-1">
 <div class="container stack" style="max-width:40rem">
+  <section class="card" id="tempNote" hidden style="border-color:var(--warning)"><h2 style="font-size:1.1rem">Choose your own password to continue</h2><p>You signed in with a temporary password. Set your own below; the rest of NGRM opens once you have.</p></section>
   <section class="card" aria-labelledby="whoTitle"><h2 id="whoTitle">Signed in as</h2><p id="who"></p></section>
   <section class="card" aria-labelledby="pwTitle">
     <h2 id="pwTitle">Password</h2>
@@ -23,7 +24,7 @@
       <p class="small" id="pwErr" style="color:var(--danger)" hidden></p>
       <div><button class="btn btn-primary" type="submit" id="pwBtn">Save password</button></div>
     </form>
-    <p class="small muted" style="margin-top:0.75rem">Saving a password signs you out on your other devices. If you forget it, sign in with an emailed code and set a new one here.</p>
+    <p class="small muted" style="margin-top:0.75rem" id="pwNote"></p>
   </section>
 </div>
 </main>
@@ -35,19 +36,22 @@
   function show(me) {
     $('#who').textContent = me.name + ' · ' + me.email + ' · ' + ROLE[me.role];
     // Changing a password needs the current one, unless you signed in with an emailed code (the reset route).
-    var needCurrent = me.hasPassword && me.signedInWith !== 'code';
-    $('#curBox').hidden = !needCurrent;
-    $('#pwState').textContent = me.hasPassword ? 'You have a password. You can sign in with it or with an emailed code.' : 'You have no password yet. You sign in with an emailed code. Set one below if you would like to.';
-    $('#pwBtn').textContent = me.hasPassword ? 'Change password' : 'Save password';
+    var temp = !!me.mustChangePassword, needCurrent = me.hasPassword && me.signedInWith !== 'code' && !temp;
+    $('#curBox').hidden = !needCurrent; $('#tempNote').hidden = !temp;
+    $('#lead').textContent = codes ? 'How you sign in. An emailed code always works; a password is optional.' : 'How you sign in: your email and your password.';
+    $('#pwState').textContent = temp ? 'You are on a temporary password.' : !me.hasPassword ? 'You have no password yet. Set one below.' : codes ? 'You have a password. You can sign in with it or with an emailed code.' : 'You have a password.';
+    $('#pwNote').textContent = 'Saving a password signs you out on your other devices. ' + (codes ? 'If you forget it, sign in with an emailed code and set a new one here.' : 'If you forget it, ask your NGRM admin for a temporary one.');
+    $('#pwBtn').textContent = me.hasPassword && !temp ? 'Change password' : 'Save password';
   }
-  N.boot('account', ['student', 'mentor', 'college_admin', 'employer', 'researcher', 'admin']).then(function (ctx) { show(ctx.me); });
+  var codes = false, wasTemp = false;
+  N.boot('account', ['student', 'mentor', 'college_admin', 'employer', 'researcher', 'admin']).then(function (ctx) { codes = !!ctx.meta.emailCodes; wasTemp = !!ctx.me.mustChangePassword; show(ctx.me); });
   $('#pwForm').addEventListener('submit', function (e) {
     e.preventDefault(); var err = $('#pwErr'), fail = function (m) { err.hidden = false; err.textContent = m; };
     if ($('#pw1').value !== $('#pw2').value) return fail('The two passwords are not the same.');
     N.api('POST', '/api/me/password', { password: $('#pw1').value, current: $('#current').value }).then(function () {
       err.hidden = true; ['#pw1', '#pw2', '#current'].forEach(function (i) { $(i).value = ''; });
       N.toast('Password saved. You can use it next time you sign in.');
-      return N.api('GET', '/api/me').then(function (r) { show(r.user); });
+      return N.api('GET', '/api/me').then(function (r) { if (wasTemp) { location.href = N.HOME[r.user.role]; return; } show(r.user); });
     }).catch(function (x) { fail(x.message); });
   });
 })();
