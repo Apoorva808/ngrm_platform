@@ -157,22 +157,43 @@
   }
   function showError(el, e) { el.innerHTML = '<div class="error-box">' + esc(e.message || 'Something went wrong.') + '</div>'; }
 
-  // A box you can pick from or type into, for target roles and programmes.
-  // Picking a suggestion uses it; typing something new adds it (the server matches it to a role family or discipline).
+  // Typed boxes. Nothing on the site drops down: every answer is typed into a plain box, and the words the box
+  // understands are shown as ordinary text beside it.
+
+  // Loose matching of typed words to a set of choices [{ v, t }]: exact words, the choice's number ("2", "second"),
+  // or any part of it that fits only one choice.
+  var ORD = { first: '1', second: '2', third: '3', fourth: '4', fifth: '5', sixth: '6', one: '1', two: '2', three: '3', four: '4', five: '5', six: '6' };
+  function matchChoice(text, choices) {
+    var t = String(text || '').replace(/\s+/g, ' ').trim().toLowerCase(); if (!t) return null;
+    var low = function (x) { return x.t.toLowerCase(); };
+    var hit = choices.filter(function (x) { return low(x) === t || String(x.v).toLowerCase() === t; })[0]; if (hit) return hit;
+    var n = ORD[t.split(' ')[0]] || (t.match(/^\d+/) || [])[0];
+    if (n) { var byNum = choices.filter(function (x) { return String(x.v) === n || low(x).indexOf(n) === 0; }); if (byNum.length === 1) return byNum[0]; }
+    var starts = choices.filter(function (x) { return low(x).indexOf(t) === 0; }); if (starts.length === 1) return starts[0];
+    var has = choices.filter(function (x) { return low(x).indexOf(t) >= 0; }); if (has.length === 1) return has[0];
+    var words = t.split(' '), all = choices.filter(function (x) { return words.every(function (w) { return low(x).indexOf(w) >= 0; }); });
+    return all.length === 1 ? all[0] : null;
+  }
+  function near(text, choices, max) {
+    var t = String(text || '').trim().toLowerCase(); if (t.length < 2) return [];
+    return choices.filter(function (x) { return x.t.toLowerCase().indexOf(t) >= 0; }).slice(0, max || 5);
+  }
+
+  // Target roles and programmes: type anything. Wording that is already on NGRM is reused; anything new is added
+  // (the server matches it to a kind of work or a discipline).
   //   typeable(input, { kind: 'role' | 'programme', meta, onPick(key, created), note: element for a status line })
   function typeable(input, o) {
-    var list = document.createElement('datalist'); list.id = input.id + '-list'; input.setAttribute('list', list.id); input.setAttribute('autocomplete', 'off'); input.parentNode.appendChild(list);
+    input.setAttribute('autocomplete', 'off'); input.removeAttribute('list');
     function options() { return o.kind === 'role' ? Object.keys(o.meta.roles).map(function (k) { return [k, o.meta.roles[k].label, o.meta.roles[k].listed]; }) : o.meta.programmes.map(function (p) { return [p.id, p.label, p.listed]; }); }
     function label(key) { var m = options().filter(function (x) { return x[0] === key; })[0]; return m ? m[1] : ''; }
-    function fillList() { list.innerHTML = options().filter(function (x) { return x[2] || x[0] === input.dataset.key; }).sort(function (a, b) { return a[1].localeCompare(b[1]); }).map(function (x) { return '<option value="' + esc(x[1]) + '">'; }).join(''); }
-    function set(key) { input.dataset.key = key || ''; input.value = label(key); fillList(); }
+    function set(key) { input.dataset.key = key || ''; input.value = label(key); }
     function say(t) { if (o.note) o.note.textContent = t || ''; }
     function choose(text) {
       text = String(text || '').replace(/\s+/g, ' ').trim();
-      if (!text) { input.value = label(input.dataset.key); return Promise.resolve(); }
+      if (!text) { input.value = label(input.dataset.key); say(''); return Promise.resolve(); }
       var hit = options().filter(function (x) { return x[1].toLowerCase() === text.toLowerCase(); })[0];
-      if (hit) { if (hit[0] !== input.dataset.key) { set(hit[0]); say(''); o.onPick(hit[0], false); } else input.value = hit[1]; return Promise.resolve(); }
-      if (text.length < 2) { input.value = label(input.dataset.key); return Promise.resolve(); }
+      if (hit) { if (hit[0] !== input.dataset.key) { set(hit[0]); say(''); o.onPick(hit[0], false); } else { input.value = hit[1]; say(''); } return Promise.resolve(); }
+      if (text.length < 2) { input.value = label(input.dataset.key); say(''); return Promise.resolve(); }
       input.disabled = true; say('Adding “' + text + '”…');
       return api('POST', '/api/library/' + o.kind, { text: text }).then(function (r) {
         var key = o.kind === 'role' ? r.key : r.id;
@@ -182,50 +203,74 @@
         if (changed) o.onPick(key, r.created);
       }).catch(function (e) { input.value = label(input.dataset.key); say(e.message); }).then(function () { input.disabled = false; });
     }
+    // While typing, say in plain text which wording NGRM already has, so the same job is not added twice.
+    input.addEventListener('input', function () {
+      var t = input.value.trim(), m = near(t, options().filter(function (x) { return x[2] || x[0] === input.dataset.key; }).map(function (x) { return { v: x[0], t: x[1] }; }), 4);
+      say(!t || t.toLowerCase() === label(input.dataset.key).toLowerCase() ? '' : m.length ? 'Already on NGRM: ' + m.map(function (x) { return x.t; }).join(' · ') + '. Type one of these in full to use it, or keep your own wording.' : 'New to NGRM. It will be added when you leave this box.');
+    });
     input.addEventListener('change', function () { choose(input.value); });
     input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } });
     input.addEventListener('focus', function () { input.select(); });
-    return { set: set, choose: choose, refresh: fillList, key: function () { return input.dataset.key; } };
+    return { set: set, choose: choose, refresh: function () {}, key: function () { return input.dataset.key; } };
   }
-  // Every dropdown on the site becomes a box you can pick from or type into. The original <select> stays in the page
-  // (hidden) as the source of truth, so the rest of the code is unchanged; typing must match one of its choices.
+
+  // A fixed set of answers (year, kind of evidence, which student) is also typed. The original <select> stays in the
+  // page, hidden, as the source of truth so the rest of the code is unchanged. The accepted words are listed as text.
   function typePick(sel) {
     if (sel.dataset.typed) return; sel.dataset.typed = '1';
-    var input = document.createElement('input'), list = document.createElement('datalist'), note = document.createElement('span');
+    var input = document.createElement('input'), note = document.createElement('span');
     input.type = 'text'; input.id = sel.id + 'Text'; input.setAttribute('autocomplete', 'off'); input.className = 'typed-pick';
-    list.id = sel.id + 'Choices'; input.setAttribute('list', list.id); note.className = 'hint'; note.setAttribute('role', 'status'); note.hidden = true;
+    note.className = 'hint'; note.id = sel.id + 'Words'; input.setAttribute('aria-describedby', note.id);
     var lab = sel.id && document.querySelector('label[for="' + sel.id + '"]'); if (lab) lab.setAttribute('for', input.id); else if (sel.getAttribute('aria-label')) input.setAttribute('aria-label', sel.getAttribute('aria-label'));
     sel.hidden = true; sel.setAttribute('aria-hidden', 'true'); sel.tabIndex = -1;
-    sel.parentNode.insertBefore(input, sel); sel.parentNode.insertBefore(list, sel); sel.parentNode.insertBefore(note, sel.nextSibling);
+    sel.parentNode.insertBefore(input, sel); sel.parentNode.insertBefore(note, sel.nextSibling);
     var sig = '';
-    function opts() { return Array.prototype.map.call(sel.options, function (o) { return { v: o.value, t: o.textContent.trim() }; }); }
+    function opts() { return Array.prototype.map.call(sel.options, function (o) { return { v: o.value, t: o.textContent.trim() }; }).filter(function (x) { return x.t; }); }
+    function words(o, typed) {
+      var m = typed ? near(typed, o, 6) : [];
+      if (o.length <= 6) return 'Type one of: ' + o.map(function (x) { return x.t; }).join(' · ');
+      return m.length ? 'Matches: ' + m.map(function (x) { return x.t; }).join(' · ') : typed && typed.trim().length >= 2 ? 'Nothing here matches “' + typed.trim() + '”.' : 'Type a few letters of the one you want (' + o.length + ' to choose from, such as ' + o.slice(0, 3).map(function (x) { return x.t; }).join(', ') + ').';
+    }
     function sync() {
       var o = opts(), cur = sel.options[sel.selectedIndex], s = o.map(function (x) { return x.v + '=' + x.t; }).join('|') + '#' + sel.value + '#' + sel.disabled;
       if (s === sig) return; sig = s;
-      list.innerHTML = o.map(function (x) { return '<option value="' + esc(x.t) + '">'; }).join('');
-      input.disabled = sel.disabled; input.placeholder = o.length ? 'Choose or type' : '';
-      if (document.activeElement !== input) input.value = cur ? cur.textContent.trim() : '';
+      input.disabled = sel.disabled; note.hidden = !o.length;
+      if (document.activeElement !== input) { input.value = cur ? cur.textContent.trim() : ''; note.textContent = words(o, ''); }
     }
     function commit() {
-      var t = input.value.replace(/\s+/g, ' ').trim().toLowerCase(), o = opts(), cur = sel.options[sel.selectedIndex];
-      var hit = o.filter(function (x) { return x.t.toLowerCase() === t; })[0];
-      if (!hit && t) { var m = o.filter(function (x) { return x.t.toLowerCase().indexOf(t) >= 0; }); if (m.length === 1) hit = m[0]; else { var st = o.filter(function (x) { return x.t.toLowerCase().indexOf(t) === 0; }); if (st.length === 1) hit = st[0]; } }
-      if (!hit) { note.hidden = !t; note.textContent = t ? 'That is not one of the choices here: ' + o.map(function (x) { return x.t; }).slice(0, 8).join(', ') + (o.length > 8 ? '…' : '') + '.' : ''; input.value = cur ? cur.textContent.trim() : ''; return; }
-      note.hidden = true; input.value = hit.t;
+      var o = opts(), cur = sel.options[sel.selectedIndex], typed = input.value.trim(), hit = matchChoice(typed, o);
+      if (!hit) { note.textContent = typed ? '“' + typed + '” is not one of the answers here. ' + words(o, typed) : words(o, ''); input.value = cur ? cur.textContent.trim() : ''; return; }
+      note.textContent = words(o, ''); input.value = hit.t;
       if (sel.value !== hit.v) { sel.value = hit.v; sig = ''; sel.dispatchEvent(new Event('input', { bubbles: true })); sel.dispatchEvent(new Event('change', { bubbles: true })); }
     }
+    input.addEventListener('input', function () { var o = opts(); if (o.length > 6) note.textContent = words(o, input.value); });
     input.addEventListener('change', commit);
     input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); commit(); } });
     input.addEventListener('focus', function () { input.select(); });
-    input.addEventListener('blur', function () { sig = ''; sync(); });
     // The page's own code may change the choices or the value at any time; keep the box in step.
     new MutationObserver(sync).observe(sel, { childList: true, subtree: true, attributes: true });
     setInterval(sync, 400); sync();
+  }
+  // Dates are typed too: 5 Oct 2026, 05-10-2026, 5/10/26 or 2026-10-05. Returns YYYY-MM-DD, '' for blank, or null.
+  var MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  function typedDate(text) {
+    var t = String(text || '').trim().toLowerCase().replace(/(\d)(st|nd|rd|th)\b/g, '$1').replace(/,/g, ' ').replace(/\s+/g, ' '); if (!t) return '';
+    var y, m, d, x;
+    if ((x = t.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/))) { y = +x[1]; m = +x[2]; d = +x[3]; }
+    else if ((x = t.match(/^(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{2}|\d{4})$/))) { d = +x[1]; m = +x[2]; y = +x[3]; }
+    else if ((x = t.match(/^(\d{1,2}) ([a-z]{3,9}) (\d{2}|\d{4})$/))) { d = +x[1]; m = MONTHS.indexOf(x[2].slice(0, 3)) + 1; y = +x[3]; }
+    else if ((x = t.match(/^([a-z]{3,9}) (\d{1,2}) (\d{4})$/))) { d = +x[2]; m = MONTHS.indexOf(x[1].slice(0, 3)) + 1; y = +x[3]; }
+    else if ((x = t.match(/^([a-z]{3,9}) (\d{4})$/))) { d = 1; m = MONTHS.indexOf(x[1].slice(0, 3)) + 1; y = +x[2]; }
+    else return null;
+    if (y < 100) y += 2000;
+    var dt = new Date(Date.UTC(y, m - 1, d));
+    if (!m || dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return null;
+    return y + '-' + ('0' + m).slice(-2) + '-' + ('0' + d).slice(-2);
   }
   function typeEverything() {
     $$('select').forEach(typePick);
     new MutationObserver(function () { $$('select:not([data-typed])').forEach(typePick); }).observe(document.body, { childList: true, subtree: true });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', typeEverything); else typeEverything();
-  window.NGRM = { typePick: typePick, typeable: typeable, $: $, $$: $$, esc: esc, f1: f1, f0: f0, ordinal: ordinal, bandCls: bandCls, api: api, toast: toast, live: live, boot: boot, consentPanel: consentPanel, ring: ring, showError: showError, HOME: HOME };
+  window.NGRM = { typePick: typePick, typeable: typeable, typedDate: typedDate, matchChoice: matchChoice, near: near, $: $, $$: $$, esc: esc, f1: f1, f0: f0, ordinal: ordinal, bandCls: bandCls, api: api, toast: toast, live: live, boot: boot, consentPanel: consentPanel, ring: ring, showError: showError, HOME: HOME };
 })();

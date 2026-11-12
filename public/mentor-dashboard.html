@@ -23,7 +23,7 @@
 <div class="page-banner"><div class="container">
   <div><span class="eyebrow" id="bannerCollege"></span><h1 id="pageTitle">Mentor and college</h1>
   <p class="lead">Mentors review every recommendation and verify evidence. The cohort view shows, anonymously, where the curriculum falls short. Groups under 5 are hidden.</p></div>
-  <div class="field" style="min-width:min(300px,100%)"><label for="viewText">Show a programme or target role</label><input type="text" id="viewText" list="viewList" autocomplete="off" placeholder="All students. Type to narrow"><datalist id="viewList"></datalist><input type="hidden" id="progFilter" value="all"><span class="hint" id="viewNote" role="status">Type a programme or a role your students are aiming for.</span></div>
+  <div class="field" style="min-width:min(300px,100%)"><label for="viewText">Show a programme or target role</label><input type="text" id="viewText" autocomplete="off" placeholder="All students. Type to narrow"><input type="hidden" id="progFilter" value="all"><span class="hint" id="viewNote" role="status">Type a programme or a role your students are aiming for.</span></div>
 </div></div>
 <main id="main" tabindex="-1">
 <div class="container stack">
@@ -95,7 +95,8 @@
     var view = $('#progFilter').value, isRole = view.indexOf('r:') === 0;
     return N.api('GET', '/api/college/cohort?' + (isRole ? 'role=' : 'programme=') + encodeURIComponent(view === 'all' ? 'all' : view.slice(2))).then(function (c) {
       groups = c.groups || groups;
-      $('#viewList').innerHTML = groups.programmes.map(function (g) { return '<option value="' + esc(g.label) + '">'; }).join('') + groups.roles.map(function (g) { return '<option value="' + esc(g.label) + '">'; }).join('');
+      // Say in plain text what can be typed here: only groups of 5 or more students are named.
+      if ($('#progFilter').value === 'all' && !$('#viewText').value.trim()) $('#viewNote').textContent = groups.programmes.length || groups.roles.length ? 'You can type: ' + groups.programmes.concat(groups.roles).map(function (g) { return g.label; }).join(' · ') + '. Leave it empty for all students.' : 'Showing all students.';
       $('#roleSkills').hidden = !c.roleSkills;
       if (c.roleSkills) $('#roleSkills').innerHTML = '<h3 style="margin-top:1.25rem">Skills for ' + esc(meta.roles[view.slice(2)].label) + '</h3><p class="small muted" style="margin:0.2rem 0 0.6rem">Share of these students assessed at or above the level the role expects. Low bars are what to teach or assess next.</p>' +
         c.roleSkills.map(function (k) { return '<div class="bar-row' + (k.atTargetPct != null && k.atTargetPct < 25 ? ' low' : '') + '"><div class="lbl"><b>' + esc(k.name) + '</b><small>Target ' + k.target + '</small></div><div class="track"><i style="width:' + (k.atTargetPct || 0) + '%"></i></div><span class="val">' + (k.atTargetPct == null ? 'hidden' : '~' + k.atTargetPct + '%') + '</span></div>'; }).join('');
@@ -199,7 +200,7 @@
     var t = $('#viewText').value.replace(/\s+/g, ' ').trim().toLowerCase(), note = $('#viewNote');
     var all = groups.programmes.map(function (g) { return { v: 'p:' + g.id, label: g.label, kind: 'programme' }; }).concat(groups.roles.map(function (g) { return { v: 'r:' + g.id, label: g.label, kind: 'target role' }; }));
     var hit = !t ? null : all.filter(function (g) { return g.label.toLowerCase() === t; })[0] || (function () { var m = all.filter(function (g) { return g.label.toLowerCase().indexOf(t) >= 0; }); return m.length === 1 ? m[0] : null; })();
-    if (!t) { $('#progFilter').value = 'all'; note.textContent = 'Showing all students.'; }
+    if (!t) { $('#progFilter').value = 'all'; note.textContent = ''; }
     else if (hit) { $('#progFilter').value = hit.v; $('#viewText').value = hit.label; note.textContent = 'Showing the ' + hit.kind + ' ' + hit.label + '.'; }
     else { $('#progFilter').value = 'all'; note.textContent = 'No group of 5 or more students matches “' + $('#viewText').value.trim() + '”. Showing all students. Smaller groups are never shown on their own.'; }
     loadCohort();

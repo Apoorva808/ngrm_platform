@@ -16,7 +16,7 @@
   <section class="grid-3" id="kpis"></section>
   <section class="card" aria-labelledby="fTitle"><header><h2 id="fTitle">Average baseline by factor</h2><span class="small muted">Consenting participants only</span></header><div id="factors"></div></section>
   <section class="card" aria-labelledby="tTitle"><header><h2 id="tTitle">De-identified baseline records</h2><span class="small muted" id="count"></span></header>
-    <div class="field" style="max-width:420px;margin-bottom:0.75rem"><label for="find">Narrow by programme or target role</label><input type="text" id="find" autocomplete="off" list="findList" placeholder="Type, for example, Psychology or Data Analyst"><datalist id="findList"></datalist><span class="hint" id="findNote" role="status"></span></div>
+    <div class="field" style="max-width:420px;margin-bottom:0.75rem"><label for="find">Narrow by programme or target role</label><input type="text" id="find" autocomplete="off" placeholder="Type, for example, Psychology or Data Analyst"><span class="hint" id="findNote" role="status"></span></div>
     <div class="table-wrap"><table><thead><tr><th>Participant</th><th>Programme</th><th class="n">Year</th><th>Target role</th><th class="n">Index</th><th>Formula</th></tr></thead><tbody id="rows"></tbody></table></div></section>
 </div>
 </main>
@@ -30,13 +30,13 @@ N2.boot('research', ['researcher']).then(function (ctx) {
     var progL = function (r) { var p = meta.programmes.filter(function (x) { return x.id === r.programme; })[0]; return r.programme ? (p ? p.label : r.programme) : ''; };
     var roleL = function (r) { return r.targetRole && meta.roles[r.targetRole] ? meta.roles[r.targetRole].label : ''; };
     var seen = {}; all.forEach(function (r) { [progL(r), roleL(r)].forEach(function (x) { if (x) seen[x] = 1; }); });
-    $('#findList').innerHTML = Object.keys(seen).sort().map(function (x) { return '<option value="' + esc(x) + '">'; }).join('');
+    var canType = Object.keys(seen).sort();
     function draw() {
     var t = $('#find').value.trim().toLowerCase();
     rows = !t ? all : all.filter(function (r) { return (progL(r) + ' ' + roleL(r)).toLowerCase().indexOf(t) >= 0; });
     // Averages for a typed group are shown only when it has enough records to protect each participant.
     var few = t && rows.length < (d.minimumGroup || 5);
-    $('#findNote').textContent = !t ? '' : few ? 'Fewer than ' + (d.minimumGroup || 5) + ' records match, so nothing is shown for this group. Records whose programme or role is withheld cannot be matched.' : rows.length + ' records match. The averages above now describe this group.';
+    $('#findNote').textContent = !t ? (canType.length ? 'You can type: ' + canType.slice(0, 10).join(' · ') + (canType.length > 10 ? ' and ' + (canType.length - 10) + ' more' : '') + '.' : '') : few ? 'Fewer than ' + (d.minimumGroup || 5) + ' records match, so nothing is shown for this group. Records whose programme or role is withheld cannot be matched.' : rows.length + ' records match. The averages above now describe this group.';
     if (few) rows = [];
     $('#kpis').innerHTML = '<div class="card"><b class="num" style="font-size:1.7rem">' + (t ? rows.length : d.participants) + '</b><p class="small muted">Participants with a baseline</p></div><div class="card"><b class="num" style="font-size:1.7rem">' + N2.f1(avg(rows.map(function (r) { return r.index; }))) + '</b><p class="small muted">Average baseline index</p></div><div class="card"><b class="num" style="font-size:1.7rem">0</b><p class="small muted">Outcome check-ins so far (first at graduation)</p></div>';
     $('#factors').innerHTML = meta.factors.map(function (F) { var v = avg(rows.map(function (r) { return r.factors[F.k]; }).filter(function (x) { return typeof x === 'number'; }));

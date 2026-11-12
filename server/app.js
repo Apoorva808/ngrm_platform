@@ -154,7 +154,9 @@ function createApp(db, opts = {}) {
   app.post('/api/library/role', need(), (req, res) => {
     const made = L.makeRole(req.body?.text);
     if (!made) return fail(res, 400, 'Type the role as you would say it, for example "Data Scientist".');
-    const same = Object.keys(D.ROLES).find((k) => L.norm(D.ROLES[k].label) === L.norm(made.label) || k === made.key);
+    // "Data Analysts" and "data analyst" are the same role.
+    const one = (t) => L.norm(t).replace(/s$/, '');
+    const same = Object.keys(D.ROLES).find((k) => one(D.ROLES[k].label) === one(made.label) || k === made.key);
     if (same) return res.json({ key: same, role: D.ROLES[same], created: false });
     if (req.user.role === 'student' && typedToday('custom_roles', req.user.id) >= 8) return fail(res, 429, 'You have added several new roles today. Choose one of them or try again tomorrow.');
     const listed = req.user.role === 'student' ? 0 : 1;

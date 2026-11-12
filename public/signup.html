@@ -18,7 +18,7 @@
         <span class="hint" id="roleHint"></span></div>
       <div class="field"><label for="name">Full name</label><input type="text" id="name" autocomplete="name" maxlength="120"></div>
       <div class="field"><label for="email" id="emailLbl">Email</label><input type="text" id="email" inputmode="email" autocomplete="email" placeholder="name@college.edu.in"><span class="hint" id="emailHint"></span></div>
-      <div class="field" id="instField"><label for="instText">College</label><input type="text" id="instText" list="instList" autocomplete="off" maxlength="120" placeholder="Choose, or type your college"><datalist id="instList"></datalist><span class="hint" id="instNote">Not in the list? Type its full name and NGRM will add it.</span></div>
+      <div class="field" id="instField"><label for="instText">College</label><input type="text" id="instText" autocomplete="off" maxlength="120" placeholder="Type the name of your college"><span class="hint" id="instNote" role="status">Type its name. If NGRM does not have it yet, it is added.</span></div>
       <div class="field" id="cityField" hidden><label for="instCity">Which city is your college in?</label><input type="text" id="instCity" maxlength="60" autocomplete="address-level2"></div>
       <div class="field" id="orgField" hidden><label for="org">Company name</label><input type="text" id="org" autocomplete="organization" maxlength="160"></div>
       <div class="field"><label for="password">Choose a password</label><input type="password" id="password" autocomplete="new-password" maxlength="200" aria-describedby="pwHint"><span class="hint" id="pwHint">At least 10 characters. Three or four unrelated words work well.</span></div>
@@ -53,21 +53,30 @@
     return N.api('GET', '/api/auth/sign-up-options').then(function (o) {
       if (!o.open) { $('#form').hidden = true; $('#closed').hidden = false; return; }
       domains = o.domains || [];
-      colleges = o.institutions; $('#instList').innerHTML = colleges.map(function (i) { return '<option value="' + esc(i.name + ', ' + i.city) + '">'; }).join('');
+      colleges = o.institutions;
       shape();
     });
   }).catch(function (x) { err(x.message); });
   $('#role').addEventListener('change', shape);
   // A typed college that matches the list uses it; anything else is added as new and the city is asked for.
+  function full(i) { return i.name.toLowerCase().slice(-i.city.length) === i.city.toLowerCase() ? i.name : i.name + ', ' + i.city; }
   function college() {
     var t = $('#instText').value.replace(/\s+/g, ' ').trim().toLowerCase();
-    var hit = colleges.filter(function (i) { return (i.name + ', ' + i.city).toLowerCase() === t || i.name.toLowerCase() === t; })[0];
-    return hit ? { institutionId: hit.id } : { institutionName: $('#instText').value, institutionCity: $('#instCity').value };
+    var hit = colleges.filter(function (i) { return full(i).toLowerCase() === t || i.name.toLowerCase() === t; })[0];
+    // A few letters are enough when they fit only one college NGRM already has.
+    if (!hit && t.length >= 4) { var m = colleges.filter(function (i) { return full(i).toLowerCase().indexOf(t) >= 0; }); if (m.length === 1) hit = m[0]; }
+    // Words that fit several known colleges are not enough to tell which one, and must not create a new one by accident.
+    var several = !hit && t.length >= 2 ? colleges.filter(function (i) { return full(i).toLowerCase().indexOf(t) >= 0; }) : [];
+    return hit ? { institutionId: hit.id, known: hit } : { institutionName: $('#instText').value, institutionCity: $('#instCity').value, several: several };
   }
-  $('#instText').addEventListener('input', function () { var c = college(), typed = $('#instText').value.trim().length >= 3 && !c.institutionId; $('#cityField').hidden = !typed; $('#instNote').textContent = typed ? 'This college is new to NGRM. It will be added, and the NGRM admin will confirm it.' : 'Not in the list? Type its full name and NGRM will add it.'; });
+  $('#instText').addEventListener('change', function () { var c = college(); if (c.known) { $('#instText').value = full(c.known); $('#instText').dispatchEvent(new Event('input')); } });
+  $('#instText').addEventListener('input', function () { var c = college(), typed = $('#instText').value.trim().length >= 3 && !c.institutionId; $('#cityField').hidden = !typed; var t = $('#instText').value.trim().toLowerCase(), close = t.length >= 2 ? colleges.filter(function (i) { return full(i).toLowerCase().indexOf(t) >= 0; }).slice(0, 3) : [];
+    $('#instNote').textContent = c.known ? 'NGRM has this college: ' + full(c.known) + '.' : close.length ? 'NGRM has: ' + close.map(function (i) { return full(i); }).join(' · ') + '. Keep typing until it is the one you mean.' : typed ? 'This college is new to NGRM. It will be added, and the NGRM admin will confirm it.' : 'Type its name. If NGRM does not have it yet, it is added.'; });
   $('#form').addEventListener('submit', function (e) {
     e.preventDefault(); err('');
     if ($('#password').value !== $('#password2').value) return err('The two passwords do not match.');
+    var col = college(), needsCollege = !$('#instField').hidden;
+    if (needsCollege && col.several && col.several.length) return err('NGRM has more than one college like “' + $('#instText').value.trim() + '”: ' + col.several.slice(0, 4).map(full).join(' · ') + '. Type the full name of yours.');
     var email = $('#email').value.trim();
     N.api('POST', '/api/auth/sign-up', { role: $('#role').value, name: $('#name').value, email: email, institutionId: college().institutionId, institutionName: college().institutionName, institutionCity: college().institutionCity, orgName: $('#org').value, password: $('#password').value }).then(function (r) {
       if (r.user) { location.href = N.HOME[r.user.role]; return; }
