@@ -18,7 +18,8 @@
         <span class="hint" id="roleHint"></span></div>
       <div class="field"><label for="name">Full name</label><input type="text" id="name" autocomplete="name" maxlength="120"></div>
       <div class="field"><label for="email" id="emailLbl">Email</label><input type="text" id="email" inputmode="email" autocomplete="email" placeholder="name@college.edu.in"><span class="hint" id="emailHint"></span></div>
-      <div class="field" id="instField"><label for="inst">College</label><select id="inst"></select><span class="hint">Not listed? Your college has not joined yet. Ask its placement cell to contact the NGRM team.</span></div>
+      <div class="field" id="instField"><label for="instText">College</label><input type="text" id="instText" list="instList" autocomplete="off" maxlength="120" placeholder="Choose, or type your college"><datalist id="instList"></datalist><span class="hint" id="instNote">Not in the list? Type its full name and NGRM will add it.</span></div>
+      <div class="field" id="cityField" hidden><label for="instCity">Which city is your college in?</label><input type="text" id="instCity" maxlength="60" autocomplete="address-level2"></div>
       <div class="field" id="orgField" hidden><label for="org">Company name</label><input type="text" id="org" autocomplete="organization" maxlength="160"></div>
       <div class="field"><label for="password">Choose a password</label><input type="password" id="password" autocomplete="new-password" maxlength="200" aria-describedby="pwHint"><span class="hint" id="pwHint">At least 10 characters. Three or four unrelated words work well.</span></div>
       <div class="field"><label for="password2">Type it again</label><input type="password" id="password2" autocomplete="new-password" maxlength="200"></div>
@@ -38,7 +39,7 @@
 <script src="assets/app.js"></script>
 <script>
 (function () {
-  var N = NGRM, $ = N.$, esc = N.esc, domains = [];
+  var N = NGRM, $ = N.$, esc = N.esc, domains = [], colleges = [];
   var HINT = { student: 'Your account is ready as soon as you confirm your email.', mentor: 'An admin approves mentor accounts before first sign-in.', college_admin: 'An admin approves placement cell accounts before first sign-in.', employer: 'An admin approves employer accounts before first sign-in.', researcher: 'An admin approves researcher accounts before first sign-in.' };
   function err(m) { var e = $('#err'); e.hidden = !m; e.textContent = m || ''; }
   function shape() {
@@ -52,16 +53,23 @@
     return N.api('GET', '/api/auth/sign-up-options').then(function (o) {
       if (!o.open) { $('#form').hidden = true; $('#closed').hidden = false; return; }
       domains = o.domains || [];
-      $('#inst').innerHTML = '<option value="">Choose your college</option>' + o.institutions.map(function (i) { return '<option value="' + i.id + '">' + esc(i.name) + ', ' + esc(i.city) + '</option>'; }).join('');
+      colleges = o.institutions; $('#instList').innerHTML = colleges.map(function (i) { return '<option value="' + esc(i.name + ', ' + i.city) + '">'; }).join('');
       shape();
     });
   }).catch(function (x) { err(x.message); });
   $('#role').addEventListener('change', shape);
+  // A typed college that matches the list uses it; anything else is added as new and the city is asked for.
+  function college() {
+    var t = $('#instText').value.replace(/\s+/g, ' ').trim().toLowerCase();
+    var hit = colleges.filter(function (i) { return (i.name + ', ' + i.city).toLowerCase() === t || i.name.toLowerCase() === t; })[0];
+    return hit ? { institutionId: hit.id } : { institutionName: $('#instText').value, institutionCity: $('#instCity').value };
+  }
+  $('#instText').addEventListener('input', function () { var c = college(), typed = $('#instText').value.trim().length >= 3 && !c.institutionId; $('#cityField').hidden = !typed; $('#instNote').textContent = typed ? 'This college is new to NGRM. It will be added, and the NGRM admin will confirm it.' : 'Not in the list? Type its full name and NGRM will add it.'; });
   $('#form').addEventListener('submit', function (e) {
     e.preventDefault(); err('');
     if ($('#password').value !== $('#password2').value) return err('The two passwords do not match.');
     var email = $('#email').value.trim();
-    N.api('POST', '/api/auth/sign-up', { role: $('#role').value, name: $('#name').value, email: email, institutionId: $('#inst').value, orgName: $('#org').value, password: $('#password').value }).then(function (r) {
+    N.api('POST', '/api/auth/sign-up', { role: $('#role').value, name: $('#name').value, email: email, institutionId: college().institutionId, institutionName: college().institutionName, institutionCity: college().institutionCity, orgName: $('#org').value, password: $('#password').value }).then(function (r) {
       if (r.user) { location.href = N.HOME[r.user.role]; return; }
       $('#form').hidden = true;
       if (r.pending) { $('#waiting').hidden = false; return; }

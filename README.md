@@ -13,7 +13,7 @@ Requires Node.js 22.13 or newer (tested on 22.13, 22.23 and 24). Nothing else is
 npm install
 cp .env.example .env      # demo settings are already on
 npm start                 # http://localhost:3000
-npm test                  # 76 tests
+npm test                  # 77 tests
 npm run seed              # wipe and reload the sample data
 ```
 
@@ -90,6 +90,16 @@ Target roles and programmes are not limited to a list. Anyone can pick a suggest
 - **Admins** see every typed role and programme with how much it is used, correct a role's skills and target levels, list it for everyone, or remove it when unused. A student's typed entries are visible only to them and to staff until an admin lists them. Skills lock once students have been assessed on them.
 - **Limits.** Matching is by keyword, so an unusual title can land in the wrong kind of work until the admin corrects it. The same job typed two ways ("Software Engineer", "Software Developer") is two roles; employers are pointed to the nearby one, but the two are not merged.
 
+## Typed and personal, everywhere
+
+- **No dropdowns or sliders are left.** Every former dropdown (year, evidence type, the mentor's student and skill pickers, admin choices, account type at sign-up) is a box you can pick from or type into; typing part of a choice is enough. Where the choices are fixed because the score or access depends on them (evidence type, account type, year), typing must match one of them and the box says so if it does not. Personality and career clarity are typed numbers.
+- **College at sign-up** can be typed. A college not in the list is added as "typed at sign-up" and the student gets in; it is offered to others only after the admin confirms it.
+- **In the student's own words.** On the score page a student can type their goal, interests, where they want to work, and up to eight other skills with their own rating. NGRM uses these to suggest roles ("From what you wrote"), to show how many openings are in their cities, and to tell them when an employer has asked for a skill they listed. The mentor sees all of it and can search mentees by any of it. None of it changes the score.
+- **Steps of their own.** A student can type any step into their plan, give it a time, and tick it off. It appears on the roadmap and to the mentor, and does not change the score.
+- **Employers** can type further skills they need, in their own words, on each requirement.
+- **A personal line on every page** greets the signed-in person by name and says what is theirs and what is waiting: for a student their programme, role, path and score and what the mentor still has to confirm; for a mentor what is waiting to verify, confirm and assess; for a placement cell, employer, researcher and admin their own counts.
+- **Limits.** Role ideas from typed text use keyword matching, so they can miss or misread unusual wording. Typed skills are matched to employer wording by exact words only ("Tally" matches "tally", not "Tally Prime").
+
 ## Scoring formula v0.3
 
 Eight factors: academic 20, technical/role skills 20, projects 15, experience 15, personality 10, communication 10, leadership 5, career clarity 5.
@@ -116,7 +126,7 @@ Eight factors: academic 20, technical/role skills 20, projects 15, experience 15
 
 ## Quality checks done
 
-- 76 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
+- 77 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
 - The tests pass on Node 22.13, 22.23 and 24. Node 22.12 and older cannot run the built-in database, and the server says so.
 - A browser walk-through of every page for all six roles (133 checks), at desktop and phone widths, with no server errors.
 - An automated accessibility scan (axe-core, WCAG 2.1 AA) of every page in normal and high-contrast mode: no violations. Keyboard-only use works.
@@ -137,6 +147,7 @@ Not yet tested, because they need real services: email delivery, the live Gemini
 | College | `GET /api/college/cohort?programme=`, `GET /api/college/intro-requests` |
 | Employer | `GET /api/employer/supply?role=`, `POST /api/employer/demand`, `DELETE /api/employer/demand/:id`, `GET/POST /api/employer/intros`, `GET /api/demand` |
 | Research | `GET /api/research/export` |
+| Typed details | `POST`, `PATCH`, `DELETE /api/me/steps`, `GET /api/me/today`, `POST /api/admin/orgs/:id/confirm` |
 | Typed roles and programmes | `POST /api/library/role`, `POST /api/library/programme`, `GET /api/library/suggest?programme=`, `GET /api/admin/library`, `PUT` and `DELETE /api/admin/library/roles/:key`, `PUT` and `DELETE /api/admin/library/programmes/:id` |
 | Admin | `GET /api/admin/people?q=`, `POST /api/admin/orgs`, `POST /api/admin/users`, `DELETE /api/admin/users/:id`, `GET /api/admin/audit`, `GET /api/admin/rules`, `PATCH /api/admin/rules/:id` |
 

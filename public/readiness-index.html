@@ -37,15 +37,26 @@
     <div class="form-group"><fieldset><legend>Role skills (0–100)</legend><p class="small muted" style="margin:0 0 0.6rem">Rate yourself honestly: your ratings shape your plan. A skill counts towards your score once your college has assessed it.</p><div id="skillsBox" style="display:grid;gap:0.75rem"></div></fieldset></div>
     <div class="form-group"><fieldset id="psyBox"><legend>Personality (Big Five)</legend>
       <p class="small muted" id="psyNote" style="margin-top:-0.4rem">Your results (0–100 each) from a Big Five questionnaire given by your college or counsellor. It counts for 10% of your score once all five are entered.</p>
-      <div class="field"><label for="o-o">Openness</label><div class="slider"><input type="range" id="o-o" min="0" max="100"><output for="o-o"></output></div></div>
-      <div class="field"><label for="o-c">Conscientiousness</label><div class="slider"><input type="range" id="o-c" min="0" max="100"><output for="o-c"></output></div></div>
-      <div class="field"><label for="o-e">Extraversion</label><div class="slider"><input type="range" id="o-e" min="0" max="100"><output for="o-e"></output></div></div>
-      <div class="field"><label for="o-a">Agreeableness</label><div class="slider"><input type="range" id="o-a" min="0" max="100"><output for="o-a"></output></div></div>
-      <div class="field"><label for="o-n">Neuroticism</label><div class="slider"><input type="range" id="o-n" min="0" max="100"><output for="o-n"></output></div></div>
+      <div class="field"><label for="o-o">Openness</label><input type="number" id="o-o" min="0" max="100" step="1" inputmode="numeric" placeholder="Type a number from 0 to 100"></div>
+      <div class="field"><label for="o-c">Conscientiousness</label><input type="number" id="o-c" min="0" max="100" step="1" inputmode="numeric" placeholder="Type a number from 0 to 100"></div>
+      <div class="field"><label for="o-e">Extraversion</label><input type="number" id="o-e" min="0" max="100" step="1" inputmode="numeric" placeholder="Type a number from 0 to 100"></div>
+      <div class="field"><label for="o-a">Agreeableness</label><input type="number" id="o-a" min="0" max="100" step="1" inputmode="numeric" placeholder="Type a number from 0 to 100"></div>
+      <div class="field"><label for="o-n">Neuroticism</label><input type="number" id="o-n" min="0" max="100" step="1" inputmode="numeric" placeholder="Type a number from 0 to 100"></div>
     </fieldset></div>
     <div class="form-group"><fieldset><legend>Communication and direction</legend>
       <div class="field"><label for="f-comm">College communication assessment</label><input type="number" id="f-comm" min="0" max="100" placeholder="Not assessed yet" aria-describedby="commHint" disabled><span class="hint" id="commHint">Leave blank until you take it. Once your mentor records the result, it is locked.</span></div>
-      <div class="field"><label for="f-clarity">How sure are you about your career direction?</label><div class="slider"><input type="range" id="f-clarity" min="0" max="100"><output for="f-clarity"></output></div></div>
+      <div class="field"><label for="f-clarity">How sure are you about your career direction?</label><input type="number" id="f-clarity" min="0" max="100" step="1" inputmode="numeric" placeholder="Type a number from 0 to 100"></div>
+    </fieldset></div>
+    <div class="form-group"><fieldset><legend>In your own words</legend>
+      <p class="small muted" style="margin:0 0 0.6rem">Type as much or as little as you like. NGRM uses it to suggest roles, show openings in your cities and tell your mentor what you want. None of it changes your score.</p>
+      <div class="field"><label for="w-goal">What do you want to be doing after you graduate?</label><input type="text" id="w-goal" maxlength="200" placeholder="For example: working with children who struggle at school"></div>
+      <div class="field"><label for="w-interests">What are you interested in or good at?</label><input type="text" id="w-interests" maxlength="200" placeholder="Separate with commas: writing, cricket analytics, teaching"></div>
+      <div id="wordIdeas" class="small" style="display:flex;gap:0.35rem;flex-wrap:wrap;align-items:center"></div>
+      <div class="field"><label for="w-cities">Where would you like to work?</label><input type="text" id="w-cities" maxlength="120" placeholder="For example: Bengaluru, Mysuru"></div>
+      <div class="field"><label for="w-skill">Other skills you have</label>
+        <div style="display:flex;gap:0.4rem"><input type="text" id="w-skill" maxlength="40" placeholder="Type a skill, for example Tally" style="flex:1 1 auto;min-width:0"><input type="number" id="w-level" min="0" max="100" placeholder="0–100" aria-label="Your level in this skill, 0 to 100" style="width:5.5rem"><button class="btn btn-secondary btn-sm" type="button" id="w-add">Add</button></div>
+        <span class="hint">Your own rating. Your mentor sees these; they do not count towards your score.</span>
+        <ul id="w-skills" class="small" style="list-style:none;margin:0.4rem 0 0;padding:0;display:flex;flex-wrap:wrap;gap:0.35rem"></ul></div>
     </fieldset></div>
     <p class="small muted" id="saveState" aria-live="polite">Changes save automatically.</p>
   </form>
@@ -107,6 +118,7 @@
     }).catch(function () { $('#roleIdeas').innerHTML = ''; });
   }
   function fill(p) {
+    var m = data.mine || {}; $('#w-goal').value = m.goal || ''; $('#w-interests').value = m.interests || ''; $('#w-cities').value = m.cities || ''; own = (m.ownSkills || []).slice(); ownList();
     $('#f-prog').value = p.prog; progBox.set(p.prog); ideas(p.prog);
     years(p.prog, p.year); $('#f-cgpa').value = p.cgpa == null ? '' : p.cgpa;
     $('#f-role').value = p.role; roleBox.set(p.role);
@@ -114,13 +126,19 @@
     // Sliders start unset when no results are stored: nothing is saved until all five are set by the student.
     var o = p.ocean || { o: 50, c: 50, e: 50, a: 50, n: 50 };
     touched = p.ocean ? TRAITS.slice() : [];
-    TRAITS.forEach(function (k) { $('#o-' + k).value = o[k]; $('#o-' + k).disabled = !consents.psychometric; });
+    TRAITS.forEach(function (k) { $('#o-' + k).value = p.ocean ? o[k] : ''; $('#o-' + k).disabled = !consents.psychometric; });
     $('#psyNote').innerHTML = consents.psychometric ? 'Your results (0–100 each) from a Big Five questionnaire given by your college or counsellor. It counts for 10% of your score once all five are entered.' : 'You haven’t agreed to store questionnaire results, so this factor is left out of your score. You can change that on <a href="skill-credentials.html">Evidence &amp; privacy</a>.';
     $('#f-comm').value = p.comm == null ? '' : p.comm; $('#f-comm').disabled = true;
-    $('#commHint').innerHTML = p.commVerified ? '<span class="chip success">Verified by assessment</span> Recorded by your mentor.' : 'Your mentor records this after the college assessment. Until then it is left out of your score.'; $('#f-clarity').value = p.clarity == null ? 50 : p.clarity;
+    $('#commHint').innerHTML = p.commVerified ? '<span class="chip success">Verified by assessment</span> Recorded by your mentor.' : 'Your mentor records this after the college assessment. Until then it is left out of your score.'; $('#f-clarity').value = p.clarity == null ? '' : p.clarity;
     outputs();
   }
-  var TRAITS = ['o', 'c', 'e', 'a', 'n'], touched = [], clarityTouched = false;
+  var TRAITS = ['o', 'c', 'e', 'a', 'n'], touched = [], clarityTouched = false, own = [];
+  function ownList() {
+    $('#w-skills').innerHTML = own.map(function (s, i) { return '<li class="chip">' + esc(s.name) + ' · ' + s.level + ' <button type="button" class="btn-link" data-own-del="' + i + '" aria-label="Remove ' + esc(s.name) + '">×</button></li>'; }).join('');
+  }
+  function words(d) {
+    $('#wordIdeas').innerHTML = d.interestRoles && d.interestRoles.length ? '<span class="muted">From what you wrote:</span> ' + d.interestRoles.map(function (r) { return '<button type="button" class="chip" data-idea="' + esc(r.label) + '" title="Because you wrote “' + esc(r.from) + '”" style="cursor:pointer;border:1px solid var(--border)">' + esc(r.label) + '</button>'; }).join('') : '';
+  }
   function outputs() {
     $$('#profileForm output').forEach(function (o) { var id = o.getAttribute('for'), i = document.getElementById(id); if (!i) return;
       o.textContent = (/^o-/.test(id) && touched.indexOf(id.slice(2)) < 0) || (id === 'f-clarity' && !clarityTouched && data && data.profile.clarity == null) ? 'not set' : i.value; });
@@ -128,7 +146,7 @@
   }
   function read() {
     var role = $('#f-role').value;
-    return { prog: $('#f-prog').value, year: +$('#f-year').value, cgpa: $('#f-cgpa').value, role: role,
+    return { goal: $('#w-goal').value, interests: $('#w-interests').value, cities: $('#w-cities').value, ownSkills: own, prog: $('#f-prog').value, year: +$('#f-year').value, cgpa: $('#f-cgpa').value, role: role,
       skills: [0, 1, 2, 3].map(function (i) { var el = $('#sk-' + i); return el ? el.value : 50; }),
       ocean: !consents.psychometric ? null : touched.length === 5 ? { o: $('#o-o').value, c: $('#o-c').value, e: $('#o-e').value, a: $('#o-a').value, n: $('#o-n').value } : undefined,
       // Career clarity is sent only once the student has set it, so an untouched slider is never saved as an answer.
@@ -140,6 +158,7 @@
     $('#sName').textContent = me.name;
     var prog = meta.programmes.filter(function (x) { return x.id === p.prog; })[0];
     $('#sMeta').textContent = (prog ? prog.label : '') + ' · ' + N.ordinal(p.year) + ' year · Target: ' + meta.roles[p.role].label;
+    words(data);
     $('#sPath').innerHTML = data.path ? '<span class="chip">' + esc(data.path.label) + '</span> ' + esc(data.path.text) : '';
     $('#sBand').innerHTML = '<span class="chip ' + N.bandCls[data.band.k] + '">' + data.band.label + '</span>' + (s.flags.cgpaMissing ? ' <span class="chip warning">CGPA missing</span>' : s.flags.cgpaUnconfirmed ? ' <span class="chip warning">CGPA waiting for confirmation</span>' : '') + (s.flags.skillsUnassessed ? ' <span class="chip">' + s.skillsAssessed + ' of ' + (s.skillsAssessed + s.flags.skillsUnassessed) + ' skills assessed</span>' : '') +
       (s.completeness < 100 ? '<p class="small muted" style="margin:0.4rem 0 0">Based on ' + s.completeness + '% of the formula, scaled to 100. Not yet rated: ' + s.notRated.map(function (k) { return meta.factors.filter(function (F) { return F.k === k; })[0].label; }).join(', ') + '.</p>' : '');
@@ -193,12 +212,24 @@
     progBox = N.typeable($('#f-progText'), { kind: 'programme', meta: meta, onPick: pickProg, note: $('#progNote') });
     roleBox = N.typeable($('#f-roleText'), { kind: 'role', meta: meta, onPick: pickRole, note: $('#roleNote') });
     $('#roleIdeas').addEventListener('click', function (e) { var b = e.target.closest('[data-idea]'); if (b) roleBox.choose(b.dataset.idea); });
+    $('#wordIdeas').addEventListener('click', function (e) { var b = e.target.closest('[data-idea]'); if (b) { roleBox.choose(b.dataset.idea); $('#f-roleText').scrollIntoView({ block: 'center' }); } });
+    function addOwn() {
+      var name = $('#w-skill').value.replace(/\s+/g, ' ').trim(), lv = $('#w-level').value === '' ? 50 : Math.max(0, Math.min(100, Math.round(+$('#w-level').value || 0)));
+      if (name.length < 2) { $('#w-skill').focus(); return; }
+      if (own.length >= 8) { N.toast('You can list up to 8 skills of your own. Remove one to add another.'); return; }
+      if (!own.some(function (s) { return s.name.toLowerCase() === name.toLowerCase(); })) own.push({ name: name, level: lv });
+      $('#w-skill').value = ''; $('#w-level').value = ''; ownList(); save().then(function () { own = (data.mine.ownSkills || []).slice(); ownList(); }).catch(function () {}); $('#w-skill').focus();
+    }
+    $('#w-add').addEventListener('click', addOwn);
+    $('#w-skill').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); addOwn(); } });
+    $('#w-level').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); addOwn(); } });
+    $('#w-skills').addEventListener('click', function (e) { var b = e.target.closest('[data-own-del]'); if (b) { own.splice(+b.dataset.ownDel, 1); ownList(); save().catch(function () {}); } });
     if (!consents.profile) {
       N.consentPanel($('#gate'), meta, consents, { requireProfile: true, onDone: function (c) { consents = c; start(); } });
     } else start();
   });
   $('#profileForm').addEventListener('input', function (e) {
-    if (e.target.id === 'f-progText' || e.target.id === 'f-roleText') return; // these save when a role or programme is chosen
+    if (e.target.id === 'f-progText' || e.target.id === 'f-roleText' || e.target.id === 'w-skill' || e.target.id === 'w-level' || /Text$/.test(e.target.id)) return; // these save when a choice is made or Add is pressed
     if (e.target.id === 'f-clarity') clarityTouched = true;
     if (/^o-[ocean]$/.test(e.target.id) && touched.indexOf(e.target.id.slice(2)) < 0) touched.push(e.target.id.slice(2));
     outputs(); clearTimeout(timer); timer = setTimeout(save, 450);

@@ -21,6 +21,11 @@ function migrate(db) {
   // Formula v0.2: a communication score counts only when a mentor recorded it, so self-entered ones are cleared.
   db.exec("UPDATE profiles SET comm = NULL WHERE comm IS NOT NULL AND user_id NOT IN (SELECT user_id FROM evidence WHERE type = 'assessment' AND status = 'verified' AND skill_role = 'communication')");
   if (!db.prepare('PRAGMA table_info(passwords)').all().some((c) => c.name === 'must_change')) db.exec('ALTER TABLE passwords ADD COLUMN must_change INTEGER NOT NULL DEFAULT 0');
+  // Typed-in details added later: older databases get the columns here.
+  const addCol = (table, col, def) => { if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`); };
+  addCol('institutions', 'pending', 'INTEGER NOT NULL DEFAULT 0');
+  for (const c of ['goal', 'interests', 'cities', 'own_skills_json']) addCol('profiles', c, 'TEXT');
+  addCol('demand_posts', 'extra_json', 'TEXT');
   // Formula v0.3: a CGPA counts only once a mentor confirms it. Existing ones start unconfirmed.
   if (!db.prepare('PRAGMA table_info(profiles)').all().some((c) => c.name === 'cgpa_confirmed')) db.exec('ALTER TABLE profiles ADD COLUMN cgpa_confirmed INTEGER NOT NULL DEFAULT 0');
   for (const c of ['file_path', 'file_type']) if (!cols.includes(c)) db.exec(`ALTER TABLE evidence ADD COLUMN ${c} TEXT`);

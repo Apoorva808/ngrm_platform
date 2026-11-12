@@ -1007,3 +1007,63 @@ test('role and programme matching is fixed and predictable', () => {
   // Every family has four skills and four sensible targets.
   for (const f of L.FAMILIES.concat([L.GENERAL])) { assert.equal(f.skills.length, 4, f.k); assert.equal(new Set(f.skills).size, 4, f.k); assert.ok(f.target.every((t) => t >= 40 && t <= 90), f.k); }
 });
+
+test('typed everywhere: own words, own steps, typed college, typed employer skills, and a personal summary', async () => {
+  const db2 = open(':memory:'); seed(db2); const h2 = helpers(db2);
+  const s = createApp(db2, { demoMode: true, sendCode: () => {}, uploadDir: uploads }).listen(0); await new Promise((r) => s.once('listening', r));
+  const b2 = 'http://localhost:' + s.address().port;
+  const who = async (email) => { let cookie = ''; const c = async (method, url, body) => { const r = await fetch(b2 + url, { method, headers: { 'content-type': 'application/json', cookie }, body: body ? JSON.stringify(body) : undefined });
+    const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0]; let json = null; try { json = await r.json(); } catch {} return { status: r.status, body: json }; }; if (email) await c('POST', '/api/auth/demo', { email }); return c; };
+  try {
+    const ananya = await who('ananya@demo.ngrm.in'), mentor = await who('kavya@demo.ngrm.in'), employer = await who('recruiter@demo.ngrm.in'), admin = await who('admin@demo.ngrm.in');
+    const before = (await ananya('GET', '/api/me/profile')).body.score.index;
+    // In her own words: kept, cleaned, and never part of the score.
+    const saved = (await ananya('PUT', '/api/me/profile', { goal: '  I want to teach   children ', interests: 'writing, <b>cricket</b>', cities: 'Mysuru, Bengaluru',
+      ownSkills: [{ name: 'Tally', level: 70 }, { name: 'tally', level: 10 }, { name: 'x' }, { name: 'Spoken Kannada', level: 400 }] })).body;
+    assert.equal(saved.mine.goal, 'I want to teach children'); assert.ok(!/[<>]/.test(saved.mine.interests));
+    assert.deepEqual(saved.mine.ownSkills, [{ name: 'Tally', level: 70 }, { name: 'Spoken Kannada', level: 100 }]);
+    assert.equal(saved.score.index, before, 'typed details never change the score');
+    assert.ok(saved.interestRoles.some((r) => r.label === 'Teacher'), JSON.stringify(saved.interestRoles));
+    assert.equal((await ananya('PUT', '/api/me/profile', { clarity: 60 })).body.mine.goal, 'I want to teach children', 'left alone when not sent');
+    // Steps of her own.
+    assert.equal((await ananya('POST', '/api/me/steps', { title: '' })).status, 400);
+    const st = (await ananya('POST', '/api/me/steps', { title: 'Finish my portfolio website', slot: 'winter' })).body.own;
+    assert.equal(st.length, 1); assert.equal(st[0].slot, 'winter');
+    assert.equal((await ananya('PATCH', '/api/me/steps/' + st[0].id, { done: true })).body.own[0].done, true);
+    assert.equal((await mentor('PATCH', '/api/me/steps/' + st[0].id, { done: false })).status, 403);
+    assert.equal((await ananya('GET', '/api/me/recommendations')).body.own.length, 1);
+    assert.equal((await ananya('GET', '/api/me/profile')).body.score.index, (await ananya('GET', '/api/me/profile')).body.score.index);
+    // The mentor sees it all in the student's words.
+    const id = h2.get("SELECT id FROM users WHERE email = 'ananya@demo.ngrm.in'").id;
+    const w = (await mentor('GET', '/api/mentor/mentees')).body.find((m) => m.id === id).inWords;
+    assert.equal(w.goal, 'I want to teach children'); assert.equal(w.steps[0].title, 'Finish my portfolio website'); assert.equal(w.ownSkills.length, 2);
+    // An employer types what else they need; the student is told what matches her.
+    assert.equal((await employer('POST', '/api/employer/demand', { role: 'hr', skills: [], extraSkills: '', openings: 2 })).status, 400);
+    assert.equal((await employer('POST', '/api/employer/demand', { role: 'hr', skills: [], extraSkills: 'Tally, spoken kannada, <i>x</i>, Night shifts', openings: 6, city: 'Mysuru' })).status, 201);
+    const sum = (await ananya('GET', '/api/demand/summary?role=hr')).body;
+    assert.equal(sum.personal.openingsInMyCities >= 6, true);
+    assert.deepEqual(sum.personal.alsoAsked.filter((k) => k.have).map((k) => k.name).sort(), ['Tally', 'spoken kannada']);
+    assert.equal((await employer('GET', '/api/demand/summary?role=hr')).body.personal, null);
+    // Sign-up with a college typed in.
+    const guest = await who();
+    const up = await guest('POST', '/api/auth/sign-up', { role: 'student', name: 'Irfan Khan', email: 'irfan@newcollege.example', institutionName: 'New Horizon Arts College', institutionCity: 'Hubballi', password: 'small river stone path' });
+    assert.equal(up.status, 200);
+    const col = h2.get("SELECT * FROM institutions WHERE name = 'New Horizon Arts College'"); assert.equal(col.pending, 1); assert.equal(col.city, 'Hubballi');
+    assert.ok(!(await guest('GET', '/api/auth/sign-up-options')).body.institutions.some((i) => i.id === col.id), 'not offered to others until confirmed');
+    assert.equal((await (await who())('POST', '/api/auth/sign-up', { role: 'student', name: 'Second Student', email: 'second@newcollege.example', institutionName: 'new horizon arts college', password: 'small river stone path' })).status, 200);
+    assert.equal(h2.get("SELECT COUNT(*) AS n FROM institutions WHERE lower(name) = 'new horizon arts college'").n, 1, 'the same typed name is the same college');
+    assert.equal((await (await who())('POST', '/api/auth/sign-up', { role: 'student', name: 'No College', email: 'none@x.example', password: 'small river stone path' })).status, 400);
+    assert.equal((await (await who())('POST', '/api/auth/sign-up', { role: 'student', name: 'Weak', email: 'weak@x.example', institutionName: 'Should Not Be Created College', password: 'password123' })).status, 400);
+    assert.equal(h2.get("SELECT COUNT(*) AS n FROM institutions WHERE name LIKE 'Should Not%'").n, 0, 'a failed sign-up adds no college');
+    assert.equal((await ananya('POST', '/api/admin/orgs/' + col.id + '/confirm', {})).status, 403);
+    assert.equal((await admin('POST', '/api/admin/orgs/' + col.id + '/confirm', { city: 'Hubballi-Dharwad' })).status, 200);
+    assert.ok((await guest('GET', '/api/auth/sign-up-options')).body.institutions.some((i) => i.id === col.id && i.city === 'Hubballi-Dharwad'));
+    // A personal summary for each kind of account.
+    const today = async (c) => (await c('GET', '/api/me/today')).body;
+    const a = await today(ananya); assert.equal(a.first, 'Ananya'); assert.match(a.lines.join(' '), /aiming for HR \/ People Analytics Associate/);
+    const m = await today(mentor); assert.equal(m.first, 'Kavya'); assert.match(m.lines.join(' '), /You mentor \d+ students/);
+    assert.match((await today(employer)).lines.join(' '), /requirement/); assert.match((await today(admin)).lines.join(' '), /Waiting for you|Nothing is waiting/);
+    assert.match((await today(await who('placement@demo.ngrm.in'))).lines.join(' '), /students on NGRM/); assert.match((await today(await who('research@demo.ngrm.in'))).lines.join(' '), /baseline/);
+    assert.equal((await (await who())('GET', '/api/me/today')).status, 401);
+  } finally { s.close(); }
+});

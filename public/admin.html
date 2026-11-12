@@ -114,7 +114,7 @@
     return N.api('GET', '/api/admin/people?q=' + encodeURIComponent($('#q').value.trim())).then(function (d) {
       var n = {}; d.roles.forEach(function (r) { n[r.role] = r.n; });
       $('#kpis').innerHTML = ['student', 'mentor', 'college_admin', 'employer'].map(function (k) { return '<div class="kpi"><b>' + (n[k] || 0) + '</b><span>' + ROLE[k] + '</span></div>'; }).join('');
-      $('#orgs').innerHTML = '<div><b class="small">Colleges</b><ul class="small" style="margin:0.25rem 0 0;padding-left:1.1rem">' + d.institutions.map(function (i) { return '<li>' + esc(i.name) + ' · ' + i.students + ' students</li>'; }).join('') + '</ul></div>' +
+      $('#orgs').innerHTML = '<div><b class="small">Colleges</b><ul class="small" style="margin:0.25rem 0 0;padding-left:1.1rem">' + d.institutions.map(function (i) { return '<li>' + esc(i.name) + (i.city ? ', ' + esc(i.city) : '') + ' · ' + i.students + ' students' + (i.pending ? ' · <b>typed at sign-up</b> <button class="btn-link" type="button" data-college="' + i.id + '">Confirm this college</button>' : '') + '</li>'; }).join('') + '</ul></div>' +
         '<div><b class="small">Employers</b><ul class="small" style="margin:0.25rem 0 0;padding-left:1.1rem">' + d.employers.map(function (e) { return '<li>' + esc(e.name) + '</li>'; }).join('') + '</ul></div>';
       $('#recent').innerHTML = d.recent.map(function (u) { return '<tr><td>' + esc(u.name) + '</td><td>' + esc(u.email) + '</td><td>' + esc(u.role) + '</td><td>' + esc(u.org || '—') + '</td><td>' + (u.role === 'student' ? '<form data-mentor="' + u.id + '" novalidate style="display:flex;gap:0.3rem"><input type="email" value="' + esc(u.mentor || '') + '" placeholder="No mentor" aria-label="Mentor email for ' + esc(u.name) + '" style="min-width:11rem"><button class="btn btn-secondary btn-sm" type="submit">Save</button></form>' : '—') + '</td><td>' + (u.id === me.id ? '' : '<button class="btn-link" type="button" data-reset="' + u.id + '" data-name="' + esc(u.name) + '">Reset password</button> · <button class="btn-link" type="button" data-remove="' + u.id + '" data-name="' + esc(u.name) + '">Remove</button>') + '</td></tr>'; }).join('') || '<tr><td colspan="6" class="muted">No matching accounts.</td></tr>';
     });
@@ -276,6 +276,8 @@
       N.api('POST', '/api/admin/signups/decide', { email: em, approve: yes }).then(function () { N.toast(yes ? 'Approved. ' + em + ' can now sign in.' : 'Declined ' + em + '.'); loadSignups(); loadPeople(); loadAudit(); }).catch(fail);
       return;
     }
+    var col = e.target.closest('[data-college]');
+    if (col) { N.api('POST', '/api/admin/orgs/' + col.dataset.college + '/confirm', {}).then(function () { N.toast('College confirmed. It is now offered to everyone at sign-up.'); loadPeople(); }).catch(fail); return; }
     var rs = e.target.closest('[data-reset]');
     if (rs) {
       if (armed !== rs) { if (armed) armed.textContent = armed.hasAttribute('data-reset') ? 'Reset password' : 'Remove'; armed = rs; rs.textContent = 'Click again to reset ' + rs.dataset.name + '’s password'; return; }

@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS institutions (
   id          INTEGER PRIMARY KEY,
   name        TEXT NOT NULL,
   city        TEXT NOT NULL,
-  is_sample   INTEGER NOT NULL DEFAULT 1
+  is_sample   INTEGER NOT NULL DEFAULT 1,
+  pending     INTEGER NOT NULL DEFAULT 0    -- 1 = typed in by someone signing up; not offered to others until an admin confirms it
 );
 
 CREATE TABLE IF NOT EXISTS employers (
@@ -62,6 +63,16 @@ CREATE TABLE IF NOT EXISTS passwords (
   must_change INTEGER NOT NULL DEFAULT 0,   -- 1 for a temporary password handed out by an admin
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- Steps a student typed into their own plan. They are the student's own and never change the score.
+CREATE TABLE IF NOT EXISTS own_steps (
+  id          INTEGER PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title       TEXT NOT NULL,
+  slot        TEXT NOT NULL,
+  done        INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Target roles and programmes that someone typed in. A typed role takes its four skills from a role family
 -- (server/library.js); an admin can correct them. listed = 1 means it is offered to everyone as a suggestion.
 CREATE TABLE IF NOT EXISTS custom_roles (

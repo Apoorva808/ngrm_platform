@@ -61,7 +61,7 @@ const FAMILIES = [
   { k: 'founder', name: 'Founder / Entrepreneurship', kw: ['founder', 'co-founder', 'entrepreneur', 'startup', 'start-up', 'own business', 'self-employed', 'family business'],
     skills: ['Customer discovery', 'Business model design', 'Basic finance', 'Pitching'], target: [70, 65, 60, 70],
     project: 'Interview 20 potential users and turn what you learn into a one-page business model', internship: 'an internship at an early-stage startup or your college incubator' },
-  { k: 'teaching', name: 'Teacher', kw: ['teacher', 'teaching', 'professor', 'lecturer', 'tutor', 'educator', 'faculty', 'trainer', 'instructional', 'school', 'curriculum'],
+  { k: 'teaching', name: 'Teacher', kw: ['teach', 'teacher', 'teaching', 'professor', 'lecturer', 'tutor', 'educator', 'faculty', 'trainer', 'instructional', 'school', 'curriculum'],
     skills: ['Subject knowledge', 'Lesson planning', 'Classroom communication', 'Assessment and feedback'], target: [75, 65, 75, 65],
     project: 'Teach a four-session bridge course for juniors or a local school and collect feedback', internship: 'a teaching assistantship or school internship' },
   { k: 'research', name: 'Research Associate', kw: ['~research', '~researcher', '~scientist', 'phd', '~academic', 'research assistant', 'research associate', 'research fellow', 'policy researcher'],

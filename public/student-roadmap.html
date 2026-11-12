@@ -33,6 +33,16 @@
   <section class="card" aria-labelledby="mapTitle">
     <header><h2 id="mapTitle">Roadmap</h2><span class="small muted" id="gradNote"></span></header>
     <div class="timeline" id="timeline"></div>
+    <div style="border-top:1px solid var(--border);margin-top:1rem;padding-top:1rem">
+      <h3 style="font-size:1rem">Steps of your own</h3>
+      <p class="small muted" style="margin:0.2rem 0 0.6rem">Type anything you plan to do. It goes on your roadmap and your mentor can see it. Your own steps do not change your score.</p>
+      <form id="ownForm" novalidate style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:end">
+        <div class="field" style="flex:1 1 260px"><label for="own-title">What will you do?</label><input type="text" id="own-title" maxlength="120" placeholder="For example: finish my portfolio website"></div>
+        <div class="field" style="flex:0 1 190px"><label for="own-slot">When</label><select id="own-slot"></select></div>
+        <button class="btn btn-secondary" type="submit">Add to my plan</button>
+      </form>
+      <ul id="ownList" style="list-style:none;margin:0.75rem 0 0;padding:0;display:grid;gap:0.4rem"></ul>
+    </div>
     <div id="declined" style="margin-top:1rem"></div>
   </section>
   <section class="card" aria-labelledby="gapTitle">
@@ -75,6 +85,8 @@
           return '<div class="bar-row"><div class="lbl"><b>' + esc(k.name) + '</b></div><div class="track"><i style="width:' + Math.round(k.openings / max * 100) + '%"></i></div><span class="val">' + k.openings + ' open</span></div>' +
             (mine == null ? '' : '<p class="small muted" style="margin:-0.2rem 0 0.5rem">Your level: ' + mine + '/100' + (mine < 60 ? ' · worth building' : mine >= 70 ? ' · a strength' : '') + '</p>');
         }).join('') + '</div>' +
+        (d.personal && d.personal.openingsInMyCities != null ? '<p class="small" style="margin-top:0.6rem"><b>' + d.personal.openingsInMyCities + '</b> of these openings are in the places you said you want to work (' + esc(d.personal.cities) + ').</p>' : d.personal ? '<p class="small muted" style="margin-top:0.6rem">Type where you would like to work on My score, and this will show the openings there.</p>' : '') +
+        (d.personal && d.personal.alsoAsked.length ? '<p class="small">Employers also typed: ' + d.personal.alsoAsked.map(function (k) { return esc(k.name) + ' (' + k.openings + ' open' + (k.have ? ', <b>you listed this</b>' : '') + ')'; }).join(' · ') + '.</p>' : '') +
         '<p class="small muted">Latest: ' + d.latest.map(function (p) { return esc(p.employer) + (p.city ? ', ' + esc(p.city) : '') + ' · ' + p.openings; }).join(' | ') + '. These are posts made on this platform by partner employers, not a national job count.</p>';
     }).catch(function (e) { N.showError($('#demand'), e); });
   }
@@ -104,7 +116,11 @@
     var by = {}, declined = [];
     items.forEach(function (x) { if (x.student === 'accepted') (by[x.slot] = by[x.slot] || []).push(x); if (x.student === 'declined') declined.push(x); });
     $('#timeline').innerHTML = meta.slots.map(function (s) { var it = by[s.id] || [];
-      return '<div class="slot' + (it.length ? ' has' : '') + '"><b>' + s.label + '</b><span class="small muted">' + WHEN[s.id] + '</span>' + (it.length ? '<ul>' + it.map(function (x) { return '<li>' + esc(x.title) + '</li>'; }).join('') + '</ul>' : '<span class="small muted">Nothing planned yet</span>') + '</div>'; }).join('');
+      var mine = (data.own || []).filter(function (o) { return o.slot === s.id; });
+      return '<div class="slot' + (it.length || mine.length ? ' has' : '') + '"><b>' + s.label + '</b><span class="small muted">' + WHEN[s.id] + '</span>' + (it.length || mine.length ? '<ul>' + it.map(function (x) { return '<li>' + esc(x.title) + '</li>'; }).join('') + mine.map(function (o) { return '<li>' + (o.done ? '<s>' + esc(o.title) + '</s> · done' : esc(o.title)) + ' <span class="muted">(yours)</span></li>'; }).join('') + '</ul>' : '<span class="small muted">Nothing planned yet</span>') + '</div>'; }).join('');
+    $('#ownList').innerHTML = (data.own || []).map(function (o) { var S = meta.slots.filter(function (x) { return x.id === o.slot; })[0];
+      return '<li style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;border:1px solid var(--border);border-radius:var(--radius-md);padding:0.45rem 0.7rem"><label class="check" style="flex:1 1 220px"><input type="checkbox" data-own-done="' + o.id + '"' + (o.done ? ' checked' : '') + '> <span>' + (o.done ? '<s>' + esc(o.title) + '</s>' : esc(o.title)) + '</span></label><span class="small muted">' + esc(S ? S.label : '') + '</span><button type="button" class="btn-link" data-own-del="' + o.id + '">Remove</button></li>'; }).join('');
+    if (!$('#own-slot').options.length) $('#own-slot').innerHTML = meta.slots.map(function (x) { return '<option value="' + x.id + '">' + esc(x.label) + '</option>'; }).join('');
     var prog = meta.programmes.filter(function (p) { return p.id === data.programme; })[0];
     $('#gradNote').textContent = prog ? 'Graduating around May ' + (academicYearStart + (prog.years - data.year) + 1) : '';
     $('#declined').innerHTML = declined.length ? '<p class="small muted">Turned down: ' + declined.map(function (x) { return esc(x.title); }).join(' · ') + '. Your mentor can see these but cannot change them.</p>' : '';
@@ -120,6 +136,10 @@
       N.toast(act === 'accept' ? 'Added to your roadmap.' : act === 'decline' ? 'Removed. No reason needed.' : 'Undone.'); return load();
     }).catch(function (x) { N.toast(x.message); });
   });
+  function ownDone(p) { p.then(function (r) { data.own = r.own; render(); }).catch(function (e) { N.toast(e.message); }); }
+  $('#ownForm').addEventListener('submit', function (e) { e.preventDefault(); var t = $('#own-title').value; ownDone(N.api('POST', '/api/me/steps', { title: t, slot: $('#own-slot').value }).then(function (r) { $('#own-title').value = ''; N.toast('Added to your plan.'); return r; })); });
+  $('#ownList').addEventListener('click', function (e) { var b = e.target.closest('[data-own-del]'); if (b) ownDone(N.api('DELETE', '/api/me/steps/' + b.dataset.ownDel)); });
+  $('#ownList').addEventListener('change', function (e) { var c = e.target.closest('[data-own-done]'); if (c) ownDone(N.api('PATCH', '/api/me/steps/' + c.dataset.ownDone, { done: c.checked })); });
   $('#gapToggle').addEventListener('click', function () { var on = this.getAttribute('aria-pressed') !== 'true'; this.setAttribute('aria-pressed', String(on)); this.textContent = on ? 'View as bars' : 'View as table'; $('#gapTableWrap').hidden = !on; $('#gapBars').hidden = on; });
   N.boot('plan', ['student']).then(function (ctx) {
     meta = ctx.meta;

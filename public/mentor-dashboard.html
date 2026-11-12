@@ -55,7 +55,7 @@
   </section>
   <section class="card" id="menteeCard" hidden aria-labelledby="mTitle">
     <header><h2 id="mTitle">My mentees</h2><span class="small muted">Visible only to the student’s own mentor</span></header>
-    <div class="field" style="max-width:420px;margin-bottom:0.75rem"><label for="menteeFind">Find a mentee</label><input type="text" id="menteeFind" autocomplete="off" placeholder="Type a name, programme or target role"></div>
+    <div class="field" style="max-width:420px;margin-bottom:0.75rem"><label for="menteeFind">Find a mentee</label><input type="text" id="menteeFind" autocomplete="off" placeholder="Type a name, programme, role, skill, interest or city"></div>
     <div class="table-wrap"><table><thead><tr><th>Student</th><th>Programme</th><th>Year</th><th>Target role</th><th class="n">Score</th><th>Band</th><th>Waiting for you</th></tr></thead><tbody id="mentees"></tbody></table></div>
     <form id="assessForm" novalidate style="display:grid;gap:0.75rem;margin-top:1.25rem;border-top:1px solid var(--border);padding-top:1rem">
       <h3>Confirm a CGPA or record a college assessment</h3>
@@ -167,9 +167,10 @@
   }
   function menteeRows(list) {
     var t = ($('#menteeFind').value || '').trim().toLowerCase();
-    if (t) list = list.filter(function (s) { return (s.name + ' ' + progLabel(s.programme) + ' ' + meta.roles[s.role].label + ' ' + s.fit).toLowerCase().indexOf(t) >= 0; });
+    if (t) list = list.filter(function (s) { var w = s.inWords || {}; return (s.name + ' ' + progLabel(s.programme) + ' ' + meta.roles[s.role].label + ' ' + s.fit + ' ' + (w.goal || '') + ' ' + (w.interests || '') + ' ' + (w.cities || '') + ' ' + (w.ownSkills || []).map(function (k) { return k.name; }).join(' ')).toLowerCase().indexOf(t) >= 0; });
     if (!list.length) { $('#mentees').innerHTML = '<tr><td colspan="7" class="muted">' + (t ? 'No mentee matches “' + esc(t) + '”.' : 'No mentees linked to you yet.') + '</td></tr>'; return; }
-    $('#mentees').innerHTML = list.map(function (s) { return '<tr><td>' + esc(s.name) + '</td><td>' + esc(progLabel(s.programme)) + '</td><td>' + N.ordinal(s.year) + '</td><td>' + esc(meta.roles[s.role].label) + '<br><span class="small muted">' + esc(s.fit) + '</span></td><td class="n">' + N.f1(s.index) + '</td><td><span class="chip ' + N.bandCls[s.band.k] + '">' + s.band.label + '</span></td><td class="small">' + waiting(s) + '</td></tr>'; }).join('');
+    $('#mentees').innerHTML = list.map(function (s) { var w = s.inWords || {}, own = [w.goal ? '<b>Goal:</b> ' + esc(w.goal) : '', w.interests ? '<b>Interests:</b> ' + esc(w.interests) : '', w.cities ? '<b>Wants to work in:</b> ' + esc(w.cities) : '', w.ownSkills && w.ownSkills.length ? '<b>Other skills (own rating):</b> ' + w.ownSkills.map(function (k) { return esc(k.name) + ' ' + k.level; }).join(', ') : '', w.steps && w.steps.length ? '<b>Own steps:</b> ' + w.steps.map(function (k) { return esc(k.title) + (k.done ? ' (done)' : ''); }).join('; ') : ''].filter(Boolean);
+      return '<tr><td>' + esc(s.name) + (own.length ? '<details class="small" style="margin-top:0.25rem"><summary>In their own words</summary><p style="margin:0.3rem 0 0">' + own.join('<br>') + '</p></details>' : '') + '</td><td>' + esc(progLabel(s.programme)) + '</td><td>' + N.ordinal(s.year) + '</td><td>' + esc(meta.roles[s.role].label) + '<br><span class="small muted">' + esc(s.fit) + '</span></td><td class="n">' + N.f1(s.index) + '</td><td><span class="chip ' + N.bandCls[s.band.k] + '">' + s.band.label + '</span></td><td class="small">' + waiting(s) + '</td></tr>'; }).join('');
   }
   $('#menteeFind').addEventListener('input', function () { menteeRows(mentees); });
   function current() { return mentees.filter(function (m) { return String(m.id) === $('#as-student').value; })[0]; }

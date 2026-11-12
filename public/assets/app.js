@@ -113,6 +113,13 @@
         // On a temporary password, the only place to go is the Account page, to choose a real one.
         if (me && me.user.mustChangePassword && page !== 'account') { location.href = 'account.html'; return new Promise(function () {}); }
         chrome(page, me && me.user, meta);
+        // A personal line under the header: who you are here and what is waiting for you.
+        if (me && page !== 'account' && page !== 'home') api('GET', '/api/me/today').then(function (t) {
+          var main = document.getElementById('main'); if (!main || !t.lines.length) return;
+          var d = document.createElement('div'); d.className = 'for-you'; d.setAttribute('role', 'status');
+          d.innerHTML = '<div class="container"><b>Hello, ' + esc(t.first) + '.</b> ' + t.lines.map(esc).join(' ') + '</div>';
+          main.parentNode.insertBefore(d, main);
+        }).catch(function () {});
         return { meta: meta, me: me && me.user, consents: me && me.consents };
       });
   }
@@ -180,5 +187,45 @@
     input.addEventListener('focus', function () { input.select(); });
     return { set: set, choose: choose, refresh: fillList, key: function () { return input.dataset.key; } };
   }
-  window.NGRM = { typeable: typeable, $: $, $$: $$, esc: esc, f1: f1, f0: f0, ordinal: ordinal, bandCls: bandCls, api: api, toast: toast, live: live, boot: boot, consentPanel: consentPanel, ring: ring, showError: showError, HOME: HOME };
+  // Every dropdown on the site becomes a box you can pick from or type into. The original <select> stays in the page
+  // (hidden) as the source of truth, so the rest of the code is unchanged; typing must match one of its choices.
+  function typePick(sel) {
+    if (sel.dataset.typed) return; sel.dataset.typed = '1';
+    var input = document.createElement('input'), list = document.createElement('datalist'), note = document.createElement('span');
+    input.type = 'text'; input.id = sel.id + 'Text'; input.setAttribute('autocomplete', 'off'); input.className = 'typed-pick';
+    list.id = sel.id + 'Choices'; input.setAttribute('list', list.id); note.className = 'hint'; note.setAttribute('role', 'status'); note.hidden = true;
+    var lab = sel.id && document.querySelector('label[for="' + sel.id + '"]'); if (lab) lab.setAttribute('for', input.id); else if (sel.getAttribute('aria-label')) input.setAttribute('aria-label', sel.getAttribute('aria-label'));
+    sel.hidden = true; sel.setAttribute('aria-hidden', 'true'); sel.tabIndex = -1;
+    sel.parentNode.insertBefore(input, sel); sel.parentNode.insertBefore(list, sel); sel.parentNode.insertBefore(note, sel.nextSibling);
+    var sig = '';
+    function opts() { return Array.prototype.map.call(sel.options, function (o) { return { v: o.value, t: o.textContent.trim() }; }); }
+    function sync() {
+      var o = opts(), cur = sel.options[sel.selectedIndex], s = o.map(function (x) { return x.v + '=' + x.t; }).join('|') + '#' + sel.value + '#' + sel.disabled;
+      if (s === sig) return; sig = s;
+      list.innerHTML = o.map(function (x) { return '<option value="' + esc(x.t) + '">'; }).join('');
+      input.disabled = sel.disabled; input.placeholder = o.length ? 'Choose or type' : '';
+      if (document.activeElement !== input) input.value = cur ? cur.textContent.trim() : '';
+    }
+    function commit() {
+      var t = input.value.replace(/\s+/g, ' ').trim().toLowerCase(), o = opts(), cur = sel.options[sel.selectedIndex];
+      var hit = o.filter(function (x) { return x.t.toLowerCase() === t; })[0];
+      if (!hit && t) { var m = o.filter(function (x) { return x.t.toLowerCase().indexOf(t) >= 0; }); if (m.length === 1) hit = m[0]; else { var st = o.filter(function (x) { return x.t.toLowerCase().indexOf(t) === 0; }); if (st.length === 1) hit = st[0]; } }
+      if (!hit) { note.hidden = !t; note.textContent = t ? 'That is not one of the choices here: ' + o.map(function (x) { return x.t; }).slice(0, 8).join(', ') + (o.length > 8 ? '…' : '') + '.' : ''; input.value = cur ? cur.textContent.trim() : ''; return; }
+      note.hidden = true; input.value = hit.t;
+      if (sel.value !== hit.v) { sel.value = hit.v; sig = ''; sel.dispatchEvent(new Event('input', { bubbles: true })); sel.dispatchEvent(new Event('change', { bubbles: true })); }
+    }
+    input.addEventListener('change', commit);
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); commit(); } });
+    input.addEventListener('focus', function () { input.select(); });
+    input.addEventListener('blur', function () { sig = ''; sync(); });
+    // The page's own code may change the choices or the value at any time; keep the box in step.
+    new MutationObserver(sync).observe(sel, { childList: true, subtree: true, attributes: true });
+    setInterval(sync, 400); sync();
+  }
+  function typeEverything() {
+    $$('select').forEach(typePick);
+    new MutationObserver(function () { $$('select:not([data-typed])').forEach(typePick); }).observe(document.body, { childList: true, subtree: true });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', typeEverything); else typeEverything();
+  window.NGRM = { typePick: typePick, typeable: typeable, $: $, $$: $$, esc: esc, f1: f1, f0: f0, ordinal: ordinal, bandCls: bandCls, api: api, toast: toast, live: live, boot: boot, consentPanel: consentPanel, ring: ring, showError: showError, HOME: HOME };
 })();

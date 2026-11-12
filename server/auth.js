@@ -193,7 +193,7 @@ function makeAuth(h, { audit, sendCode }) {
     return u ? { ...u, via: s.via, mustChange: mustChange(u.id) } : null;
   }
 
-  return { requestCode, verifyCode, startSession, endSession, userFromToken, signInWithPassword, setPassword, checkPassword, hasPassword, signUpStart, signUpVerify, signUpDirect, setTempPassword, mustChange, createFromSignup, waitingWith, SESSION_TTL_MS };
+  return { requestCode, verifyCode, startSession, endSession, userFromToken, signInWithPassword, setPassword, checkPassword, hasPassword, passwordProblem, signUpStart, signUpVerify, signUpDirect, setTempPassword, mustChange, createFromSignup, waitingWith, SESSION_TTL_MS };
 }
 
 function readCookie(req, name) {

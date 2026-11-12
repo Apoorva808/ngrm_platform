@@ -256,31 +256,39 @@ function createApp(db, opts = {}) {
   // Sign-up. Anyone can ask; the emailed code proves the address. Students get an account at once,
   // mentors, placement cells, employers and researchers wait for an admin, and admins are never created this way.
   app.get('/api/auth/sign-up-options', (req, res) => res.json({ open: signUpOpen, domains: signUpDomains,
-    institutions: signUpOpen ? h.all('SELECT id, name, city FROM institutions ORDER BY name') : [] }));
+    institutions: signUpOpen ? h.all('SELECT id, name, city FROM institutions WHERE pending = 0 ORDER BY name') : [] }));
   app.post('/api/auth/sign-up', (req, res) => {
     if (!signUpOpen) return fail(res, 403, 'Sign-up is closed. Ask your college or the NGRM team for an account.');
     const b = req.body || {}, name = String(b.name || '').trim().replace(/\s+/g, ' ').slice(0, 120), email = String(b.email || '').trim().toLowerCase(), role = String(b.role || '');
     if (name.length < 2) return fail(res, 400, 'Enter your full name.');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return fail(res, 400, 'Enter a valid email address.');
     if (!SIGNUP_ROLES.includes(role)) return fail(res, 400, 'Choose who you are signing up as.');
-    let institutionId = null, orgName = null;
+    let institutionId = null, orgName = null, newCollege = null;
+    const withCollege = () => { if (newCollege) { institutionId = Number(h.run('INSERT INTO institutions (name, city, is_sample, pending) VALUES (?, ?, 0, 1)', newCollege.name, newCollege.city).lastInsertRowid); audit(null, 'auth.college_typed', institutionId); } return institutionId; };
     if (ORG_ROLES[role] === 'institution') {
-      const inst = h.get('SELECT id FROM institutions WHERE id = ?', Number(b.institutionId) || 0);
-      if (!inst) return fail(res, 400, 'Choose your college from the list.');
-      institutionId = inst.id;
+      // Pick a listed college or type one. A typed college that is new is added as "to be confirmed" by the admin.
+      let inst = h.get('SELECT id FROM institutions WHERE id = ?', Number(b.institutionId) || 0);
+      const typed = L.clean(b.institutionName, 120);
+      if (!inst && typed) inst = h.all('SELECT id, name FROM institutions').find((i) => L.norm(i.name) === L.norm(typed) || L.norm(i.name) === L.norm(typed.split(',')[0]));
+      if (!inst && !typed) return fail(res, 400, 'Choose your college, or type its name.');
+      newCollege = inst ? null : { name: typed, city: L.clean(b.institutionCity, 60) || 'City not given' };
+      institutionId = inst ? inst.id : null;
     }
     if (role === 'employer') { orgName = String(b.orgName || '').trim().replace(/\s+/g, ' ').slice(0, 160); if (orgName.length < 2) return fail(res, 400, 'Enter your company name.'); }
     if (role === 'student' && signUpDomains.length && !signUpDomains.some((d) => email.endsWith('@' + d) || email.endsWith('.' + d)))
       return fail(res, 400, 'Students sign up with their college email (' + signUpDomains.map((d) => '@' + d).join(', ') + ').');
     if (emailCodes) {
       if (ipLimited(req, res)) return;
-      const r = auth.signUpStart({ name, email, role, institutionId, orgName, password: b.password });
+      const bad = auth.passwordProblem(b.password, email); if (bad) return fail(res, 400, bad);
+      const r = auth.signUpStart({ name, email, role, institutionId: withCollege(), orgName, password: b.password });
       if (r.error) return fail(res, r.status, r.error);
       return res.json(r);
     }
     // Without codes the account is made at once. A whole college lab may share one address, so the limit is generous.
     if (ipLimited(req, res, 'signup', 120)) return;
-    const r = auth.signUpDirect({ name, email, role, institutionId, orgName, password: b.password });
+    const bad = auth.passwordProblem(b.password, email); if (bad) return fail(res, 400, bad);
+    if (h.get('SELECT 1 FROM users WHERE email = ?', email)) return fail(res, 409, 'This email already has an account. Sign in instead.');
+    const r = auth.signUpDirect({ name, email, role, institutionId: withCollege(), orgName, password: b.password });
     if (r.error) return fail(res, r.status, r.error);
     if (r.pending) return res.json({ pending: true });
     setCookie(res, r.token); res.json({ user: { id: r.user.id, name: r.user.name, role: r.user.role } });
@@ -365,11 +373,83 @@ function createApp(db, opts = {}) {
   const needConsent = (purpose) => (req, res, next) => (hasConsent(req.user.id, purpose) ? next() : fail(res, 403, 'consent_required:' + purpose));
 
   // ---------- Student: profile and score ----------
+  const inWords = (row) => ({ goal: row.goal || '', interests: row.interests || '', cities: row.cities || '', ownSkills: parse(row.own_skills_json, []) });
+  const cityList = (row) => String(row.cities || '').split(/[,;/]| and /i).map((x) => L.norm(x)).filter((x) => x.length >= 2);
+  // Kinds of work that match what the student wrote about their goal and interests, offered as role ideas.
+  function interestRoles(row, p) {
+    const out = [], seen = new Set([(D.ROLES[p.role] || {}).family]);
+    for (const chunk of [row.goal].concat(String(row.interests || '').split(/[,;]/)).map((x) => String(x || '').trim()).filter(Boolean)) {
+      const f = L.familyOf(chunk); if (f.k === 'general' || seen.has(f.k)) continue; seen.add(f.k);
+      const k = Object.keys(D.ROLES).find((x) => D.ROLES[x].family === f.k && D.ROLES[x].listed);
+      out.push({ label: k ? D.ROLES[k].label : f.name, from: chunk.slice(0, 60) });
+    }
+    return out.slice(0, 4);
+  }
+  const ownSteps = (userId) => h.all('SELECT id, title, slot, done FROM own_steps WHERE user_id = ? ORDER BY id', userId).map((s) => ({ ...s, done: !!s.done }));
+  // Steps the student types into their own plan.
+  app.post('/api/me/steps', need('student'), needConsent('profile'), (req, res) => {
+    const title = L.clean(req.body?.title, 120), slot = D.SLOTS.some((s) => s.id === req.body?.slot) ? req.body.slot : 'now';
+    if (!title) return fail(res, 400, 'Type the step in a few words, for example "Finish my portfolio website".');
+    if (ownSteps(req.user.id).length >= 12) return fail(res, 409, 'You have 12 steps of your own. Remove one to add another.');
+    h.run('INSERT INTO own_steps (user_id, title, slot) VALUES (?, ?, ?)', req.user.id, title, slot);
+    res.status(201).json({ own: ownSteps(req.user.id) });
+  });
+  app.patch('/api/me/steps/:id', need('student'), needConsent('profile'), (req, res) => {
+    const cur = h.get('SELECT * FROM own_steps WHERE id = ? AND user_id = ?', +req.params.id, req.user.id); if (!cur) return fail(res, 404, 'Not found.');
+    const title = req.body?.title === undefined ? cur.title : L.clean(req.body.title, 120); if (!title) return fail(res, 400, 'Type the step in a few words.');
+    h.run('UPDATE own_steps SET title = ?, slot = ?, done = ? WHERE id = ?', title, D.SLOTS.some((s) => s.id === req.body?.slot) ? req.body.slot : cur.slot, req.body?.done === undefined ? cur.done : req.body.done ? 1 : 0, cur.id);
+    res.json({ own: ownSteps(req.user.id) });
+  });
+  app.delete('/api/me/steps/:id', need('student'), needConsent('profile'), (req, res) => {
+    h.run('DELETE FROM own_steps WHERE id = ? AND user_id = ?', +req.params.id, req.user.id); res.json({ own: ownSteps(req.user.id) });
+  });
+  // A short, personal summary for whoever is signed in: what is theirs and what is waiting for them today.
+  app.get('/api/me/today', need(), (req, res) => {
+    const u = req.user, n = (sql, ...a) => h.get(sql, ...a).n, lines = [], plural = (k, one, many) => k + ' ' + (k === 1 ? one : many);
+    const first = u.name.replace(/^(dr|prof|mr|mrs|ms|shri|smt)\.?\s+/i, '').split(/[\s,]+/)[0] || u.name;
+    if (u.role === 'student') {
+      const c = hasConsent(u.id, 'profile') ? computeFor(u.id) : null;
+      if (!c) lines.push('Start by choosing what NGRM may store, then fill in your profile.');
+      else {
+        lines.push(`${D.programme(c.p.prog).label}, aiming for ${D.ROLES[c.p.role].label} · ${D.pathNote(c.p).label.toLowerCase()} · score ${c.result.index.toFixed(1)}`);
+        const wait = []; if (c.result.flags.cgpaUnconfirmed) wait.push('your CGPA to be confirmed'); if (c.result.flags.skillsUnassessed) wait.push(plural(c.result.flags.skillsUnassessed, 'skill', 'skills') + ' to be assessed');
+        const pend = n("SELECT COUNT(*) AS n FROM evidence WHERE user_id = ? AND status = 'pending'", u.id); if (pend) wait.push(plural(pend, 'evidence item', 'evidence items') + ' to be verified');
+        if (wait.length) lines.push('Waiting on your mentor: ' + wait.join(', ') + '.');
+        const proof = n("SELECT COUNT(*) AS n FROM evidence WHERE user_id = ? AND status = 'needs_proof'", u.id); if (proof) lines.push(`Your mentor asked for proof on ${plural(proof, 'item', 'items')}.`);
+        const todo = ownSteps(u.id).filter((s) => !s.done).length; if (todo) lines.push(`${plural(todo, 'step', 'steps')} of your own still to do.`);
+        if (!c.row.goal) lines.push('Tell NGRM your goal in your own words on My score, and your plan will follow it.');
+      }
+    } else if (u.role === 'mentor') {
+      const ids = h.all('SELECT student_id AS id FROM mentor_links WHERE mentor_id = ?', u.id).map((x) => x.id).filter((id) => hasConsent(id, 'profile'));
+      let cg = 0, sk = 0, ev = 0;
+      for (const id of ids) { const c = computeFor(id); if (!c) continue; if (c.result.flags.cgpaUnconfirmed) cg++; if (c.result.flags.skillsUnassessed) sk++; ev += n("SELECT COUNT(*) AS n FROM evidence WHERE user_id = ? AND status = 'pending'", id); }
+      lines.push(`You mentor ${plural(ids.length, 'student', 'students')}.`);
+      const wait = []; if (ev) wait.push(plural(ev, 'evidence item', 'evidence items') + ' to verify'); if (cg) wait.push(plural(cg, 'CGPA', 'CGPAs') + ' to confirm'); if (sk) wait.push(plural(sk, 'student', 'students') + ' with skills to assess');
+      lines.push(wait.length ? 'Waiting for you: ' + wait.join(', ') + '.' : 'Nothing is waiting for you.');
+    } else if (u.role === 'college_admin') {
+      const inst = h.get('SELECT name FROM institutions WHERE id = ?', u.institution_id) || { name: 'your college' };
+      const st = n("SELECT COUNT(*) AS n FROM users WHERE role = 'student' AND institution_id = ?", u.institution_id), noMentor = n("SELECT COUNT(*) AS n FROM users u WHERE u.role = 'student' AND u.institution_id = ? AND NOT EXISTS (SELECT 1 FROM mentor_links l WHERE l.student_id = u.id)", u.institution_id);
+      lines.push(`${inst.name}: ${plural(st, 'student', 'students')} on NGRM.`);
+      if (noMentor) lines.push(`${plural(noMentor, 'student has', 'students have')} no mentor yet. Ask the NGRM admin to link them.`);
+      const intro = n("SELECT COUNT(*) AS n FROM intro_requests WHERE created_at > datetime('now', '-30 days')"); if (intro) lines.push(`${plural(intro, 'introduction request', 'introduction requests')} from employers in the last 30 days.`);
+    } else if (u.role === 'employer') {
+      const e = h.get('SELECT name FROM employers WHERE id = ?', u.employer_id) || { name: 'your organisation' };
+      const posts = h.all("SELECT role, openings FROM demand_posts WHERE employer_id = ? AND created_at > datetime('now', '-90 days')", u.employer_id);
+      lines.push(posts.length ? `${e.name}: ${plural(posts.length, 'requirement', 'requirements')} posted, ${posts.reduce((t, p) => t + p.openings, 0)} openings, for ${[...new Set(posts.map((p) => (D.ROLES[p.role] || {}).label).filter(Boolean))].slice(0, 3).join(', ')}.` : `${e.name}: no requirement posted yet. Type the role you are hiring for to start.`);
+    } else if (u.role === 'researcher') {
+      lines.push(`${plural(n('SELECT COUNT(DISTINCT user_id) AS n FROM baselines'), 'participant has', 'participants have')} a baseline in the study.`);
+    } else if (u.role === 'admin') {
+      const su = n("SELECT COUNT(*) AS n FROM signups WHERE status = 'waiting'"), col = n('SELECT COUNT(*) AS n FROM institutions WHERE pending = 1'), rv = n('SELECT COUNT(*) AS n FROM custom_roles WHERE needs_review = 1'), nm = n("SELECT COUNT(*) AS n FROM users u WHERE u.role = 'student' AND NOT EXISTS (SELECT 1 FROM mentor_links l WHERE l.student_id = u.id)");
+      const wait = []; if (su) wait.push(plural(su, 'sign-up request', 'sign-up requests')); if (col) wait.push(plural(col, 'typed college', 'typed colleges') + ' to confirm'); if (rv) wait.push(plural(rv, 'typed role', 'typed roles') + ' needing skills'); if (nm) wait.push(plural(nm, 'student', 'students') + ' without a mentor');
+      lines.push(wait.length ? 'Waiting for you: ' + wait.join(', ') + '.' : 'Nothing is waiting for you.');
+    }
+    res.json({ first, lines });
+  });
   function profilePayload(userId) {
     const c = computeFor(userId); if (!c) return null;
     const last = h.get('SELECT id, formula_version, index_value, created_at FROM score_runs WHERE user_id = ? ORDER BY id DESC LIMIT 1', userId);
     const verified = Object.keys(verifiedSkills(userId, c.p.role)).map(Number);
-    return { profile: { ...c.p, optInIntros: !!c.row.opt_in_intros, verifiedSkills: verified, commVerified: verifiedComm(userId) != null }, path: D.pathNote(c.p), score: c.result, band: D.band(c.result.index), lastRecorded: last || null };
+    return { profile: { ...c.p, optInIntros: !!c.row.opt_in_intros, verifiedSkills: verified, commVerified: verifiedComm(userId) != null }, mine: inWords(c.row), interestRoles: interestRoles(c.row, c.p), path: D.pathNote(c.p), score: c.result, band: D.band(c.result.index), lastRecorded: last || null };
   }
   // Withdrawing questionnaire consent removes the answers everywhere they were kept, including recorded scores and the study baseline.
   function scrubPsychometric(userId) {
@@ -417,6 +497,14 @@ function createApp(db, opts = {}) {
            ON CONFLICT(user_id) DO UPDATE SET programme=excluded.programme, year=excluded.year, cgpa=excluded.cgpa, target_role=excluded.target_role,
            skills_json=excluded.skills_json, ocean_json=excluded.ocean_json, comm=excluded.comm, clarity=excluded.clarity, updated_at=excluded.updated_at`,
       req.user.id, prog, Math.min(Math.max(1, parseInt(b.year, 10) || cur.year || 1), years), newCgpa, role, JSON.stringify(skills), ocean ? JSON.stringify(ocean) : null, verifiedComm(req.user.id), sticky('clarity', 'clarity', 100));
+    // In the student's own words. These personalise suggestions and what the mentor sees; they never change the score.
+    const words = (field, col, max) => (b[field] === undefined ? cur[col] ?? null : L.clean(b[field], max));
+    let own = parse(cur.own_skills_json, []);
+    if (Array.isArray(b.ownSkills)) {
+      const seen = new Set(); own = [];
+      for (const x of b.ownSkills.slice(0, 20)) { const name = L.clean(x && x.name, 40); if (!name || seen.has(L.norm(name)) || own.length >= 8) continue; seen.add(L.norm(name)); own.push({ name, level: Math.round(num(x.level, 0, 100) ?? 50) }); }
+    }
+    h.run('UPDATE profiles SET goal = ?, interests = ?, cities = ?, own_skills_json = ? WHERE user_id = ?', words('goal', 'goal', 200), words('interests', 'interests', 200), words('cities', 'cities', 120), JSON.stringify(own), req.user.id);
     // A changed CGPA has to be confirmed again by the mentor before it counts.
     if (newCgpa !== (cur.cgpa ?? null)) h.run('UPDATE profiles SET cgpa_confirmed = 0 WHERE user_id = ?', req.user.id);
     // A new target role means a different plan: earlier accepted steps and mentor reviews no longer apply.
@@ -530,7 +618,7 @@ function createApp(db, opts = {}) {
         }));
       }
       const accepted = r.list.filter((x) => x.state?.student_status === 'accepted').map((x) => x.id);
-      res.json({ score: r.c.result, projected: D.projectIndex(r.c.p, r.c.ev, accepted), role: r.c.p.role, programme: r.c.p.prog, year: r.c.p.year, path: D.pathNote(r.c.p),
+      res.json({ score: r.c.result, projected: D.projectIndex(r.c.p, r.c.ev, accepted), role: r.c.p.role, programme: r.c.p.prog, year: r.c.p.year, path: D.pathNote(r.c.p), own: ownSteps(req.user.id), mine: inWords(r.c.row),
         items: r.list.map((x) => ({ id: x.id, factor: x.factor, slot: x.slot, effort: x.effort, gain: x.gain, always: x.always, title: x.title, what: x.what, why: x.why, aiWhy: x.aiWhy || null, assume: x.assume, learn: x.learn,
           student: x.state?.student_status || null, mentor: x.state?.mentor_status || null, mentorNote: x.state?.mentor_note || null,
           mentorName: x.state?.mentor_id ? (h.get('SELECT name FROM users WHERE id = ?', x.state.mentor_id) || {}).name : null })) });
@@ -626,7 +714,7 @@ function createApp(db, opts = {}) {
     const out = rows.filter((r) => hasConsent(r.id, 'profile')).map((r) => {
       const c = computeFor(r.id); if (!c) return null;
       return { id: r.id, name: r.name, programme: c.p.prog, year: c.p.year, role: c.p.role, index: c.result.index, band: D.band(c.result.index),
-        fit: D.pathNote(c.p).label, cgpa: c.p.cgpa, cgpaConfirmed: c.p.cgpaConfirmed, skills: c.p.skills, skillsVerified: c.p.skillsVerified, commAssessed: c.result.factors.communication !== null };
+        fit: D.pathNote(c.p).label, inWords: { ...inWords(c.row), steps: ownSteps(r.id) }, cgpa: c.p.cgpa, cgpaConfirmed: c.p.cgpaConfirmed, skills: c.p.skills, skillsVerified: c.p.skillsVerified, commAssessed: c.result.factors.communication !== null };
     }).filter(Boolean);
     audit(req.user.id, 'mentor.viewed_mentees');
     res.json(out);
@@ -739,16 +827,25 @@ function createApp(db, opts = {}) {
       noInternshipPct: safePct(rs.filter((r) => r.counts.internship === 0).length, rs.length), rounding: 5 });
   });
   app.get('/api/demand', need(), (req, res) => {
-    res.json(h.all('SELECT d.id, d.role, d.skills_json, d.openings, d.city, d.created_at, d.employer_id, e.name AS employer FROM demand_posts d JOIN employers e ON e.id = d.employer_id ORDER BY d.id DESC LIMIT 50')
-      .map((d) => ({ ...d, skills: parse(d.skills_json, []), skills_json: undefined, employer_id: undefined, mine: req.user.role === 'employer' && d.employer_id === req.user.employer_id })));
+    res.json(h.all('SELECT d.id, d.role, d.skills_json, d.extra_json, d.openings, d.city, d.created_at, d.employer_id, e.name AS employer FROM demand_posts d JOIN employers e ON e.id = d.employer_id ORDER BY d.id DESC LIMIT 50')
+      .map((d) => ({ ...d, roleLabel: (D.ROLES[d.role] || {}).label || 'A role', skills: parse(d.skills_json, []).concat(parse(d.extra_json, [])), skills_json: undefined, extra_json: undefined, employer_id: undefined, mine: req.user.role === 'employer' && d.employer_id === req.user.employer_id })));
   });
 
   // Live demand for one role: what partner employers have posted in the last 90 days.
   app.get('/api/demand/summary', need(), (req, res) => {
     const role = has(D.ROLES, req.query.role) ? req.query.role : null; if (!role) return fail(res, 400, 'Choose a role.');
-    const posts = h.all("SELECT d.skills_json, d.openings, d.city, d.created_at, e.name AS employer FROM demand_posts d JOIN employers e ON e.id = d.employer_id WHERE d.role = ? AND d.created_at > datetime('now', '-90 days') ORDER BY d.id DESC", role);
+    const posts = h.all("SELECT d.skills_json, d.extra_json, d.openings, d.city, d.created_at, e.name AS employer FROM demand_posts d JOIN employers e ON e.id = d.employer_id WHERE d.role = ? AND d.created_at > datetime('now', '-90 days') ORDER BY d.id DESC", role);
     const skills = {}; for (const p of posts) for (const k of parse(p.skills_json, [])) skills[k] = (skills[k] || 0) + p.openings;
-    res.json({ role, openings: posts.reduce((t, p) => t + p.openings, 0), employers: new Set(posts.map((p) => p.employer)).size,
+    // For a student: which of these openings are in the cities they typed, and which extra skills employers typed that they have too.
+    let personal = null;
+    if (req.user.role === 'student') {
+      const row = profileRow(req.user.id) || {}, cities = cityList(row), mine = parse(row.own_skills_json, []).map((x) => L.norm(x.name));
+      const asked = {}; for (const p of posts) for (const k of parse(p.extra_json, [])) asked[k] = (asked[k] || 0) + p.openings;
+      const inCity = posts.filter((p) => p.city && cities.some((c) => L.norm(p.city).includes(c)));
+      personal = { cities: row.cities || '', openingsInMyCities: cities.length ? inCity.reduce((t, p) => t + p.openings, 0) : null,
+        alsoAsked: Object.entries(asked).sort((a, b) => b[1] - a[1]).map(([name, openings]) => ({ name, openings, have: mine.includes(L.norm(name)) })) };
+    }
+    res.json({ role, personal, openings: posts.reduce((t, p) => t + p.openings, 0), employers: new Set(posts.map((p) => p.employer)).size,
       skills: Object.entries(skills).sort((a, b) => b[1] - a[1]).map(([name, openings]) => ({ name, openings })),
       latest: posts.slice(0, 5).map((p) => ({ employer: p.employer, city: p.city, openings: p.openings, postedAt: p.created_at })), asOf: new Date().toISOString() });
   });
@@ -757,7 +854,7 @@ function createApp(db, opts = {}) {
   app.get('/api/employer/supply', need('employer'), (req, res) => {
     if (req.query.role !== undefined && !has(D.ROLES, req.query.role)) return fail(res, 400, 'Choose a role.');
     const role = req.query.role || 'hr';
-    const insts = h.all('SELECT id, name FROM institutions ORDER BY id');
+    const insts = h.all('SELECT id, name FROM institutions WHERE pending = 0 ORDER BY id');
     const rows = h.all("SELECT u.id, u.institution_id, p.skills_json, p.opt_in_intros FROM users u JOIN profiles p ON p.user_id = u.id WHERE u.role = 'student' AND p.target_role = ?", role)
       .filter((r) => hasConsent(r.id, 'profile'));
     // Only skills a college has assessed are counted. A student with none assessed is in the pool but in no level.
@@ -789,14 +886,16 @@ function createApp(db, opts = {}) {
     const b = req.body || {};
     if (!has(D.ROLES, b.role)) return fail(res, 400, 'Choose a role.');
     const skills = (Array.isArray(b.skills) ? b.skills : []).filter((s) => D.ROLES[b.role].skills.includes(s));
-    if (!skills.length) return fail(res, 400, 'Pick at least one skill.');
+    // Anything else the employer needs, in their own words.
+    const extra = []; for (const x of String(Array.isArray(b.extraSkills) ? b.extraSkills.join(',') : b.extraSkills || '').split(/[,;\n]/)) { const t = L.clean(x, 40); if (t && extra.length < 6 && !extra.some((e) => L.norm(e) === L.norm(t)) && !skills.some((e) => L.norm(e) === L.norm(t))) extra.push(t); }
+    if (!skills.length && !extra.length) return fail(res, 400, 'Pick or type at least one skill.');
     const openings = Number(b.openings);
     if (!Number.isInteger(openings) || openings < 1 || openings > 500) return fail(res, 400, 'Openings must be a whole number from 1 to 500.');
     // One employer cannot swamp what students see: at most 3 open posts and 500 openings per role in any 90 days.
     const open = h.get("SELECT COUNT(*) AS posts, COALESCE(SUM(openings), 0) AS openings FROM demand_posts WHERE employer_id = ? AND role = ? AND created_at > datetime('now', '-90 days')", req.user.employer_id, b.role);
     if (open.posts >= 3) return fail(res, 409, 'You already have 3 requirements posted for this role in the last 90 days. Withdraw one to post another.');
     if (open.openings + openings > 500) return fail(res, 409, `That would take your openings for this role past 500 in 90 days (you have ${open.openings} posted). Lower the number or withdraw an older post.`);
-    h.run('INSERT INTO demand_posts (employer_id, role, skills_json, openings, city) VALUES (?, ?, ?, ?, ?)', req.user.employer_id, b.role, JSON.stringify(skills), openings, String(b.city || '').trim().slice(0, 80) || null);
+    h.run('INSERT INTO demand_posts (employer_id, role, skills_json, openings, city, extra_json) VALUES (?, ?, ?, ?, ?, ?)', req.user.employer_id, b.role, JSON.stringify(skills), openings, String(b.city || '').trim().slice(0, 80) || null, JSON.stringify(extra));
     audit(req.user.id, 'employer.posted_demand', b.role);
     res.status(201).json({ ok: true });
   });
@@ -918,7 +1017,7 @@ function createApp(db, opts = {}) {
   // People and organisations: admins can also add accounts directly.
   app.get('/api/admin/people', need('admin'), (req, res) => {
     const q = String(req.query.q || '').trim().toLowerCase().slice(0, 80);
-    res.json({ institutions: h.all('SELECT i.id, i.name, i.city, (SELECT COUNT(*) FROM users u WHERE u.institution_id = i.id AND u.role = \'student\') AS students FROM institutions i ORDER BY i.name'),
+    res.json({ institutions: h.all('SELECT i.id, i.name, i.city, (SELECT COUNT(*) FROM users u WHERE u.institution_id = i.id AND u.role = \'student\') AS students, i.pending FROM institutions i ORDER BY i.pending DESC, i.name'),
       employers: h.all('SELECT id, name, city FROM employers ORDER BY name'),
       roles: h.all('SELECT role, COUNT(*) AS n FROM users GROUP BY role'),
       recent: h.all(`SELECT u.id, u.name, u.email, u.role, COALESCE(i.name, e.name) AS org, u.created_at,
@@ -934,6 +1033,15 @@ function createApp(db, opts = {}) {
     const r = h.run(`INSERT INTO ${table} (name, city, is_sample) VALUES (?, ?, 0)`, name, city || null);
     audit(req.user.id, 'admin.org_added', kind + ':' + r.lastInsertRowid);
     res.status(201).json({ id: Number(r.lastInsertRowid) });
+  });
+  // A college someone typed at sign-up: the admin confirms it (optionally correcting the name and city) so it is offered to everyone.
+  app.post('/api/admin/orgs/:id/confirm', need('admin'), (req, res) => {
+    const cur = h.get('SELECT * FROM institutions WHERE id = ?', +req.params.id); if (!cur) return fail(res, 404, 'Not found.');
+    const name = req.body?.name === undefined ? cur.name : L.clean(req.body.name, 160), city = req.body?.city === undefined ? cur.city : L.clean(req.body.city, 80);
+    if (!name || !city) return fail(res, 400, 'Give the college name and city.');
+    if (h.all('SELECT id, name FROM institutions').some((i) => i.id !== cur.id && L.norm(i.name) === L.norm(name))) return fail(res, 409, 'Another college already has that name.');
+    h.run('UPDATE institutions SET name = ?, city = ?, pending = 0 WHERE id = ?', name, city, cur.id);
+    audit(req.user.id, 'admin.college_confirmed', cur.id); res.json({ ok: true });
   });
   // Body: { rows: [{ name, email, role, org, mentorEmail }] }. All rows are checked first; nothing is saved if any row is wrong.
   app.post('/api/admin/users', need('admin'), (req, res) => {
