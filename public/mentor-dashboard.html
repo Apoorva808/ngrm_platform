@@ -49,6 +49,10 @@
     <div class="grid-4" id="caTiles"></div>
     <p class="small muted" style="margin-top:0.5rem">Counts are for the last 7 days, hidden under 5 and rounded to the nearest 5.</p>
   </section>
+  <section class="card" id="mentoringCard" hidden aria-labelledby="mgTitle">
+    <header><h2 id="mgTitle">Mentors at your college</h2><span class="small muted">Every student needs a mentor before anything they enter can be confirmed</span></header>
+    <div id="mentoring"></div>
+  </section>
   <section class="card" id="introCard" hidden aria-labelledby="iTitle">
     <header><h2 id="iTitle">Introduction requests</h2><span class="small muted">Only students who said they’re interested, and only from your college</span></header>
     <div id="intros" style="display:grid;gap:0.75rem"></div>
@@ -134,14 +138,22 @@
       // New items appear on their own, unless a note is being drafted (so nothing typed is lost).
       N.live(function () { var drafting = N.$$('#queue textarea').some(function (t) { return t.value.trim(); }); if (!drafting) return loadQueue(); }, 30);
       N.api('GET', '/api/mentor/mentees').then(function (list) {
-        if (!list.length) { $('#mentees').innerHTML = '<tr><td colspan="7" class="muted">No mentees linked to you yet. Your admin links students to mentors.</td></tr>'; $('#assessForm').hidden = true; return; }
+        if (!list.length) { $('#mentees').innerHTML = '<tr><td colspan="7" class="muted">No mentees yet. New students at your college are given to the mentor with the fewest students.</td></tr>'; $('#assessForm').hidden = true; return; }
         mentees = list;
         $('#as-student').innerHTML = list.map(function (s) { return '<option value="' + s.id + '">' + esc(s.name) + '</option>'; }).join(''); whatOptions();
         menteeRows(list);
       });
     } else {
       loadCohort().catch(function (e) { N.showError($('#cFactors'), e); });
-      $('#actCard').hidden = false;
+      $('#actCard').hidden = false; $('#mentoringCard').hidden = false;
+      // Mentor load, and one button to share out students who have nobody. New sign-ups get a mentor by themselves.
+      var showMentoring = function (m) {
+        $('#mentoring').innerHTML = (m.mentors.length ? '<div class="table-wrap"><table><thead><tr><th>Mentor</th><th class="n">Students</th></tr></thead><tbody>' + m.mentors.map(function (x) { return '<tr><td>' + esc(x.name) + '</td><td class="n">' + x.students + '</td></tr>'; }).join('') + '</tbody></table></div>'
+          : '<p class="note warning">No faculty mentor at your college has an NGRM account yet. Ask your mentors to create an account; the NGRM admin approves it, and waiting students are then shared among them.</p>') +
+          '<p style="margin-top:0.75rem">' + (m.withoutMentor ? '<b>' + m.withoutMentor + '</b> ' + (m.withoutMentor === 1 ? 'student has' : 'students have') + ' no mentor yet. ' + (m.mentors.length ? '<button class="btn btn-primary btn-sm" type="button" id="shareBtn">Share them among these mentors</button>' : '') : 'Every student at your college has a mentor. New students who sign up are given the mentor with the fewest students.') + '</p>';
+      };
+      N.api('GET', '/api/college/mentoring').then(showMentoring).catch(function (e) { N.showError($('#mentoring'), e); });
+      $('#mentoring').addEventListener('click', function (e) { if (e.target.id === 'shareBtn') N.api('POST', '/api/college/mentoring/share').then(function (m) { N.toast(m.shared + (m.shared === 1 ? ' student now has a mentor.' : ' students now have a mentor.')); showMentoring(m); }).catch(function (x) { N.toast(x.message); }); });
       var loadAct = function () { return N.api('GET', '/api/college/activity').then(function (c) {
         var v = function (n) { return n == null ? '<5' : '~' + n; }, tile = function (n, l) { return '<div class="kpi"><b>' + v(n) + '</b><span>' + l + '</span></div>'; };
         $('#caTiles').innerHTML = tile(c.activeStudents, 'Students active') + tile(c.scores, 'Scores recorded') + tile(c.evidence, 'Evidence items added') + tile(c.awaitingCheck, 'Items waiting for a mentor');

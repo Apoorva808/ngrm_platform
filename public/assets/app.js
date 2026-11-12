@@ -114,12 +114,15 @@
         if (me && me.user.mustChangePassword && page !== 'account') { location.href = 'account.html'; return new Promise(function () {}); }
         chrome(page, me && me.user, meta);
         // A personal line under the header: who you are here and what is waiting for you.
-        if (me && page !== 'account' && page !== 'home') api('GET', '/api/me/today').then(function (t) {
-          var main = document.getElementById('main'); if (!main || !t.lines.length) return;
-          var d = document.createElement('div'); d.className = 'for-you'; d.setAttribute('role', 'status');
-          d.innerHTML = '<div class="container"><b>Hello, ' + esc(t.first) + '.</b> ' + t.lines.map(esc).join(' ') + '</div>';
-          main.parentNode.insertBefore(d, main);
-        }).catch(function () {});
+        window.NGRM.today = function () {
+          if (!me || page === 'account' || page === 'home') return;
+          api('GET', '/api/me/today').then(function (t) {
+            var main = document.getElementById('main'); if (!main || !t.lines.length) return;
+            var d = document.querySelector('.for-you'); if (!d) { d = document.createElement('div'); d.className = 'for-you'; d.setAttribute('role', 'status'); main.parentNode.insertBefore(d, main); }
+            d.innerHTML = '<div class="container"><b>Hello, ' + esc(t.first) + '.</b> ' + t.lines.map(esc).join(' ') + '</div>';
+          }).catch(function () {});
+        };
+        window.NGRM.today();
         return { meta: meta, me: me && me.user, consents: me && me.consents };
       });
   }
@@ -208,7 +211,9 @@
       var t = input.value.trim(), m = near(t, options().filter(function (x) { return x[2] || x[0] === input.dataset.key; }).map(function (x) { return { v: x[0], t: x[1] }; }), 4);
       say(!t || t.toLowerCase() === label(input.dataset.key).toLowerCase() ? '' : m.length ? 'Already on NGRM: ' + m.map(function (x) { return x.t; }).join(' · ') + '. Type one of these in full to use it, or keep your own wording.' : 'New to NGRM. It will be added when you leave this box.');
     });
-    input.addEventListener('change', function () { choose(input.value); });
+    // Leaving the box settles the answer a moment later, not at once: the text under the box changes when it does, and
+    // if that moved the page while a button was being pressed, the press would miss the button.
+    input.addEventListener('change', function () { setTimeout(function () { choose(input.value); }, 220); });
     input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } });
     input.addEventListener('focus', function () { input.select(); });
     return { set: set, choose: choose, refresh: function () {}, key: function () { return input.dataset.key; } };
@@ -224,15 +229,25 @@
     var lab = sel.id && document.querySelector('label[for="' + sel.id + '"]'); if (lab) lab.setAttribute('for', input.id); else if (sel.getAttribute('aria-label')) input.setAttribute('aria-label', sel.getAttribute('aria-label'));
     sel.hidden = true; sel.setAttribute('aria-hidden', 'true'); sel.tabIndex = -1;
     sel.parentNode.insertBefore(input, sel); sel.parentNode.insertBefore(note, sel.nextSibling);
-    var sig = '';
-    function opts() { return Array.prototype.map.call(sel.options, function (o) { return { v: o.value, t: o.textContent.trim() }; }).filter(function (x) { return x.t; }); }
+    var sig = '', prev = null, bound = sel.hasAttribute('data-bound');
+    // Nothing is filled in for the person: the box starts empty and stays empty until they type an answer.
+    // (A box marked data-bound shows a saved answer and is managed by its page.) The page may rebuild the answers at any
+    // time; an answer already typed is kept if it is still there, otherwise the box is empty again.
+    function isBlank() { var o = sel.options[sel.selectedIndex]; return !o || o.hasAttribute('data-blank'); }
+    function ensureBlank() {
+      if (bound || sel.querySelector('option[data-blank]')) return;
+      var b = document.createElement('option'); b.value = ''; b.setAttribute('data-blank', ''); sel.insertBefore(b, sel.firstChild);
+      if (prev === null || sel.value !== prev) b.selected = true;
+    }
+    function opts() { return Array.prototype.filter.call(sel.options, function (o) { return !o.hasAttribute('data-blank'); }).map(function (o) { return { v: o.value, t: o.textContent.trim() }; }).filter(function (x) { return x.t; }); }
     function words(o, typed) {
       var m = typed ? near(typed, o, 6) : [];
       if (o.length <= 6) return 'Type one of: ' + o.map(function (x) { return x.t; }).join(' · ');
       return m.length ? 'Matches: ' + m.map(function (x) { return x.t; }).join(' · ') : typed && typed.trim().length >= 2 ? 'Nothing here matches “' + typed.trim() + '”.' : 'Type a few letters of the one you want (' + o.length + ' to choose from, such as ' + o.slice(0, 3).map(function (x) { return x.t; }).join(', ') + ').';
     }
     function sync() {
-      var o = opts(), cur = sel.options[sel.selectedIndex], s = o.map(function (x) { return x.v + '=' + x.t; }).join('|') + '#' + sel.value + '#' + sel.disabled;
+      ensureBlank(); prev = isBlank() ? null : sel.value;
+      var o = opts(), cur = sel.options[sel.selectedIndex], s = o.map(function (x) { return x.v + '=' + x.t; }).join('|') + '#' + sel.selectedIndex + '#' + sel.value + '#' + sel.disabled;
       if (s === sig) return; sig = s;
       input.disabled = sel.disabled; note.hidden = !o.length;
       if (document.activeElement !== input) { input.value = cur ? cur.textContent.trim() : ''; note.textContent = words(o, ''); }
@@ -241,10 +256,13 @@
       var o = opts(), cur = sel.options[sel.selectedIndex], typed = input.value.trim(), hit = matchChoice(typed, o);
       if (!hit) { note.textContent = typed ? '“' + typed + '” is not one of the answers here. ' + words(o, typed) : words(o, ''); input.value = cur ? cur.textContent.trim() : ''; return; }
       note.textContent = words(o, ''); input.value = hit.t;
-      if (sel.value !== hit.v) { sel.value = hit.v; sig = ''; sel.dispatchEvent(new Event('input', { bubbles: true })); sel.dispatchEvent(new Event('change', { bubbles: true })); }
+      var target = Array.prototype.filter.call(sel.options, function (x) { return !x.hasAttribute('data-blank') && x.value === hit.v && x.textContent.trim() === hit.t; })[0];
+      if (target && !target.selected) { target.selected = true; prev = sel.value; sig = ''; sel.dispatchEvent(new Event('input', { bubbles: true })); sel.dispatchEvent(new Event('change', { bubbles: true })); }
     }
     input.addEventListener('input', function () { var o = opts(); if (o.length > 6) note.textContent = words(o, input.value); });
-    input.addEventListener('change', commit);
+    sel.typedBlank = function () { return !bound && !sel.disabled && input.offsetParent !== null && isBlank(); };
+    sel.typedAsk = function () { note.hidden = false; note.textContent = 'Type your answer here first. ' + words(opts(), ''); input.focus(); };
+    input.addEventListener('change', function () { setTimeout(commit, 220); });
     input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); commit(); } });
     input.addEventListener('focus', function () { input.select(); });
     // The page's own code may change the choices or the value at any time; keep the box in step.
@@ -269,6 +287,11 @@
   }
   function typeEverything() {
     $$('select').forEach(typePick);
+    // A form cannot be sent while one of its typed boxes is still empty: nothing is ever assumed for the person.
+    document.addEventListener('submit', function (e) {
+      var empty = $$('select[data-typed]', e.target).filter(function (s) { return s.typedBlank && s.typedBlank(); })[0];
+      if (empty) { e.preventDefault(); e.stopImmediatePropagation(); empty.typedAsk(); }
+    }, true);
     new MutationObserver(function () { $$('select:not([data-typed])').forEach(typePick); }).observe(document.body, { childList: true, subtree: true });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', typeEverything); else typeEverything();

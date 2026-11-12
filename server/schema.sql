@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   cgpa           REAL,
   cgpa_confirmed INTEGER NOT NULL DEFAULT 0,   -- 1 once a mentor has confirmed the CGPA against college records
   target_role    TEXT NOT NULL DEFAULT 'hr',
-  skills_json    TEXT NOT NULL DEFAULT '[50,50,50,50]',
+  skills_json    TEXT NOT NULL DEFAULT '[null,null,null,null]',  -- the student's own ratings; null = not rated yet
   ocean_json     TEXT,
   comm           REAL,
   clarity        REAL,

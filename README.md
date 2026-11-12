@@ -13,7 +13,7 @@ Requires Node.js 22.13 or newer (tested on 22.13, 22.23 and 24). Nothing else is
 npm install
 cp .env.example .env      # demo settings are already on
 npm start                 # http://localhost:3000
-npm test                  # 77 tests
+npm test                  # 78 tests
 npm run seed              # wipe and reload the sample data
 ```
 
@@ -92,6 +92,8 @@ Target roles and programmes are not limited to a list. Anyone can pick a suggest
 
 ## Typed and personal, everywhere
 
+- **Nothing is filled in for anyone.** A new student has no profile until they type their programme, their year and the job they are aiming for; there is no default programme, role or year. Skill ratings, CGPA, personality, career clarity and every own-words box start empty, and a blank rating stays blank ("Not rated yet"). Every other typed box on the site starts empty too (kind of evidence, account type at sign-up, the mentor's student and skill boxes, the employer's role, openings and city, the admin's choices), and a form cannot be sent while one of its typed boxes is empty, so nothing is ever assumed.
+- **Every student has a mentor.** A student who signs up, or is added without a named mentor, is given the mentor at their college with the fewest students. When a mentor account is approved or added, students at that college who have nobody are shared among the mentors. The placement cell sees each mentor's load (counts only, no student names) and can share out anyone still waiting with one button. If a college has no mentor yet, its students wait and the placement cell is told so.
 - **Nothing drops down.** There are no dropdowns, suggestion lists, sliders or date pickers anywhere. Every answer is typed into a plain box, and the words the box understands are shown as ordinary text beside it ("Type one of: 1st year · 2nd year · 3rd year"). A few letters are enough when they fit only one answer, and "2" or "second" both mean 2nd year. Where the answers are fixed because the score or access depends on them (year, kind of evidence, kind of account), typing must match one of them and the box says so if it does not. Dates are typed as 5 Oct 2026, 05-10-2026 or Oct 2026. For roles and programmes the box says, as text, which wording NGRM already has, so the same job is not added twice.
 - **College at sign-up** is typed. A few words that fit one known college are enough; words that fit several ask for the full name. A college not in the list is added as "typed at sign-up" and the student gets in; it is offered to others only after the admin confirms it.
 - **In the student's own words.** On the score page a student can type their goal, interests, where they want to work, and up to eight other skills with their own rating. NGRM uses these to suggest roles ("From what you wrote"), to show how many openings are in their cities, and to tell them when an employer has asked for a skill they listed. The mentor sees all of it and can search mentees by any of it. None of it changes the score.
@@ -126,7 +128,7 @@ Eight factors: academic 20, technical/role skills 20, projects 15, experience 15
 
 ## Quality checks done
 
-- 77 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
+- 78 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
 - The tests pass on Node 22.13, 22.23 and 24. Node 22.12 and older cannot run the built-in database, and the server says so.
 - A browser walk-through of every page for all six roles (133 checks), at desktop and phone widths, with no server errors.
 - An automated accessibility scan (axe-core, WCAG 2.1 AA) of every page in normal and high-contrast mode: no violations. Keyboard-only use works.

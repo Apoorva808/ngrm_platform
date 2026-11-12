@@ -21,12 +21,26 @@
 </div></div>
 <main id="main" tabindex="-1">
 <div class="container" id="gate"></div>
+<div class="container" id="setup" hidden style="max-width:620px">
+  <form class="card" id="setupForm" novalidate aria-labelledby="setupTitle">
+    <header><h1 id="setupTitle" style="font-size:1.5rem">Tell NGRM what you study and what you are aiming for</h1></header>
+    <p>Nothing is filled in for you. Your score, your plan and everything your mentor sees are built from what you type here. You can change any of it later.</p>
+    <div style="display:grid;gap:0.85rem">
+      <div class="field"><label for="s-prog">Your programme</label><input type="text" id="s-prog" maxlength="80" placeholder="Type it as on your marks card, for example B.Com" aria-describedby="s-progNote"><span class="hint" id="s-progNote" role="status"></span></div>
+      <div class="field"><label for="s-year">Which year are you in?</label><input type="text" id="s-year" maxlength="12" inputmode="numeric" placeholder="Type a number, for example 2" aria-describedby="s-yearNote"><span class="hint" id="s-yearNote" role="status"></span></div>
+      <div class="field"><label for="s-role">The job you are aiming for</label><input type="text" id="s-role" maxlength="60" placeholder="Type any role, for example Data Analyst" aria-describedby="s-roleNote"><span class="hint" id="s-roleNote" role="status"></span>
+        <div id="s-ideas" class="small" style="display:flex;gap:0.35rem;flex-wrap:wrap;align-items:center;margin-top:0.35rem"></div></div>
+      <p class="small" id="s-err" role="alert" style="color:var(--danger)" hidden></p>
+      <div><button class="btn btn-primary" type="submit">Begin</button></div>
+    </div>
+  </form>
+</div>
 <div class="container split" id="content" hidden>
   <form class="card form-card" id="profileForm" novalidate aria-label="Profile">
     <div class="form-group"><fieldset><legend>About you</legend>
       <div class="field"><label for="f-progText">Programme</label><input type="text" id="f-progText" maxlength="80" placeholder="Type it as on your marks card, for example B.Com" aria-describedby="progNote"><input type="hidden" id="f-prog"><span class="hint" id="progNote" role="status"></span></div>
       <div class="row-2">
-        <div class="field"><label for="f-year">Year</label><select id="f-year"></select></div>
+        <div class="field"><label for="f-year">Year</label><select id="f-year" data-bound></select></div>
         <div class="field"><label for="f-cgpa">CGPA (out of 10)</label><input type="number" id="f-cgpa" min="0" max="10" step="0.01" inputmode="decimal" aria-describedby="cgpaState"></div>
       </div>
       <p class="hint" id="cgpaState" style="margin:-0.3rem 0 0.2rem"></p>
@@ -92,7 +106,7 @@
   function skills(p) {
     $('#skillsBox').innerHTML = meta.roles[p.role].skills.map(function (s, i) {
       var v = (p.verifiedSkills || []).indexOf(i) > -1;
-      return '<div class="skillrow"><label for="sk-' + i + '">' + esc(s) + '</label><input type="number" id="sk-' + i + '" min="0" max="100" value="' + p.skills[i] + '"' + (v ? ' disabled title="Set by your college assessment"' : '') + '><span class="src">' + (v ? '<span class="chip success">Assessed by your college · counts</span>' : '<span class="chip">Your own rating · counts once assessed</span>') + '</span></div>';
+      return '<div class="skillrow"><label for="sk-' + i + '">' + esc(s) + '</label><input type="number" id="sk-' + i + '" min="0" max="100" placeholder="0–100" value="' + (v || !p.skillsRated || p.skillsRated[i] ? p.skills[i] : '') + '"' + (v ? ' disabled title="Set by your college assessment"' : '') + '><span class="src">' + (v ? '<span class="chip success">Assessed by your college · counts</span>' : p.skillsRated && !p.skillsRated[i] ? '<span class="chip">Not rated yet · type your own rating</span>' : '<span class="chip">Your own rating · counts once assessed</span>') + '</span></div>';
     }).join('');
   }
   function years(prog, year) {
@@ -106,7 +120,7 @@
   // Typed or picked: both boxes accept anything. A new role or programme is added and the page follows it.
   var progBox, roleBox;
   function pickRole(key) {
-    $('#f-role').value = key; data.profile.role = key; data.profile.skills = [50, 50, 50, 50]; data.profile.verifiedSkills = []; skills(data.profile);
+    $('#f-role').value = key; data.profile.role = key; data.profile.skills = [0, 0, 0, 0]; data.profile.skillsRated = [false, false, false, false]; data.profile.verifiedSkills = []; skills(data.profile);
     save().then(function () { skills(data.profile); ideas($('#f-prog').value); }).catch(function () {});
   }
   function pickProg(key) { $('#f-prog').value = key; years(key, +$('#f-year').value); ideas(key); save().catch(function () {}); }
@@ -147,7 +161,7 @@
   function read() {
     var role = $('#f-role').value;
     return { goal: $('#w-goal').value, interests: $('#w-interests').value, cities: $('#w-cities').value, ownSkills: own, prog: $('#f-prog').value, year: +$('#f-year').value, cgpa: $('#f-cgpa').value, role: role,
-      skills: [0, 1, 2, 3].map(function (i) { var el = $('#sk-' + i); return el ? el.value : 50; }),
+      skills: [0, 1, 2, 3].map(function (i) { var el = $('#sk-' + i); return el ? el.value : ''; }),
       ocean: !consents.psychometric ? null : touched.length === 5 ? { o: $('#o-o').value, c: $('#o-c').value, e: $('#o-e').value, a: $('#o-a').value, n: $('#o-n').value } : undefined,
       // Career clarity is sent only once the student has set it, so an untouched slider is never saved as an answer.
       clarity: clarityTouched || (data && data.profile.clarity != null) ? $('#f-clarity').value : undefined };
@@ -203,9 +217,34 @@
       .catch(function (e) { $('#saveState').textContent = e.message; throw e; });
     return pending;
   }
+  // A new student: nothing exists until they type their programme, year and target role.
+  var sProg, sRole;
+  function setupMode() {
+    $('#gate').hidden = true; $('#content').hidden = true; $('#setup').hidden = false;
+    if (sProg) return;
+    var yearsOf = function () { var p = meta.programmes.filter(function (x) { return x.id === sProg.key(); })[0]; return p ? p.years : null; };
+    var yearNote = function () { var n = yearsOf(); $('#s-yearNote').textContent = n ? 'Type a number from 1 to ' + n + '.' : ''; };
+    sProg = N.typeable($('#s-prog'), { kind: 'programme', meta: meta, note: $('#s-progNote'), onPick: function (key) { yearNote();
+      N.api('GET', '/api/library/suggest?programme=' + encodeURIComponent(key)).then(function (d) { $('#s-ideas').innerHTML = d.roles.length ? '<span class="muted">Common after ' + esc(d.programme) + ':</span> ' + d.roles.slice(0, 5).map(function (r) { return '<button type="button" class="chip" data-idea="' + esc(r.label) + '" style="cursor:pointer;border:1px solid var(--border)">' + esc(r.label) + '</button>'; }).join('') : ''; }).catch(function () {}); } });
+    sRole = N.typeable($('#s-role'), { kind: 'role', meta: meta, note: $('#s-roleNote'), onPick: function () {} });
+    $('#s-ideas').addEventListener('click', function (e) { var b = e.target.closest('[data-idea]'); if (b) sRole.choose(b.dataset.idea); });
+    $('#setupForm').addEventListener('submit', function (e) {
+      e.preventDefault(); var err = $('#s-err'), say = function (m, el) { err.hidden = !m; err.textContent = m || ''; if (el) el.focus(); };
+      // A box that is still being typed in is settled first, then all three answers are checked.
+      Promise.all([sProg.choose($('#s-prog').value), sRole.choose($('#s-role').value)]).then(function () {
+        var y = N.matchChoice($('#s-year').value, [1, 2, 3, 4, 5, 6].map(function (n) { return { v: String(n), t: N.ordinal(n) + ' year' }; })), max = yearsOf();
+        if (!sProg.key()) return say('Type your programme.', $('#s-prog'));
+        if (!y || +y.v > max) return say('Type which year you are in, from 1 to ' + max + '.', $('#s-year'));
+        if (!sRole.key()) return say('Type the job you are aiming for.', $('#s-role'));
+        say('');
+        return N.api('PUT', '/api/me/profile', { prog: sProg.key(), year: +y.v, role: sRole.key() }).then(function () { $('#setup').hidden = true; start(); }).catch(function (x) { say(x.message); });
+      });
+    });
+  }
   function start() {
     $('#gate').hidden = true; $('#content').hidden = false;
-    N.api('GET', '/api/me/profile').then(function (d) { data = d; fill(d.profile); render(); history(); }).catch(function (e) { N.showError($('#gate'), e); $('#gate').hidden = false; });
+    N.today();
+    N.api('GET', '/api/me/profile').then(function (d) { if (d.needsSetup) return setupMode(); data = d; fill(d.profile); render(); history(); }).catch(function (e) { N.showError($('#gate'), e); $('#gate').hidden = false; });
   }
   N.boot('score', ['student']).then(function (ctx) {
     meta = ctx.meta; me = ctx.me; consents = ctx.consents; $('#ver').textContent = 'formula ' + meta.formulaVersion;

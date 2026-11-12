@@ -33,7 +33,7 @@
       <header><h2 id="postTitle">Post a skill requirement</h2><span class="small muted">Colleges see this on their dashboard</span></header>
       <div style="display:grid;gap:0.85rem">
         <div class="field"><label for="d-extra">Anything else you need, in your own words</label><input type="text" id="d-extra" maxlength="240" placeholder="Separate with commas: Tally, spoken Kannada, night shifts"><span class="hint">Students see these beside your requirement and are told when they have listed the same skill.</span></div>
-        <div class="row-2"><div class="field"><label for="d-open">Openings</label><input type="number" id="d-open" min="1" max="500" value="3"></div><div class="field"><label for="d-city">City</label><input type="text" id="d-city" value="Bengaluru" maxlength="80"></div></div>
+        <div class="row-2"><div class="field"><label for="d-open">Openings</label><input type="number" id="d-open" min="1" max="500" placeholder="How many"></div><div class="field"><label for="d-city">City</label><input type="text" id="d-city" maxlength="80" placeholder="Where the job is"></div></div>
         <fieldset><legend style="font-weight:600;font-size:0.9rem;margin-bottom:0.2rem">Skills you need for this role</legend><div id="d-skills" style="display:grid;gap:0.4rem"></div></fieldset>
         <p class="small" id="d-err" style="color:var(--danger)" hidden></p>
         <div><button class="btn btn-primary" type="submit">Post requirement</button></div>
@@ -50,6 +50,11 @@
   var cell = function (n) { return n == null ? '<td class="n suppressed" title="Hidden: fewer than 5 students">&lt;5</td>' : '<td class="n">' + n + '</td>'; };
   function loadSupply() {
     var role = $('#roleSel').value;
+    if (!role) {
+      $('#supTitle').textContent = 'Students building towards the role you type'; $('#postTitle').textContent = 'Post a requirement';
+      $('#supply').innerHTML = '<tr><td colspan="6" class="muted">Type the role you are hiring for, above, to see how many students are building towards it.</td></tr>'; $('#scarce').innerHTML = ''; $('#poolNote').textContent = ''; $('#related').innerHTML = '';
+      $('#d-skills').innerHTML = '<span class="small muted">Type a role above and its skills appear here.</span>'; return;
+    }
     $('#supTitle').textContent = 'Students building towards ' + meta.roles[role].label;
     $('#postTitle').textContent = 'Post a requirement for ' + meta.roles[role].label;
     N.api('GET', '/api/employer/supply?role=' + encodeURIComponent(role)).then(function (s) {
@@ -80,7 +85,7 @@
     meta = ctx.meta;
     N.api('GET', '/api/me').then(function (r) { if (r.user.employer) $('#orgName').textContent = r.user.employer.name + ' · totals only'; });
     roleBox = N.typeable($('#roleText'), { kind: 'role', meta: meta, note: $('#roleNote'), onPick: function (key) { $('#roleSel').value = key; loadSupply(); } });
-    $('#roleSel').value = 'hr'; roleBox.set('hr');
+    $('#roleSel').value = '';
     loadSupply(); loadPosts(); loadMyIntros();
     N.live(function () { loadPosts(); loadMyIntros(); }, 30);
   });
@@ -88,6 +93,7 @@
   $('#introBtn').addEventListener('click', function () { N.api('POST', '/api/employer/intros', { role: $('#roleSel').value }).then(function (r) { N.toast(r.message); loadMyIntros(); }).catch(function (x) { N.toast(x.message); }); });
   $('#demandForm').addEventListener('submit', function (e) {
     e.preventDefault(); var err = $('#d-err');
+    if (!$('#roleSel').value) { var de = $('#d-err'); de.hidden = false; de.textContent = 'Type the role you are hiring for first, in the box at the top.'; $('#roleText').focus(); return; }
     N.api('POST', '/api/employer/demand', { role: $('#roleSel').value, skills: $$('#d-skills input:checked').map(function (i) { return i.value; }), extraSkills: $('#d-extra').value, openings: $('#d-open').value, city: $('#d-city').value })
       .then(function () { err.hidden = true; $('#d-extra').value = ''; $$('#d-skills input').forEach(function (i) { i.checked = false; }); loadPosts(); N.toast('Posted. Partner colleges will see it on their dashboard.'); })
       .catch(function (x) { err.hidden = false; err.textContent = x.message; });

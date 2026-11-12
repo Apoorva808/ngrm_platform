@@ -40,11 +40,12 @@
 <script>
 (function () {
   var N = NGRM, $ = N.$, esc = N.esc, domains = [], colleges = [];
-  var HINT = { student: 'Your account is ready as soon as you confirm your email.', mentor: 'An admin approves mentor accounts before first sign-in.', college_admin: 'An admin approves placement cell accounts before first sign-in.', employer: 'An admin approves employer accounts before first sign-in.', researcher: 'An admin approves researcher accounts before first sign-in.' };
+  var HINT = { student: 'Your account is ready as soon as you finish this form.', mentor: 'An admin approves mentor accounts before first sign-in.', college_admin: 'An admin approves placement cell accounts before first sign-in.', employer: 'An admin approves employer accounts before first sign-in.', researcher: 'An admin approves researcher accounts before first sign-in.' };
   function err(m) { var e = $('#err'); e.hidden = !m; e.textContent = m || ''; }
   function shape() {
     var r = $('#role').value, college = r === 'student' || r === 'mentor' || r === 'college_admin';
-    $('#instField').hidden = !college; $('#orgField').hidden = r !== 'employer'; $('#roleHint').textContent = HINT[r];
+    $('#instField').hidden = !college; $('#orgField').hidden = r !== 'employer'; $('#roleHint').textContent = HINT[r] || '';
+    if ($('#instField').hidden) $('#cityField').hidden = true;
     $('#emailLbl').textContent = college ? 'College email' : 'Work email';
     $('#emailHint').textContent = r === 'student' && domains.length ? 'Use your college email ending in ' + domains.map(function (d) { return '@' + d; }).join(' or ') + '.' : '';
   }

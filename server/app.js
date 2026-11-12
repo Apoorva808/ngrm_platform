@@ -71,7 +71,9 @@ function createApp(db, opts = {}) {
   function profileRow(userId) { return h.get('SELECT * FROM profiles WHERE user_id = ?', userId); }
   function toDomain(row) {
     const vs = verifiedSkills(row.user_id, row.target_role);
-    return { prog: row.programme, year: row.year, cgpa: row.cgpa, cgpaConfirmed: !!row.cgpa_confirmed, role: row.target_role, skills: parse(row.skills_json, [50, 50, 50, 50]), skillsVerified: [0, 1, 2, 3].map((i) => i in vs),
+    // A skill the student has not rated is stored as null: shown blank, never filled in for them.
+    const raw = [0, 1, 2, 3].map((i) => parse(row.skills_json, [])[i] ?? null);
+    return { prog: row.programme, year: row.year, cgpa: row.cgpa, cgpaConfirmed: !!row.cgpa_confirmed, role: row.target_role, skills: raw.map((x) => x ?? 0), skillsRated: raw.map((x) => x != null), skillsVerified: [0, 1, 2, 3].map((i) => i in vs),
       ocean: parse(row.ocean_json, null), comm: row.comm, clarity: row.clarity };
   }
   const evidenceOf = (userId) => h.all('SELECT id, type, title, completed_on, file_name, status, verified_by, verified_at, skill_index, skill_role, skill_value, file_path IS NOT NULL AS has_file FROM evidence WHERE user_id = ? ORDER BY id', userId);
@@ -131,6 +133,28 @@ function createApp(db, opts = {}) {
   const SIGNUP_ROLES = ['student', 'mentor', 'college_admin', 'employer', 'researcher'];
 
   // ---------- Public ----------
+  // ---------- Mentors for every student ----------
+  // A student with no mentor cannot have anything confirmed, so nobody is left without one when their college has mentors:
+  // each new student goes to the mentor at their college with the fewest students.
+  function giveMentor(studentId) {
+    const st = h.get("SELECT id, institution_id FROM users WHERE id = ? AND role = 'student'", studentId);
+    if (!st || !st.institution_id || h.get('SELECT 1 FROM mentor_links WHERE student_id = ?', st.id)) return false;
+    const m = h.get("SELECT u.id FROM users u WHERE u.role = 'mentor' AND u.institution_id = ? ORDER BY (SELECT COUNT(*) FROM mentor_links l WHERE l.mentor_id = u.id), u.id LIMIT 1", st.institution_id);
+    if (!m) return false;
+    h.run('INSERT INTO mentor_links (mentor_id, student_id) VALUES (?, ?)', m.id, st.id); return true;
+  }
+  const unmentored = (instId) => h.all("SELECT u.id FROM users u WHERE u.role = 'student' AND u.institution_id = ? AND NOT EXISTS (SELECT 1 FROM mentor_links l WHERE l.student_id = u.id) ORDER BY u.id", instId);
+  const shareOut = (instId) => h.tx(() => unmentored(instId).filter((s) => giveMentor(s.id)).length);
+  // The placement cell sees how its mentors are loaded and can share out students who have none. No student is named.
+  const mentoring = (instId) => ({ mentors: h.all("SELECT u.name, (SELECT COUNT(*) FROM mentor_links l WHERE l.mentor_id = u.id) AS students FROM users u WHERE u.role = 'mentor' AND u.institution_id = ? ORDER BY u.name", instId), withoutMentor: unmentored(instId).length });
+  app.get('/api/college/mentoring', need('college_admin'), (req, res) => res.json(mentoring(req.user.institution_id)));
+  app.post('/api/college/mentoring/share', need('college_admin'), (req, res) => {
+    if (!h.get("SELECT 1 FROM users WHERE role = 'mentor' AND institution_id = ?", req.user.institution_id)) return fail(res, 409, 'No mentor at your college has an NGRM account yet. Ask your faculty mentors to create one; the NGRM admin approves it.');
+    const shared = shareOut(req.user.institution_id);
+    audit(req.user.id, 'college.mentors_shared', shared);
+    res.json({ shared, ...mentoring(req.user.institution_id) });
+  });
+
   // ---------- Typed roles and programmes ----------
   // Built-in ones live in domain.js; typed ones live in the database and are loaded into the same lists.
   function loadLibrary() {
@@ -293,6 +317,7 @@ function createApp(db, opts = {}) {
     const r = auth.signUpDirect({ name, email, role, institutionId: withCollege(), orgName, password: b.password });
     if (r.error) return fail(res, r.status, r.error);
     if (r.pending) return res.json({ pending: true });
+    giveMentor(r.user.id);
     setCookie(res, r.token); res.json({ user: { id: r.user.id, name: r.user.name, role: r.user.role } });
   });
   app.post('/api/auth/sign-up/verify', (req, res) => {
@@ -300,6 +325,7 @@ function createApp(db, opts = {}) {
     const r = auth.signUpVerify(req.body?.email, req.body?.code);
     if (r.error) return fail(res, 400, r.error);
     if (r.pending) return res.json({ pending: true });
+    giveMentor(r.user.id);
     setCookie(res, r.token); res.json({ user: { id: r.user.id, name: r.user.name, role: r.user.role } });
   });
   app.post('/api/auth/request-code', (req, res) => {
@@ -411,7 +437,7 @@ function createApp(db, opts = {}) {
     const first = u.name.replace(/^(dr|prof|mr|mrs|ms|shri|smt)\.?\s+/i, '').split(/[\s,]+/)[0] || u.name;
     if (u.role === 'student') {
       const c = hasConsent(u.id, 'profile') ? computeFor(u.id) : null;
-      if (!c) lines.push('Start by choosing what NGRM may store, then fill in your profile.');
+      if (!c) lines.push(hasConsent(u.id, 'profile') ? 'Type your programme, year and target role on My score to begin. Nothing is filled in for you.' : 'Start by choosing what NGRM may store.');
       else {
         lines.push(`${D.programme(c.p.prog).label}, aiming for ${D.ROLES[c.p.role].label} · ${D.pathNote(c.p).label.toLowerCase()} · score ${c.result.index.toFixed(1)}`);
         const wait = []; if (c.result.flags.cgpaUnconfirmed) wait.push('your CGPA to be confirmed'); if (c.result.flags.skillsUnassessed) wait.push(plural(c.result.flags.skillsUnassessed, 'skill', 'skills') + ' to be assessed');
@@ -426,13 +452,15 @@ function createApp(db, opts = {}) {
       let cg = 0, sk = 0, ev = 0;
       for (const id of ids) { const c = computeFor(id); if (!c) continue; if (c.result.flags.cgpaUnconfirmed) cg++; if (c.result.flags.skillsUnassessed) sk++; ev += n("SELECT COUNT(*) AS n FROM evidence WHERE user_id = ? AND status = 'pending'", id); }
       lines.push(`You mentor ${plural(ids.length, 'student', 'students')}.`);
+      const idle = ids.filter((id) => !profileRow(id)).length + h.all('SELECT student_id AS id FROM mentor_links WHERE mentor_id = ?', u.id).filter((x) => !hasConsent(x.id, 'profile')).length;
+      if (idle) lines.push(`${plural(idle, 'has', 'have')} not started a profile yet.`);
       const wait = []; if (ev) wait.push(plural(ev, 'evidence item', 'evidence items') + ' to verify'); if (cg) wait.push(plural(cg, 'CGPA', 'CGPAs') + ' to confirm'); if (sk) wait.push(plural(sk, 'student', 'students') + ' with skills to assess');
       lines.push(wait.length ? 'Waiting for you: ' + wait.join(', ') + '.' : 'Nothing is waiting for you.');
     } else if (u.role === 'college_admin') {
       const inst = h.get('SELECT name FROM institutions WHERE id = ?', u.institution_id) || { name: 'your college' };
       const st = n("SELECT COUNT(*) AS n FROM users WHERE role = 'student' AND institution_id = ?", u.institution_id), noMentor = n("SELECT COUNT(*) AS n FROM users u WHERE u.role = 'student' AND u.institution_id = ? AND NOT EXISTS (SELECT 1 FROM mentor_links l WHERE l.student_id = u.id)", u.institution_id);
       lines.push(`${inst.name}: ${plural(st, 'student', 'students')} on NGRM.`);
-      if (noMentor) lines.push(`${plural(noMentor, 'student has', 'students have')} no mentor yet. Ask the NGRM admin to link them.`);
+      if (noMentor) lines.push(`${plural(noMentor, 'student has', 'students have')} no mentor yet, so nothing they enter can be confirmed. Share them among your mentors below.`);
       const intro = n("SELECT COUNT(*) AS n FROM intro_requests WHERE created_at > datetime('now', '-30 days')"); if (intro) lines.push(`${plural(intro, 'introduction request', 'introduction requests')} from employers in the last 30 days.`);
     } else if (u.role === 'employer') {
       const e = h.get('SELECT name FROM employers WHERE id = ?', u.employer_id) || { name: 'your organisation' };
@@ -466,11 +494,13 @@ function createApp(db, opts = {}) {
     });
   }
   app.get('/api/me/profile', need('student'), needConsent('profile'), (req, res) => {
-    if (!profileRow(req.user.id)) h.run('INSERT INTO profiles (user_id, opt_in_intros) VALUES (?, ?)', req.user.id, hasConsent(req.user.id, 'introductions') ? 1 : 0);
+    // Nothing is filled in for a new student: until they type their programme, year and target role there is no profile.
+    if (!profileRow(req.user.id)) return res.json({ needsSetup: true });
     res.json(profilePayload(req.user.id));
   });
   app.put('/api/me/profile', need('student'), needConsent('profile'), (req, res) => {
     const b = req.body || {}; const cur = profileRow(req.user.id) || {};
+    if (!cur.user_id && !(D.PROGRAMMES.find((x) => x.id === b.prog) && has(D.ROLES, b.role) && parseInt(b.year, 10) >= 1)) return fail(res, 400, 'Type your programme, your year and the role you are aiming for to begin.');
     const prog = D.PROGRAMMES.find((x) => x.id === b.prog) ? b.prog : cur.programme || 'ba-psy';
     const years = D.PROGRAMMES.find((x) => x.id === prog).years;
     const role = has(D.ROLES, b.role) ? b.role : has(D.ROLES, cur.target_role) ? cur.target_role : 'hr';
@@ -482,8 +512,9 @@ function createApp(db, opts = {}) {
     // so clearing a low value would otherwise raise it.
     const sticky = (field, col, hi) => { const v = keep(field, col, hi); return v === null ? cur[col] ?? null : v; };
     const newCgpa = sticky('cgpa', 'cgpa', 10);
-    const prevSkills = parse(cur.skills_json, [50, 50, 50, 50]);
-    const skills = Array.isArray(b.skills) && b.skills.length === 4 ? b.skills.map((s, i) => Math.round(num(s, 0, 100) ?? (role === cur.target_role ? prevSkills[i] : 50))) : prevSkills.slice();
+    // The student's own ratings. A blank stays blank; a new role starts with all four unrated.
+    const sameRole = role === cur.target_role, prevSkills = [0, 1, 2, 3].map((i) => (sameRole ? parse(cur.skills_json, [])[i] ?? null : null));
+    const skills = Array.isArray(b.skills) && b.skills.length === 4 ? b.skills.map((s, i) => { const v = num(s, 0, 100); return v === null ? prevSkills[i] : Math.round(v); }) : prevSkills.slice();
     // A skill verified by a college assessment keeps the assessed value; the student cannot overwrite it.
     for (const [i, v] of Object.entries(verifiedSkills(req.user.id, role))) if (v != null) skills[+i] = v;
     // Questionnaire answers: keep what is stored unless new answers are sent; never store them without consent.
@@ -518,7 +549,7 @@ function createApp(db, opts = {}) {
     res.json(profilePayload(req.user.id));
   });
   app.post('/api/me/score', need('student'), needConsent('profile'), (req, res) => {
-    const c = computeFor(req.user.id); if (!c) return fail(res, 404, 'Fill in your profile first.');
+    const c = computeFor(req.user.id); if (!c) return fail(res, 404, 'Type your programme, year and target role on My score first. Nothing is filled in for you.');
     const inputs = JSON.stringify({ profile: c.p, counts: c.result.counts });
     const last = h.get('SELECT id, formula_version, inputs_json FROM score_runs WHERE user_id = ? ORDER BY id DESC LIMIT 1', req.user.id);
     if (last && last.formula_version === c.result.version && last.inputs_json === inputs) return res.json({ id: last.id, alreadyRecorded: true, ...c.result });
@@ -606,7 +637,7 @@ function createApp(db, opts = {}) {
   // ---------- Student: recommendations ----------
   app.get('/api/me/recommendations', need('student'), needConsent('profile'), async (req, res, next) => {
     try {
-      const r = recsFor(req.user.id); if (!r) return fail(res, 404, 'Fill in your profile first.');
+      const r = recsFor(req.user.id); if (!r) return fail(res, 404, 'Type your programme, year and target role on My score first. Nothing is filled in for you.');
       if (hasConsent(req.user.id, 'ai_wording') && process.env.GEMINI_API_KEY) {
         await Promise.all(r.list.map(async (x) => {
           const src = ai.sourceHash(x.why);
@@ -650,7 +681,7 @@ function createApp(db, opts = {}) {
     res.json({ optIn: on });
   });
   app.post('/api/me/baseline', need('student'), needConsent('profile'), needConsent('study'), (req, res) => {
-    const c = computeFor(req.user.id); if (!c) return fail(res, 404, 'Fill in your profile first.');
+    const c = computeFor(req.user.id); if (!c) return fail(res, 404, 'Type your programme, year and target role on My score first. Nothing is filled in for you.');
     // A baseline is the starting point for the study, so it is recorded once.
     const prev = h.get('SELECT created_at FROM baselines WHERE user_id = ? ORDER BY id LIMIT 1', req.user.id);
     if (prev) return fail(res, 409, `Your study baseline was already recorded on ${prev.created_at.slice(0, 10)}. It is recorded only once.`);
@@ -1011,6 +1042,8 @@ function createApp(db, opts = {}) {
       employerId = e ? e.id : Number(h.run('INSERT INTO employers (name, city, is_sample) VALUES (?, NULL, 0)', row.org_name).lastInsertRowid);
     }
     const user = auth.createFromSignup(row, row.institution_id, employerId);
+    // A newly approved mentor takes on students at the college who have nobody yet.
+    if (user.role === 'mentor') shareOut(user.institution_id);
     audit(req.user.id, 'admin.signup_approved', user.id);
     mailNotice(user.email, 'Your NGRM account is approved', `Hello ${user.name},\n\nYour NGRM account has been approved. You can now sign in with your email and the password you chose.`);
     res.json({ ok: true, approved: true });
@@ -1081,6 +1114,9 @@ function createApp(db, opts = {}) {
         h.run('INSERT OR IGNORE INTO mentor_links (mentor_id, student_id) VALUES (?, ?)', m.id, r.id);
       }
     });
+    // Students added without a named mentor get one; new mentors take on students who have nobody yet.
+    for (const r of clean) if (r.role === 'student') giveMentor(r.id);
+    for (const inst of new Set(clean.filter((r) => r.role === 'mentor').map((r) => h.get('SELECT institution_id FROM users WHERE id = ?', r.id).institution_id))) shareOut(inst);
     audit(req.user.id, 'admin.users_added', clean.length);
     // Without emailed codes, each new person gets a temporary password for the admin to hand over. It is shown only here.
     const passwords = emailCodes ? undefined : clean.map((r) => ({ name: r.name, email: r.email, password: auth.setTempPassword(r.id) }));

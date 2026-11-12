@@ -17,6 +17,7 @@
     <ul>
       <li><b>Account:</b> your name, email and college, given by you when you sign up or added by your college or the pilot team. If you choose a password, only a scrambled form of it is kept.</li>
       <li><b>Profile:</b> programme, year, CGPA, target role, your skill ratings and career-clarity rating.</li>
+      <li><b>In your own words:</b> anything you choose to type about your goal, interests, where you want to work, other skills, and steps you add to your plan. Your mentor can read these.</li>
       <li><b>Evidence:</b> courses, certificates, projects, internships and roles you add, and any proof files you upload.</li>
       <li><b>Personality results:</b> only if you separately agree, and only once you enter all five traits yourself.</li>
       <li><b>Your choices:</b> which plan steps you accepted or declined, and each consent you gave or withdrew.</li>
@@ -47,6 +48,7 @@
       <li><b>Delete</b> your account. Your profile, evidence, files, scores and plan are removed for good.</li>
       <li><b>Complain or ask a question:</b> <span id="contact"></span></li>
     </ul></section>
+  <section class="card" id="complaints"><h2>Complaints</h2><p>If you are unhappy with how your information is handled, <span id="contact2"></span> Say what happened and what you would like done. If you are not satisfied with the reply, you may also have the right to complain to the Data Protection Board of India under the Digital Personal Data Protection Act, 2023.</p></section>
   <section class="card"><h2>How long we keep it</h2><p>Until you delete your account or the pilot ends, whichever comes first. Sign-in sessions last 7 days. Your password is kept only in a scrambled form that cannot be read back.</p></section>
   <p class="small muted" id="demoNote"></p>
 </div>
@@ -58,6 +60,7 @@
   N.boot('privacy').then(function (ctx) {
     var o = ctx.meta.operator || {};
     $('#who').textContent = o.name ? 'This NGRM pilot is run by ' + o.name + ', which decides how your data is used and is responsible for it.' : 'This is a demonstration with sample data. A live pilot names the organisation responsible for your data here.';
+    $('#contact2').innerHTML = o.contact ? 'write to <a href="mailto:' + esc(o.contact) + '">' + esc(o.contact) + '</a>.' : 'write to the contact email a live pilot lists here.';
     $('#contact').innerHTML = o.contact ? 'write to <a href="mailto:' + esc(o.contact) + '">' + esc(o.contact) + '</a>.' : 'a live pilot lists a contact email here.';
     if (ctx.meta.demoMode) $('#demoNote').textContent = 'Demo mode: all people shown are fictional.';
   });

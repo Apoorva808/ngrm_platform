@@ -110,7 +110,7 @@ test('a student’s decline cannot be overridden by their mentor', async () => {
 
 test('mentors can only act on their own mentees', async () => {
   const mentor = await as('kavya@demo.ngrm.in');
-  const other = h.get("SELECT u.id FROM users u WHERE u.role = 'student' AND u.id NOT IN (SELECT student_id FROM mentor_links) LIMIT 1").id;
+  const other = h.get("SELECT u.id FROM users u WHERE u.role = 'student' AND u.id NOT IN (SELECT l.student_id FROM mentor_links l JOIN users m ON m.id = l.mentor_id WHERE m.email = 'kavya@demo.ngrm.in') LIMIT 1").id;
   assert.equal((await mentor('PATCH', `/api/mentor/reviews/${other}/project`, { action: 'approve' })).status, 404);
   const ev = h.get('SELECT id FROM evidence WHERE user_id = ? LIMIT 1', other);
   if (ev) assert.equal((await mentor('POST', `/api/mentor/evidence/${ev.id}`, { action: 'verify' })).status, 404);
@@ -390,7 +390,13 @@ test('the study baseline is recorded once, and researchers count people, not row
   h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('study@demo.ngrm.in', 'Study Student', 'student', 1)");
   const c = await as('study@demo.ngrm.in');
   await c('POST', '/api/me/consents', { purposes: { profile: true, study: true }, isAdult: true });
-  await c('GET', '/api/me/profile');
+  // A new student starts with nothing filled in, and nothing can be recorded until they say what they study and aim for.
+  assert.deepEqual((await c('GET', '/api/me/profile')).body, { needsSetup: true });
+  assert.equal((await c('PUT', '/api/me/profile', { cgpa: 8 })).status, 400);
+  assert.equal((await c('POST', '/api/me/baseline')).status, 404);
+  const first = (await c('PUT', '/api/me/profile', { prog: 'bsc-cs', year: 2, role: 'dev' })).body;
+  assert.equal(first.profile.role, 'dev'); assert.deepEqual(first.profile.skillsRated, [false, false, false, false]); assert.equal(first.profile.cgpa, null);
+  assert.equal((await c('PUT', '/api/me/profile', { skills: [70, '', '', ''] })).body.profile.skillsRated.join(), 'true,false,false,false');
   assert.equal((await c('POST', '/api/me/baseline')).status, 201);
   const again = await c('POST', '/api/me/baseline');
   assert.equal(again.status, 409); assert.match(again.body.error, /only once/);
@@ -449,8 +455,7 @@ test('questionnaire answers are never invented: partial or missing traits store 
   h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('fresh@demo.ngrm.in', 'Fresh Student', 'student', 1)");
   const c = await as('fresh@demo.ngrm.in');
   await c('POST', '/api/me/consents', { purposes: { profile: true, psychometric: true }, isAdult: true });
-  await c('GET', '/api/me/profile');
-  let r = await c('PUT', '/api/me/profile', { cgpa: 8 });
+  let r = await c('PUT', '/api/me/profile', { prog: 'ba-psy', year: 1, role: 'hr', cgpa: 8 });
   assert.equal(r.body.profile.ocean, null); assert.equal(r.body.score.factors.psychometric, null); assert.equal(r.body.score.factors.communication, null);
   r = await c('PUT', '/api/me/profile', { ocean: { o: 60, c: 60 } });
   assert.equal(r.body.profile.ocean, null, 'partial answers are not saved');
@@ -1065,5 +1070,42 @@ test('typed everywhere: own words, own steps, typed college, typed employer skil
     assert.match((await today(employer)).lines.join(' '), /requirement/); assert.match((await today(admin)).lines.join(' '), /Waiting for you|Nothing is waiting/);
     assert.match((await today(await who('placement@demo.ngrm.in'))).lines.join(' '), /students on NGRM/); assert.match((await today(await who('research@demo.ngrm.in'))).lines.join(' '), /baseline/);
     assert.equal((await (await who())('GET', '/api/me/today')).status, 401);
+  } finally { s.close(); }
+});
+
+test('every student gets a mentor, and impossible dates are refused', async () => {
+  const db2 = open(':memory:'); seed(db2); const h2 = helpers(db2);
+  const s = createApp(db2, { demoMode: true, sendCode: () => {}, uploadDir: uploads }).listen(0); await new Promise((r) => s.once('listening', r));
+  const b2 = 'http://localhost:' + s.address().port;
+  const who = async (email) => { let cookie = ''; const c = async (method, url, body) => { const r = await fetch(b2 + url, { method, headers: { 'content-type': 'application/json', cookie }, body: body ? JSON.stringify(body) : undefined });
+    const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0]; let json = null; try { json = await r.json(); } catch {} return { status: r.status, body: json }; }; if (email) await c('POST', '/api/auth/demo', { email }); return c; };
+  try {
+    assert.equal(h2.get("SELECT COUNT(*) AS n FROM users u WHERE u.role = 'student' AND NOT EXISTS (SELECT 1 FROM mentor_links l WHERE l.student_id = u.id)").n, 0, 'no sample student is left without a mentor');
+    // A new sign-up is given the mentor at their college with the fewest students.
+    const inst = h2.get("SELECT institution_id AS i FROM users WHERE email = 'kavya@demo.ngrm.in'").i;
+    const meera = await who(); assert.equal((await meera('POST', '/api/auth/sign-up', { role: 'student', name: 'Meera Nair', email: 'meera@x.example', institutionId: inst, password: 'four quiet mango trains' })).status, 200);
+    const id = h2.get("SELECT id FROM users WHERE email = 'meera@x.example'").id;
+    const link = h2.get('SELECT mentor_id FROM mentor_links WHERE student_id = ?', id); assert.ok(link, 'given a mentor at sign-up');
+    assert.equal(h2.get('SELECT institution_id AS i FROM users WHERE id = ?', link.mentor_id).i, inst);
+    // At a college with no mentor yet, students wait; the placement cell sees the count and shares them out once a mentor exists.
+    const col = Number(h2.run("INSERT INTO institutions (name, city, is_sample) VALUES ('Mentorless College', 'Tumakuru', 0)").lastInsertRowid);
+    for (const n of [1, 2, 3]) await (await who())('POST', '/api/auth/sign-up', { role: 'student', name: 'Student ' + 'abc'[n - 1], email: `s${n}@ml.example`, institutionId: col, password: 'four quiet mango trains' });
+    h2.run("INSERT INTO users (email, name, role, institution_id, is_sample) VALUES ('cell@ml.example', 'Placement Cell', 'college_admin', ?, 0)", col);
+    const cell = await who(); await cell('POST', '/api/auth/demo', { email: 'cell@ml.example' }).catch(() => {});
+    const admin = await who('admin@demo.ngrm.in');
+    // (the demo sign-in only covers the listed demo accounts, so sign the cell in with a password the admin hands over)
+    const temp = (await admin('POST', '/api/admin/users/' + h2.get("SELECT id FROM users WHERE email = 'cell@ml.example'").id + '/reset-password')).body.password;
+    await cell('POST', '/api/auth/password', { email: 'cell@ml.example', password: temp }); await cell('POST', '/api/me/password', { password: 'nine brave paper boats' });
+    let m = (await cell('GET', '/api/college/mentoring')).body; assert.equal(m.withoutMentor, 3); assert.equal(m.mentors.length, 0);
+    assert.equal((await cell('POST', '/api/college/mentoring/share')).status, 409);
+    assert.equal((await meera('GET', '/api/college/mentoring')).status, 403);
+    // The admin adds two mentors: waiting students are shared among them at once.
+    assert.equal((await admin('POST', '/api/admin/users', { rows: [{ name: 'Mentor One', email: 'm1@ml.example', role: 'mentor', org: 'Mentorless College' }, { name: 'Mentor Two', email: 'm2@ml.example', role: 'mentor', org: 'Mentorless College' }] })).status, 201);
+    m = (await cell('GET', '/api/college/mentoring')).body; assert.equal(m.withoutMentor, 0); assert.deepEqual(m.mentors.map((x) => x.students).sort(), [1, 2]);
+    assert.ok(!JSON.stringify(m).includes('Student a'), 'the placement cell sees counts, not student names');
+    // Dates that cannot be right are refused.
+    await meera('POST', '/api/me/consents', { purposes: { profile: true }, isAdult: true });
+    for (const bad of ['2031-01-01', '1900-01-01', '2026-13-45', '2026-02-30', 'yesterday']) assert.equal((await meera('POST', '/api/me/evidence', { type: 'project', title: 'A project', completedOn: bad })).status, 400, bad);
+    assert.equal((await meera('POST', '/api/me/evidence', { type: 'project', title: 'A project', completedOn: '2026-10-05' })).status, 201);
   } finally { s.close(); }
 });

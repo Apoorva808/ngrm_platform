@@ -106,11 +106,16 @@ function seed(db) {
       const uid = makeStudent(name, insts[0], g[0], g[1][Math.floor(R() * 3)]);
       if (i < 11) h.run('INSERT INTO mentor_links (mentor_id, student_id) VALUES (?, ?)', kavya, uid);
     });
-    insts.forEach((inst) => {
+    insts.forEach((inst, c) => {
+      // Sample mentors, so that sample students are mentored like real ones would be.
+      const sampleMentors = [1, 2, 3, 4].map((k) => user(`mentor${k}.c${c + 1}@sample.ngrm.in`, `Sample Mentor ${k}`, 'mentor', inst));
       for (let i = 0; i < 120; i++) {
         const g = plan[Math.floor(R() * 3)];
         makeStudent(`${FIRST[Math.floor(R() * FIRST.length)]} ${LAST[Math.floor(R() * LAST.length)]}`, inst, g[0], roleKeys[Math.floor(R() * roleKeys.length)]);
       }
+      // Every sample student at this college who has no mentor yet is shared among the sample mentors in turn.
+      h.all("SELECT u.id FROM users u WHERE u.role = 'student' AND u.institution_id = ? AND NOT EXISTS (SELECT 1 FROM mentor_links l WHERE l.student_id = u.id) ORDER BY u.id", inst)
+        .forEach((st, i) => h.run('INSERT INTO mentor_links (mentor_id, student_id) VALUES (?, ?)', sampleMentors[i % sampleMentors.length], st.id));
     });
 
     h.run('INSERT INTO demand_posts (employer_id, role, skills_json, openings, city) VALUES (?, ?, ?, ?, ?)', emps[0], 'hr', JSON.stringify(['Excel and data analysis', 'Research methods']), 4, 'Bengaluru');
