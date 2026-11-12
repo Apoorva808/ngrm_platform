@@ -44,7 +44,7 @@ function createApp(db, opts = {}) {
     next();
   });
   app.use(express.json({ limit: '100kb' }));
-  app.use((err, req, res, next) => (err && err.type === 'entity.too.large' ? res.status(413).json({ error: 'That file is larger than 5 MB.' }) : err && err.type === 'entity.parse.failed' ? res.status(400).json({ error: 'The request could not be read. Refresh the page and try again.' }) : next(err)));
+  app.use((err, req, res, next) => (err && err.type === 'entity.too.large' ? res.status(413).json({ error: /\/file$/.test(req.path) ? 'That file is larger than 5 MB.' : 'That request is too large.' }) : err && err.type === 'entity.parse.failed' ? res.status(400).json({ error: 'The request could not be read. Refresh the page and try again.' }) : next(err)));
   app.use((req, res, next) => { req.token = readCookie(req, COOKIE); req.user = auth.userFromToken(req.token); next(); });
 
   const fail = (res, status, message) => res.status(status).json({ error: message });
@@ -230,6 +230,7 @@ function createApp(db, opts = {}) {
     const years = D.PROGRAMMES.find((x) => x.id === prog).years;
     const role = has(D.ROLES, b.role) ? b.role : has(D.ROLES, cur.target_role) ? cur.target_role : 'hr';
     const num = (v, lo, hi) => (v === '' || v === null || v === undefined || Number.isNaN(+v) ? null : D.clamp(+v, lo, hi));
+    if (b.cgpa !== undefined && b.cgpa !== '' && b.cgpa !== null && !(Number(b.cgpa) >= 0 && Number(b.cgpa) <= 10)) return fail(res, 400, 'CGPA must be a number from 0 to 10.');
     // A field left out of the request keeps its stored value; an empty value clears it.
     const keep = (field, col, hi) => (b[field] === undefined ? cur[col] ?? null : num(b[field], 0, hi));
     // CGPA and career clarity can be corrected but not cleared once given: a blank is left out of the score,
@@ -281,6 +282,10 @@ function createApp(db, opts = {}) {
     if (!has(D.EVIDENCE_TYPES, b.type) || b.type === 'assessment') return fail(res, 400, 'Choose a type of evidence.');
     const title = String(b.title || '').trim().slice(0, 200);
     if (!title) return fail(res, 400, 'Say what the evidence is, for example the course or project name.');
+    // Keeps a mentor's queue usable: a student can have 10 items waiting for a check and 60 in all.
+    const mine = h.get("SELECT COUNT(*) AS total, SUM(status != 'verified') AS waiting FROM evidence WHERE user_id = ? AND type != 'assessment'", req.user.id);
+    if (mine.waiting >= 10) return fail(res, 409, 'You have 10 items waiting for your mentor. Add more once some have been checked.');
+    if (mine.total >= 60) return fail(res, 409, 'You have reached the limit of 60 evidence items. Remove one you no longer need first.');
     let date = null;
     if (b.completedOn) {
       const d = /^\d{4}-\d{2}-\d{2}$/.test(b.completedOn) ? new Date(b.completedOn + 'T00:00:00Z') : null;
@@ -544,8 +549,8 @@ function createApp(db, opts = {}) {
       noInternshipPct: safePct(rs.filter((r) => r.counts.internship === 0).length, rs.length), rounding: 5 });
   });
   app.get('/api/demand', need(), (req, res) => {
-    res.json(h.all('SELECT d.id, d.role, d.skills_json, d.openings, d.city, d.created_at, e.name AS employer FROM demand_posts d JOIN employers e ON e.id = d.employer_id ORDER BY d.id DESC LIMIT 50')
-      .map((d) => ({ ...d, skills: parse(d.skills_json, []), skills_json: undefined })));
+    res.json(h.all('SELECT d.id, d.role, d.skills_json, d.openings, d.city, d.created_at, d.employer_id, e.name AS employer FROM demand_posts d JOIN employers e ON e.id = d.employer_id ORDER BY d.id DESC LIMIT 50')
+      .map((d) => ({ ...d, skills: parse(d.skills_json, []), skills_json: undefined, employer_id: undefined, mine: req.user.role === 'employer' && d.employer_id === req.user.employer_id })));
   });
 
   // Live demand for one role: what partner employers have posted in the last 90 days.
@@ -560,7 +565,8 @@ function createApp(db, opts = {}) {
 
   // ---------- Employer (aggregates only) ----------
   app.get('/api/employer/supply', need('employer'), (req, res) => {
-    const role = has(D.ROLES, req.query.role) ? req.query.role : 'hr';
+    if (req.query.role !== undefined && !has(D.ROLES, req.query.role)) return fail(res, 400, 'Choose a role.');
+    const role = req.query.role || 'hr';
     const insts = h.all('SELECT id, name FROM institutions ORDER BY id');
     const rows = h.all("SELECT u.id, u.institution_id, p.skills_json, p.opt_in_intros FROM users u JOIN profiles p ON p.user_id = u.id WHERE u.role = 'student' AND p.target_role = ?", role)
       .filter((r) => hasConsent(r.id, 'profile'));
@@ -585,9 +591,19 @@ function createApp(db, opts = {}) {
     if (!skills.length) return fail(res, 400, 'Pick at least one skill.');
     const openings = Number(b.openings);
     if (!Number.isInteger(openings) || openings < 1 || openings > 500) return fail(res, 400, 'Openings must be a whole number from 1 to 500.');
+    // One employer cannot swamp what students see: at most 3 open posts and 500 openings per role in any 90 days.
+    const open = h.get("SELECT COUNT(*) AS posts, COALESCE(SUM(openings), 0) AS openings FROM demand_posts WHERE employer_id = ? AND role = ? AND created_at > datetime('now', '-90 days')", req.user.employer_id, b.role);
+    if (open.posts >= 3) return fail(res, 409, 'You already have 3 requirements posted for this role in the last 90 days. Withdraw one to post another.');
+    if (open.openings + openings > 500) return fail(res, 409, `That would take your openings for this role past 500 in 90 days (you have ${open.openings} posted). Lower the number or withdraw an older post.`);
     h.run('INSERT INTO demand_posts (employer_id, role, skills_json, openings, city) VALUES (?, ?, ?, ?, ?)', req.user.employer_id, b.role, JSON.stringify(skills), openings, String(b.city || '').trim().slice(0, 80) || null);
     audit(req.user.id, 'employer.posted_demand', b.role);
     res.status(201).json({ ok: true });
+  });
+  app.delete('/api/employer/demand/:id', need('employer'), (req, res) => {
+    const r = h.run('DELETE FROM demand_posts WHERE id = ? AND employer_id = ?', +req.params.id, req.user.employer_id);
+    if (!r.changes) return fail(res, 404, 'Not found.');
+    audit(req.user.id, 'employer.withdrew_demand', +req.params.id);
+    res.json({ ok: true });
   });
   app.post('/api/employer/intros', need('employer'), (req, res) => {
     const role = has(D.ROLES, req.body?.role) ? req.body.role : null; if (!role) return fail(res, 400, 'Choose a role.');
@@ -635,11 +651,22 @@ function createApp(db, opts = {}) {
   app.get('/api/research/export', need('researcher'), (req, res) => {
     const rows = h.all("SELECT b.user_id, b.created_at, s.formula_version, s.factors_json, s.index_value, p.programme, p.year, p.target_role FROM baselines b JOIN score_runs s ON s.id = b.score_run_id JOIN profiles p ON p.user_id = b.user_id")
       .filter((r) => hasConsent(r.user_id, 'study'))
-      .map((r) => ({ participant: pseudo(r.user_id), recordedAt: r.created_at, formulaVersion: r.formula_version, programme: r.programme, year: r.year, targetRole: r.target_role, index: Math.round(r.index_value / 5) * 5,
-        factors: Object.fromEntries(Object.entries(parse(r.factors_json, {})).map(([k, v]) => [k, typeof v === 'number' ? Math.round(v / 5) * 5 : v])) }));
+      .map((r) => ({ participant: pseudo(r.user_id), recordedAt: r.created_at.slice(0, 7), formulaVersion: r.formula_version, programme: r.programme, year: r.year, targetRole: r.target_role, index: Math.round(r.index_value / 5) * 5,
+        factors: Object.fromEntries(Object.entries(parse(r.factors_json, {})).map(([k, v]) => [k, typeof v === 'number' ? (k === 'academic' ? Math.min(80, Math.floor(v / 20) * 20) : Math.round(v / 5) * 5) : v])) }));
+    // Academic is CGPA × 10, which classmates may know, so it is given in wide bands (40 = 40–59, 60 = 60–79, 80 = 80–100).
+    // No record may stand alone on what an outsider could already know (programme, year, target role, rough CGPA).
+    // Step 1: where fewer than 5 share programme + year + role, drop role, then year, then programme.
+    const K = D.MIN_GROUP, groupBy = (list, key) => { const m = new Map(); for (const r of list) { const k = key(r); (m.get(k) || m.set(k, []).get(k)).push(r); } return m; };
+    const q = (r) => [r.programme, r.year, r.targetRole].join('|');
+    for (const field of ['targetRole', 'year', 'programme']) for (const g of groupBy(rows, q).values()) if (g.length < K) for (const r of g) r[field] = null;
+    // Step 2: inside each such group, academic bands held by fewer than 5 are withheld; if the withheld set is itself under 5, the next smallest band joins it.
+    for (const g of groupBy(rows, q).values()) {
+      const bands = [...groupBy(g, (r) => r.factors.academic).entries()].filter(([b]) => b !== null && b !== undefined).sort((a, b) => a[1].length - b[1].length);
+      let hidden = g.filter((r) => r.factors.academic == null).length;
+      for (const [, list] of bands) { if (list.length >= K && (hidden === 0 || hidden >= K)) continue; for (const r of list) r.factors.academic = null; hidden += list.length; }
+    }
     audit(req.user.id, 'research.exported', rows.length);
-    // Scores are given in bands of 5: precise enough for the outcome study, too coarse to match one student from a known CGPA.
-    res.json({ participants: new Set(rows.map((r) => r.participant)).size, banding: 5, rows });
+    res.json({ participants: new Set(rows.map((r) => r.participant)).size, banding: 5, academicBands: '40 = 40–59, 60 = 60–79, 80 = 80–100; withheld where fewer than 5 share it', minimumGroup: K, rows });
   });
 
   // ---------- Admin ----------
@@ -789,6 +816,7 @@ function createApp(db, opts = {}) {
   // ---------- Frontend ----------
   app.use(express.static(path.join(__dirname, '..', 'public'), { extensions: ['html'] }));
   app.use('/api', (req, res) => fail(res, 404, 'Not found.'));
+  app.use((req, res) => res.status(404).sendFile(path.join(__dirname, '..', 'public', '404.html')));
   app.use((err, req, res, next) => { console.error(err); if (res.headersSent) return next(err); fail(res, err.status || 500, err.expose ? err.message : 'Something went wrong on our side. Try again.'); });
 
   return app;

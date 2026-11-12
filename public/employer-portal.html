@@ -59,7 +59,7 @@
     }).catch(function (e) { N.showError($('#scarce'), e); });
     $('#d-skills').innerHTML = meta.roles[role].skills.map(function (n, k) { return '<label class="check"><input type="checkbox" id="ds-' + k + '" value="' + esc(n) + '"> <span>' + esc(n) + '</span></label>'; }).join('');
   }
-  function loadPosts() { N.api('GET', '/api/demand').then(function (d) { $('#posted').innerHTML = d.map(function (x) { return '<div style="border:1px solid var(--border);border-radius:var(--radius-md);padding:0.65rem 0.85rem;display:grid;gap:0.15rem"><b class="small">' + esc(x.employer) + '</b><span class="small">' + esc(meta.roles[x.role].label) + ' · ' + x.openings + ' opening' + (x.openings == 1 ? '' : 's') + (x.city ? ' · ' + esc(x.city) : '') + '</span><span class="small muted">Needs: ' + x.skills.map(esc).join(', ') + '</span></div>'; }).join('') || '<p class="muted">Nothing posted yet.</p>'; }); }
+  function loadPosts() { N.api('GET', '/api/demand').then(function (d) { $('#posted').innerHTML = d.map(function (x) { return '<div style="border:1px solid var(--border);border-radius:var(--radius-md);padding:0.65rem 0.85rem;display:grid;gap:0.15rem"><b class="small">' + esc(x.employer) + '</b><span class="small">' + esc(meta.roles[x.role].label) + ' · ' + x.openings + ' opening' + (x.openings == 1 ? '' : 's') + (x.city ? ' · ' + esc(x.city) : '') + '</span><span class="small muted">Needs: ' + x.skills.map(esc).join(', ') + '</span>' + (x.mine ? '<span><button class="btn-link" type="button" data-withdraw="' + x.id + '">Withdraw this post</button></span>' : '') + '</div>'; }).join('') || '<p class="muted">Nothing posted yet.</p>'; }); }
   function loadMyIntros() {
     N.api('GET', '/api/employer/intros').then(function (list) {
       $('#myIntros').innerHTML = list.length ? '<b class="small">Your introduction requests</b><ul class="small" style="margin:0.3rem 0 0;padding-left:1.1rem">' + list.map(function (r) {
@@ -68,6 +68,10 @@
       }).join('') + '</ul>' : '';
     }).catch(function () {});
   }
+  document.addEventListener('click', function (e) {
+    var w = e.target.closest('[data-withdraw]'); if (!w) return;
+    N.api('DELETE', '/api/employer/demand/' + w.dataset.withdraw).then(function () { N.toast('Post withdrawn. Students no longer see it.'); loadPosts(); }).catch(function (x) { N.toast(x.message); });
+  });
   N.boot('employer', ['employer']).then(function (ctx) {
     meta = ctx.meta;
     N.api('GET', '/api/me').then(function (r) { if (r.user.employer) $('#orgName').textContent = r.user.employer.name + ' · totals only'; });

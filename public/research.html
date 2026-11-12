@@ -29,9 +29,10 @@ N2.boot('research', ['researcher']).then(function (ctx) {
     $('#kpis').innerHTML = '<div class="card"><b class="num" style="font-size:1.7rem">' + d.participants + '</b><p class="small muted">Participants with a baseline</p></div><div class="card"><b class="num" style="font-size:1.7rem">' + N2.f1(avg(rows.map(function (r) { return r.index; }))) + '</b><p class="small muted">Average baseline index</p></div><div class="card"><b class="num" style="font-size:1.7rem">0</b><p class="small muted">Outcome check-ins so far (first at graduation)</p></div>';
     $('#factors').innerHTML = meta.factors.map(function (F) { var v = avg(rows.map(function (r) { return r.factors[F.k]; }).filter(function (x) { return typeof x === 'number'; }));
       return '<div class="bar-row"><div class="lbl"><b>' + F.label + '</b><small>Weight ' + F.w + '%</small></div><div class="track"><i style="width:' + v + '%"></i></div><span class="val">' + N2.f1(v) + '</span></div>'; }).join('');
-    $('#count').textContent = rows.length + ' records';
+    var W = '<span class="muted">Withheld</span>';
+    $('#count').textContent = rows.length + ' records · details shared by fewer than ' + (d.minimumGroup || 5) + ' people are withheld';
     $('#rows').innerHTML = rows.slice(0, 200).map(function (r) { var p = meta.programmes.filter(function (x) { return x.id === r.programme; })[0];
-      return '<tr><td class="num">' + esc(r.participant) + '</td><td>' + esc(p ? p.label : r.programme) + '</td><td class="n">' + r.year + '</td><td>' + esc(meta.roles[r.targetRole].label) + '</td><td class="n">' + N2.f1(r.index) + '</td><td>' + esc(r.formulaVersion) + '</td></tr>'; }).join('');
+      return '<tr><td class="num">' + esc(r.participant) + '</td><td>' + (r.programme ? esc(p ? p.label : r.programme) : W) + '</td><td class="n">' + (r.year || W) + '</td><td>' + (r.targetRole && meta.roles[r.targetRole] ? esc(meta.roles[r.targetRole].label) : W) + '</td><td class="n">' + N2.f1(r.index) + '</td><td>' + esc(r.formulaVersion) + '</td></tr>'; }).join('');
   }).catch(function (e) { N2.showError($('#factors'), e); });
 });
 </script>

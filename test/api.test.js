@@ -182,9 +182,9 @@ test('a skill verified by assessment cannot be overwritten, and saving keeps que
 
 test('out-of-range and junk profile values are cleaned, and a clarity of 0 counts as 0', async () => {
   const student = await as('ananya@demo.ngrm.in');
-  const r = await student('PUT', '/api/me/profile', { prog: 'nope', year: 9, cgpa: 50, role: 'astronaut', skills: ['x', -5, 200, '70'], comm: 'abc', clarity: 0 });
+  const r = await student('PUT', '/api/me/profile', { prog: 'nope', year: 9, cgpa: 7.6, role: 'astronaut', skills: ['x', -5, 200, '70'], comm: 'abc', clarity: 0 });
   assert.equal(r.status, 200);
-  assert.equal(r.body.profile.prog, 'ba-psy'); assert.equal(r.body.profile.year, 3); assert.equal(r.body.profile.cgpa, 10); assert.equal(r.body.profile.role, 'hr');
+  assert.equal(r.body.profile.prog, 'ba-psy'); assert.equal(r.body.profile.year, 3); assert.equal(r.body.profile.cgpa, 7.6); assert.equal(r.body.profile.role, 'hr');
   assert.deepEqual(r.body.profile.skills, [55, 72, 100, 70]);
   assert.equal(r.body.profile.comm, null);
   assert.equal(r.body.score.factors.clarity, 0);
@@ -438,7 +438,7 @@ test('names like "toString" are never accepted as roles, types or purposes', asy
   assert.equal((await student('GET', '/api/me/recommendations')).status, 200);
   assert.equal((await (await as('kavya@demo.ngrm.in'))('GET', '/api/mentor/queue')).status, 200);
   assert.equal((await employer('POST', '/api/employer/demand', { role: 'toString', skills: [], openings: 1 })).status, 400);
-  assert.equal((await employer('GET', '/api/employer/supply?role=constructor')).body.role, 'hr');
+  assert.equal((await employer('GET', '/api/employer/supply?role=constructor')).status, 400);
   assert.equal((await student('POST', '/api/me/consents', { purposes: { constructor: true } })).status, 400);
   assert.equal((await student('POST', '/api/me/evidence', { type: 'constructor', title: 'x' })).status, 400);
   assert.equal((await admin('POST', '/api/admin/users', { rows: [null] })).status, 400);
@@ -706,4 +706,53 @@ test('the research export gives scores in bands of 5, so a known CGPA cannot pic
   const rows = (await (await as('research@demo.ngrm.in'))('GET', '/api/research/export')).body.rows;
   assert.ok(rows.length > 20);
   for (const r of rows) { assert.equal(r.index % 5, 0); for (const v of Object.values(r.factors)) assert.ok(v === null || v % 5 === 0); }
+});
+
+test('an employer cannot flood demand: 3 posts and 500 openings per role in 90 days, and posts can be withdrawn', async () => {
+  const employer = await as('recruiter@demo.ngrm.in'), student = await as('ananya@demo.ngrm.in');
+  h.run("DELETE FROM demand_posts WHERE employer_id = 1 AND role = 'marketing'");
+  const post = (openings) => employer('POST', '/api/employer/demand', { role: 'marketing', skills: ['Market research'], openings });
+  assert.equal((await post(300)).status, 201);
+  const over = await post(300); assert.equal(over.status, 409); assert.match(over.body.error, /past 500/);
+  assert.equal((await post(100)).status, 201); assert.equal((await post(50)).status, 201);
+  const fourth = await post(1); assert.equal(fourth.status, 409); assert.match(fourth.body.error, /already have 3/);
+  assert.equal((await student('GET', '/api/demand/summary?role=marketing')).body.openings <= 500 * 3, true);
+  const mine = (await employer('GET', '/api/demand')).body.filter((d) => d.mine && d.role === 'marketing');
+  assert.equal(mine.length, 3);
+  assert.equal((await student('DELETE', '/api/employer/demand/' + mine[0].id)).status, 403);
+  assert.equal((await employer('DELETE', '/api/employer/demand/' + mine[0].id)).status, 200);
+  assert.equal((await post(1)).status, 201, 'withdrawing frees a slot');
+  assert.ok((await student('GET', '/api/demand')).body.every((d) => d.mine === false && !('employer_id' in d)));
+  h.run("DELETE FROM demand_posts WHERE employer_id = 1 AND role = 'marketing'");
+});
+
+test('a student cannot flood their mentor: 10 items waiting at most', async () => {
+  h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('flood@demo.ngrm.in', 'Flood Tester', 'student', 1)");
+  const c = await as('flood@demo.ngrm.in'); await c('POST', '/api/me/consents', { purposes: { profile: true }, isAdult: true });
+  const codes = []; for (let i = 0; i < 12; i++) codes.push((await c('POST', '/api/me/evidence', { type: 'certificate', title: 'Certificate ' + i })).status);
+  assert.deepEqual(codes, [...Array(10).fill(201), 409, 409]);
+});
+
+test('weak passwords, out-of-range CGPA, unknown roles and missing pages are refused plainly', async () => {
+  const student = await as('ananya@demo.ngrm.in'), employer = await as('recruiter@demo.ngrm.in');
+  for (const pw of ['password123', 'Qwerty@2026!', '1234567890123', 'welcome-ngrm-1']) assert.equal((await student('POST', '/api/me/password', { password: pw })).status, 400, pw);
+  for (const cgpa of [11, -1, 'abc']) assert.equal((await student('PUT', '/api/me/profile', { cgpa })).status, 400, String(cgpa));
+  assert.equal((await student('GET', '/api/me/profile')).body.profile.cgpa, 7.6);
+  assert.equal((await employer('GET', '/api/employer/supply?role=astronaut')).status, 400);
+  const missing = await fetch(base + '/no-such-page'); assert.equal(missing.status, 404); assert.match(await missing.text(), /can’t find that page/);
+  const big = await fetch(base + '/api/auth/request-code', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'x'.repeat(200000) }) });
+  assert.equal(big.status, 413); assert.match((await big.json()).error, /request is too large/);
+});
+
+test('research export: no record stands alone on programme, year, role and rough CGPA', async () => {
+  const rows = (await (await as('research@demo.ngrm.in'))('GET', '/api/research/export')).body.rows;
+  const count = (key) => { const m = {}; for (const r of rows) m[key(r)] = (m[key(r)] || 0) + 1; return m; };
+  const q = (r) => [r.programme, r.year, r.targetRole].join('|');
+  assert.ok(Object.values(count(q)).every((n) => n >= 5), 'every programme/year/role group has at least 5');
+  const withAcademic = count((r) => q(r) + '|' + r.factors.academic);
+  for (const r of rows) if (r.factors.academic != null) assert.ok(withAcademic[q(r) + '|' + r.factors.academic] >= 5);
+  const hidden = count((r) => (r.factors.academic == null ? q(r) : 'shown')); delete hidden.shown;
+  assert.ok(Object.values(hidden).every((n) => n >= 5), 'withheld academic scores hide in groups of 5 or more');
+  assert.ok(rows.every((r) => /^\d{4}-\d{2}$/.test(r.recordedAt)));
+  assert.ok(rows.filter((r) => r.factors.academic != null).length > rows.length / 3, 'still useful: most groups keep their academic band');
 });

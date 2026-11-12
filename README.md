@@ -13,7 +13,7 @@ Requires Node.js 22.13 or newer (tested on 22.13, 22.23 and 24). Nothing else is
 npm install
 cp .env.example .env      # demo settings are already on
 npm start                 # http://localhost:3000
-npm test                  # 63 tests
+npm test                  # 67 tests
 npm run seed              # wipe and reload the sample data
 ```
 
@@ -75,6 +75,8 @@ AI is optional. When switched on (`GEMINI_API_KEY` and the student's AI consent)
 Eight factors: academic 20, technical/role skills 20, projects 15, experience 15, personality 10, communication 10, leadership 5, career clarity 5.
 
 - **Unanswered is left out, never guessed.** A factor with no answer (CGPA not entered, personality not entered or consent withdrawn, communication not yet assessed, clarity not rated) is "not yet rated". The score is the weighted average of the rated factors, and the page shows what share of the formula it covers.
+- **Limits against flooding.** A student can have at most 10 evidence items waiting for a mentor and 60 in total. An employer can post at most 3 requirements and 500 openings per role in 90 days, and can withdraw a post. Passwords need 10 characters and common ones ("password123") are refused. A CGPA outside 0 to 10 is refused, not adjusted.
+- **Research export.** Pseudonyms, month-only dates, scores rounded to 5, CGPA-based score in wide bands. Where fewer than 5 participants share a programme, year and target role, the role, then year, then programme is withheld; rare CGPA bands are withheld too. This costs detail: in the sample data about 4 in 10 records keep their target role.
 - **Only verified evidence counts.** Projects score 35 each, internships 50 each, leadership roles 50 each, capped at 100, and only after a mentor verifies them. With none verified these factors are 0.
 - **Communication** comes only from a college assessment a mentor records. Students cannot enter it.
 - **CGPA and career clarity** can be corrected but not cleared once entered, so a low value cannot be hidden.
@@ -93,7 +95,7 @@ Eight factors: academic 20, technical/role skills 20, projects 15, experience 15
 
 ## Quality checks done
 
-- 63 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
+- 67 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
 - The tests pass on Node 22.13, 22.23 and 24. Node 22.12 and older cannot run the built-in database, and the server says so.
 - A browser walk-through of every page for all six roles (133 checks), at desktop and phone widths, with no server errors.
 - An automated accessibility scan (axe-core, WCAG 2.1 AA) of every page in normal and high-contrast mode: no violations. Keyboard-only use works.
@@ -112,7 +114,7 @@ Not yet tested, because they need real services: email delivery, the live Gemini
 | Student | `GET/PUT /api/me/profile`, `POST /api/me/score`, `GET /api/me/score-history`, `GET/POST/PATCH/DELETE /api/me/evidence`, `GET/POST /api/me/intro-requests`, `GET /api/me/recommendations`, `PATCH /api/me/recommendations/:ruleId`, `GET/POST /api/me/consents`, `PATCH /api/me/intro-opt-in`, `POST /api/me/baseline`, `GET /api/me/export`, `DELETE /api/me` |
 | Mentor | `GET /api/mentor/mentees`, `GET /api/mentor/queue`, `POST /api/mentor/assessments`, `PATCH /api/mentor/reviews/:studentId/:ruleId`, `POST /api/mentor/evidence/:id` |
 | College | `GET /api/college/cohort?programme=`, `GET /api/college/intro-requests` |
-| Employer | `GET /api/employer/supply?role=`, `POST /api/employer/demand`, `GET/POST /api/employer/intros`, `GET /api/demand` |
+| Employer | `GET /api/employer/supply?role=`, `POST /api/employer/demand`, `DELETE /api/employer/demand/:id`, `GET/POST /api/employer/intros`, `GET /api/demand` |
 | Research | `GET /api/research/export` |
 | Admin | `GET /api/admin/people?q=`, `POST /api/admin/orgs`, `POST /api/admin/users`, `DELETE /api/admin/users/:id`, `GET /api/admin/audit`, `GET /api/admin/rules`, `PATCH /api/admin/rules/:id` |
 

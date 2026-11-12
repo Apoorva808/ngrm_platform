@@ -11,6 +11,7 @@ const MIN_GAP_MS = 30 * 1000;        // at most one code every 30 seconds per em
 const HOURLY_LIMIT = 5;
 const PW_WINDOW_MS = 15 * 60 * 1000; // five wrong passwords in 15 minutes locks password sign-in for that email
 const PW_MIN = 10;
+const COMMON = ['password', 'passw0rd', 'qwerty', 'letmein', 'welcome', 'iloveyou', 'admin', 'login', 'student', 'ngrm', 'changeme', 'abc123', 'monkey', 'dragon', 'sunshine', 'princess', 'football', 'cricket', 'india123', 'bangalore', 'bengaluru'];
 
 // Passwords are stored only as salted scrypt hashes.
 const hashPassword = (pw, salt = crypto.randomBytes(16).toString('hex')) => 'scrypt$' + salt + '$' + crypto.scryptSync(String(pw), salt, 32).toString('hex');
@@ -65,6 +66,10 @@ function makeAuth(h, { audit, sendCode }) {
     if (pw.length < PW_MIN) return `Use at least ${PW_MIN} characters. A short sentence works well.`;
     if (pw.length > 200) return 'That password is too long.';
     if (new Set(pw).size < 5) return 'Use more varied characters.';
+    // Refuse the passwords attackers try first: common words with digits tacked on, keyboard runs, and the site's own name.
+    const low = pw.toLowerCase(), core = low.replace(/[^a-z]/g, '');
+    if (COMMON.some((w) => core === w || low.includes(w)) || /^\d+$/.test(pw) || /(0123|1234|2345|3456|4567|5678|6789|abcd|qwer|asdf|zxcv)/.test(low) && core.length < 8)
+      return 'That password is too easy to guess. Try three or four unrelated words.';
     if (email && pw.toLowerCase().includes(String(email).split('@')[0].toLowerCase())) return 'Do not use your email name in the password.';
     return null;
   }

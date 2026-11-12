@@ -18,7 +18,7 @@
     <p class="small" id="pwState"></p>
     <form id="pwForm" novalidate style="display:grid;gap:0.85rem">
       <div class="field" id="curBox" hidden><label for="current">Current password</label><input type="password" id="current" autocomplete="current-password" maxlength="200"></div>
-      <div class="field"><label for="pw1">New password</label><input type="password" id="pw1" autocomplete="new-password" maxlength="200" aria-describedby="pwHint"><span class="hint" id="pwHint">At least 10 characters. A short sentence is easy to remember and hard to guess.</span></div>
+      <div class="field"><label for="pw1">New password</label><input type="password" id="pw1" autocomplete="new-password" maxlength="200" aria-describedby="pwHint"><span class="hint" id="pwHint">At least 10 characters. Three or four unrelated words work well. Common passwords are refused.</span></div>
       <div class="field"><label for="pw2">Type it again</label><input type="password" id="pw2" autocomplete="new-password" maxlength="200"></div>
       <p class="small" id="pwErr" style="color:var(--danger)" hidden></p>
       <div><button class="btn btn-primary" type="submit" id="pwBtn">Save password</button></div>
