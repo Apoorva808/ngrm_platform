@@ -13,7 +13,7 @@ Requires Node.js 22.13 or newer (tested on 22.13, 22.23 and 24). Nothing else is
 npm install
 cp .env.example .env      # demo settings are already on
 npm start                 # http://localhost:3000
-npm test                  # 74 tests
+npm test                  # 76 tests
 npm run seed              # wipe and reload the sample data
 ```
 
@@ -51,6 +51,7 @@ Admins can search for an account and remove it (for example when someone leaves 
 server/
   index.js     start-up, .env loading, refuses unsafe production settings
   app.js       all API routes, role checks, consent checks, audit logging
+  library.js   kinds of work and disciplines used to place typed roles and programmes
   domain.js    scoring formula v0.3, bands, rule library, what-if projections
   auth.js      passwords, sign-up, sessions (and optional email codes)
   ai.js        optional Gemini rewording, with a safety check
@@ -73,6 +74,21 @@ One dependency (Express). The scoring and rules live on the server only, so the 
 5. **Everything is logged and reversible.** Sign-ins, score runs, consent changes, reviews, verifications, exports and deletions are written to an audit log. Students can download all their data or delete their account.
 
 AI is optional. When switched on (`GEMINI_API_KEY` and the student's AI consent), Gemini only rewords the reason for a step. The new wording is rejected if it adds a number, a link or changes length too much, and the original is used instead. AI never changes a score or a ranking.
+
+## Typed roles and programmes
+
+Target roles and programmes are not limited to a list. Anyone can pick a suggestion or type their own, on every kind of account.
+
+- **A typed role** ("Data Scientist", "Chartered Accountant", "IAS officer") is matched by keywords to one of 28 kinds of work in `server/library.js` and takes that kind's four skills, target levels, project idea and internship wording. No AI model is involved, so the same text always gives the same result. A role NGRM cannot place starts with four general workplace skills and is flagged for the admin.
+- **A typed programme** ("B.E. Mechanical Engineering") is matched to a discipline and a usual length in years.
+- **Personalised by both.** The programme's discipline and the role's kind of work decide whether the student is on a direct path, a related path or a career switch. The score page and the plan say which, and the course, project, internship and clarity steps are worded for that role and that programme. This changes wording and suggestions only, never the score.
+- **Students** also see roles commonly chosen after their programme, as one-tap suggestions.
+- **Mentors** assess the typed role's own skills, and can find mentees by typing a name, programme or role.
+- **Placement cells** type a programme or role to narrow the cohort view; for a role they see what share of students are assessed at the level each skill expects. Groups under 5 are never shown on their own, and only one filter applies at a time.
+- **Employers** type the job title they use, get its skills to post a requirement against, and are pointed to how students word the same job when few chose that exact title.
+- **Researchers** narrow the records and averages by typing a programme or role; groups under 5 show nothing.
+- **Admins** see every typed role and programme with how much it is used, correct a role's skills and target levels, list it for everyone, or remove it when unused. A student's typed entries are visible only to them and to staff until an admin lists them. Skills lock once students have been assessed on them.
+- **Limits.** Matching is by keyword, so an unusual title can land in the wrong kind of work until the admin corrects it. The same job typed two ways ("Software Engineer", "Software Developer") is two roles; employers are pointed to the nearby one, but the two are not merged.
 
 ## Scoring formula v0.3
 
@@ -100,7 +116,7 @@ Eight factors: academic 20, technical/role skills 20, projects 15, experience 15
 
 ## Quality checks done
 
-- 74 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
+- 76 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
 - The tests pass on Node 22.13, 22.23 and 24. Node 22.12 and older cannot run the built-in database, and the server says so.
 - A browser walk-through of every page for all six roles (133 checks), at desktop and phone widths, with no server errors.
 - An automated accessibility scan (axe-core, WCAG 2.1 AA) of every page in normal and high-contrast mode: no violations. Keyboard-only use works.
@@ -121,6 +137,7 @@ Not yet tested, because they need real services: email delivery, the live Gemini
 | College | `GET /api/college/cohort?programme=`, `GET /api/college/intro-requests` |
 | Employer | `GET /api/employer/supply?role=`, `POST /api/employer/demand`, `DELETE /api/employer/demand/:id`, `GET/POST /api/employer/intros`, `GET /api/demand` |
 | Research | `GET /api/research/export` |
+| Typed roles and programmes | `POST /api/library/role`, `POST /api/library/programme`, `GET /api/library/suggest?programme=`, `GET /api/admin/library`, `PUT` and `DELETE /api/admin/library/roles/:key`, `PUT` and `DELETE /api/admin/library/programmes/:id` |
 | Admin | `GET /api/admin/people?q=`, `POST /api/admin/orgs`, `POST /api/admin/users`, `DELETE /api/admin/users/:id`, `GET /api/admin/audit`, `GET /api/admin/rules`, `PATCH /api/admin/rules/:id` |
 
 ## Settings (.env)

@@ -11,7 +11,7 @@
 <div class="page-banner"><div class="container">
   <div><span class="eyebrow" id="orgName">Employer view · totals only</span><h1>Skill supply across partner colleges</h1>
   <p class="lead">How many students are building the skills you need, by college and level. No names and no individual scores. Any group smaller than 5 is hidden.</p></div>
-  <div class="field" style="min-width:min(300px,100%)"><label for="roleSel">Role you are hiring for</label><select id="roleSel"></select></div>
+  <div class="field" style="min-width:min(320px,100%)"><label for="roleText">Role you are hiring for</label><input type="text" id="roleText" maxlength="60" placeholder="Choose, or type any role" aria-describedby="roleNote"><input type="hidden" id="roleSel"><span class="hint" id="roleNote" role="status">Type the job title you use. NGRM matches it to the skills it needs.</span></div>
 </div></div>
 <main id="main" tabindex="-1">
 <div class="container stack">
@@ -26,7 +26,7 @@
       <div style="display:flex;flex-wrap:wrap;gap:0.6rem;align-items:center;margin-top:1rem"><button class="btn btn-primary" type="button" id="introBtn">Request introductions</button><span class="small muted" id="introNote"></span></div>
       <div id="myIntros" style="margin-top:1rem"></div>
     </section>
-    <section class="card" aria-labelledby="scTitle"><header><h2 id="scTitle">Which skills are scarce</h2><span class="small muted">Share of students at 70 or above</span></header><div id="scarce"></div><p class="small muted" id="poolNote" style="margin-top:0.5rem"></p></section>
+    <section class="card" aria-labelledby="scTitle"><header><h2 id="scTitle">Which skills are scarce</h2><span class="small muted">Share of students at 70 or above</span></header><div id="scarce"></div><p class="small muted" id="poolNote" style="margin-top:0.5rem"></p><div id="related" class="small" style="margin-top:0.6rem"></div></section>
   </div>
   <div class="grid-2">
     <form class="card" id="demandForm" novalidate aria-labelledby="postTitle">
@@ -45,11 +45,14 @@
 <script src="assets/app.js"></script>
 <script>
 (function () {
-  var N = NGRM, $ = N.$, $$ = N.$$, esc = N.esc, meta;
+  var N = NGRM, $ = N.$, $$ = N.$$, esc = N.esc, meta, roleBox;
   var cell = function (n) { return n == null ? '<td class="n suppressed" title="Hidden: fewer than 5 students">&lt;5</td>' : '<td class="n">' + n + '</td>'; };
   function loadSupply() {
     var role = $('#roleSel').value;
-    N.api('GET', '/api/employer/supply?role=' + role).then(function (s) {
+    $('#supTitle').textContent = 'Students building towards ' + meta.roles[role].label;
+    $('#postTitle').textContent = 'Post a requirement for ' + meta.roles[role].label;
+    N.api('GET', '/api/employer/supply?role=' + encodeURIComponent(role)).then(function (s) {
+      $('#related').innerHTML = s.related && s.related.length ? '<b>Students also word this as:</b> ' + s.related.map(function (r) { return '<button type="button" class="btn-link" data-related="' + esc(r.label) + '">' + esc(r.label) + ' (about ' + r.students + ')</button>'; }).join(' · ') : '';
       $('#supply').innerHTML = s.byCollege.map(function (c) { return '<tr><td>' + esc(c.college) + '</td>' + cell(c.foundation) + cell(c.intermediate) + cell(c.strong) + cell(c.optedIn) + '</tr>'; }).join('') +
         '<tr><td><b>All partner colleges</b></td>' + cell(s.total.foundation) + cell(s.total.intermediate) + cell(s.total.strong) + cell(s.total.optedIn) + '</tr>';
       $('#introBtn').disabled = !s.canRequestIntroductions;
@@ -75,11 +78,12 @@
   N.boot('employer', ['employer']).then(function (ctx) {
     meta = ctx.meta;
     N.api('GET', '/api/me').then(function (r) { if (r.user.employer) $('#orgName').textContent = r.user.employer.name + ' · totals only'; });
-    $('#roleSel').innerHTML = Object.keys(meta.roles).map(function (k) { return '<option value="' + k + '">' + esc(meta.roles[k].label) + '</option>'; }).join('');
+    roleBox = N.typeable($('#roleText'), { kind: 'role', meta: meta, note: $('#roleNote'), onPick: function (key) { $('#roleSel').value = key; loadSupply(); } });
+    $('#roleSel').value = 'hr'; roleBox.set('hr');
     loadSupply(); loadPosts(); loadMyIntros();
     N.live(function () { loadPosts(); loadMyIntros(); }, 30);
   });
-  $('#roleSel').addEventListener('change', loadSupply);
+  $('#related').addEventListener('click', function (e) { var b = e.target.closest('[data-related]'); if (b) roleBox.choose(b.dataset.related); });
   $('#introBtn').addEventListener('click', function () { N.api('POST', '/api/employer/intros', { role: $('#roleSel').value }).then(function (r) { N.toast(r.message); loadMyIntros(); }).catch(function (x) { N.toast(x.message); }); });
   $('#demandForm').addEventListener('submit', function (e) {
     e.preventDefault(); var err = $('#d-err');

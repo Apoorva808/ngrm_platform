@@ -22,6 +22,7 @@
 <div class="container stack">
   <section class="card" aria-labelledby="recTitle">
     <header><h2 id="recTitle">Recommended next steps</h2><span class="small muted">Ranked by how much each would raise your score</span></header>
+    <div class="note" id="pathNote" hidden style="margin-bottom:0.9rem"></div>
     <div class="recs" id="recs"><p class="loading">Loading your plan…</p></div>
     <p class="small muted" style="margin-top:0.9rem">Steps and their ranking come from fixed rules your mentor can see. If you agreed to AI wording, an AI model may reword the reason; it never sets a number or adds a step, and anything it writes is checked first.</p>
   </section>
@@ -83,6 +84,8 @@
   }
   function render() {
     var items = data.items, R = meta.roles[data.role];
+    var progL = (meta.programmes.filter(function (p) { return p.id === data.programme; })[0] || {}).label || '';
+    if (data.path) { $('#pathNote').hidden = false; $('#pathNote').innerHTML = '<span><b>' + esc(progL) + ' → ' + esc(R.label) + ' · ' + esc(data.path.label) + '.</b> ' + esc(data.path.text) + '</span>'; }
     var scored = items.filter(function (x) { return !x.always; });
     var acc = scored.filter(function (x) { return x.student === 'accepted'; });
     $('#stNow').textContent = N.f1(data.score.index); $('#stProj').textContent = N.f1(data.projected); $('#stAcc').textContent = acc.length + ' of ' + scored.length;

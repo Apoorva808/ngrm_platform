@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const express = require('express');
 const D = require('./domain');
+const L = require('./library');
 const { helpers } = require('./db');
 const { makeAuth, readCookie } = require('./auth');
 const ai = require('./ai');
@@ -130,8 +131,109 @@ function createApp(db, opts = {}) {
   const SIGNUP_ROLES = ['student', 'mentor', 'college_admin', 'employer', 'researcher'];
 
   // ---------- Public ----------
+  // ---------- Typed roles and programmes ----------
+  // Built-in ones live in domain.js; typed ones live in the database and are loaded into the same lists.
+  function loadLibrary() {
+    for (const k of Object.keys(D.ROLES)) if (!D.BUILT_IN_ROLES.includes(k)) delete D.ROLES[k];
+    for (const r of h.all('SELECT * FROM custom_roles')) D.ROLES[r.key] = { family: r.family, listed: !!r.listed, custom: true, needsReview: !!r.needs_review, label: r.label, skills: parse(r.skills_json, []), target: parse(r.targets_json, []), project: r.project, internship: r.internship };
+    D.PROGRAMMES.splice(D.BUILT_IN_PROGRAMMES.length);
+    for (const p of h.all('SELECT * FROM custom_programmes ORDER BY label')) D.PROGRAMMES.push({ id: p.id, discipline: p.discipline, listed: !!p.listed, custom: true, label: p.label, years: p.years });
+  }
+  loadLibrary(); D.libraryOwner = db;
+  // The lists are shared by the whole process; if another database was loaded since (tests do this), reload ours.
+  app.use((req, res, next) => { if (D.libraryOwner !== db) { loadLibrary(); D.libraryOwner = db; } next(); });
+  // Students and visitors see the listed roles and programmes plus their own; staff see every one in use.
+  function libraryFor(user) {
+    if (user && user.role !== 'student') return { roles: D.ROLES, programmes: D.PROGRAMMES };
+    const mine = user ? profileRow(user.id) || {} : {};
+    const roles = {}; for (const k of Object.keys(D.ROLES)) if (D.ROLES[k].listed || k === mine.target_role) roles[k] = D.ROLES[k];
+    return { roles, programmes: D.PROGRAMMES.filter((p) => p.listed || p.id === mine.programme) };
+  }
+  const typedToday = (table, userId) => h.get(`SELECT COUNT(*) AS n FROM ${table} WHERE created_by = ? AND created_at > datetime('now', '-1 day')`, userId).n;
+  // Type a role: an existing one with the same name is reused, otherwise a new one is made from its role family.
+  app.post('/api/library/role', need(), (req, res) => {
+    const made = L.makeRole(req.body?.text);
+    if (!made) return fail(res, 400, 'Type the role as you would say it, for example "Data Scientist".');
+    const same = Object.keys(D.ROLES).find((k) => L.norm(D.ROLES[k].label) === L.norm(made.label) || k === made.key);
+    if (same) return res.json({ key: same, role: D.ROLES[same], created: false });
+    if (req.user.role === 'student' && typedToday('custom_roles', req.user.id) >= 8) return fail(res, 429, 'You have added several new roles today. Choose one of them or try again tomorrow.');
+    const listed = req.user.role === 'student' ? 0 : 1;
+    h.run('INSERT INTO custom_roles (key, label, family, skills_json, targets_json, project, internship, needs_review, listed, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      made.key, made.label, made.family, JSON.stringify(made.skills), JSON.stringify(made.target), made.project, made.internship, made.needsReview ? 1 : 0, listed, req.user.id);
+    audit(req.user.id, 'library.role_typed', made.key); loadLibrary();
+    res.status(201).json({ key: made.key, role: D.ROLES[made.key], created: true });
+  });
+  app.post('/api/library/programme', need(), (req, res) => {
+    const made = L.makeProgramme(req.body?.text);
+    if (!made) return fail(res, 400, 'Type the programme as it appears on your marks card, for example "B.Sc. Physics".');
+    const same = D.PROGRAMMES.find((p) => L.norm(p.label) === L.norm(made.label) || p.id === made.id);
+    if (same) return res.json({ id: same.id, programme: same, created: false });
+    if (req.user.role === 'student' && typedToday('custom_programmes', req.user.id) >= 8) return fail(res, 429, 'You have added several new programmes today. Choose one of them or try again tomorrow.');
+    h.run('INSERT INTO custom_programmes (id, label, years, discipline, listed, created_by) VALUES (?, ?, ?, ?, ?, ?)', made.id, made.label, made.years, made.discipline, req.user.role === 'student' ? 0 : 1, req.user.id);
+    audit(req.user.id, 'library.programme_typed', made.id); loadLibrary();
+    res.status(201).json({ id: made.id, programme: D.programme(made.id), created: true });
+  });
+  // Role families a programme commonly leads to, as role names to offer.
+  app.get('/api/library/suggest', need(), (req, res) => {
+    const P = D.programme(String(req.query.programme || ''));
+    const fams = L.suggestFor(P.discipline);
+    res.json({ programme: P.label, roles: fams.map((f) => { const k = Object.keys(D.ROLES).find((x) => D.ROLES[x].family === f && D.ROLES[x].listed); return { key: k || null, label: k ? D.ROLES[k].label : L.family(f).name, fit: L.fit(P.discipline, f) }; }) });
+  });
+  // Admin: every typed role and programme, how much each is used, and tools to correct them.
+  const roleUse = (key) => ({ students: h.get('SELECT COUNT(*) AS n FROM profiles WHERE target_role = ?', key).n, posts: h.get('SELECT COUNT(*) AS n FROM demand_posts WHERE role = ?', key).n,
+    assessments: h.get("SELECT COUNT(*) AS n FROM evidence WHERE type = 'assessment' AND skill_role = ?", key).n, courses: h.get('SELECT COUNT(*) AS n FROM courses WHERE role = ?', key).n });
+  app.get('/api/admin/library', need('admin'), (req, res) => res.json({
+    families: L.FAMILIES.map((f) => ({ k: f.k, name: f.name })).concat([{ k: 'general', name: 'Not matched' }]),
+    roles: h.all('SELECT key FROM custom_roles ORDER BY created_at DESC').map((r) => ({ key: r.key, ...D.ROLES[r.key], use: roleUse(r.key) })),
+    programmes: h.all('SELECT id FROM custom_programmes ORDER BY created_at DESC').map((p) => ({ ...D.programme(p.id), students: h.get('SELECT COUNT(*) AS n FROM profiles WHERE programme = ?', p.id).n })),
+  }));
+  app.put('/api/admin/library/roles/:key', need('admin'), (req, res) => {
+    const cur = h.get('SELECT * FROM custom_roles WHERE key = ?', req.params.key); if (!cur) return fail(res, 404, 'Not found.');
+    const b = req.body || {}, label = b.label === undefined ? cur.label : L.clean(b.label);
+    if (!label) return fail(res, 400, 'Give the role a name.');
+    if (Object.keys(D.ROLES).some((k) => k !== cur.key && L.norm(D.ROLES[k].label) === L.norm(label))) return fail(res, 409, 'Another role already has that name.');
+    let skills = parse(cur.skills_json, []), target = parse(cur.targets_json, []);
+    if (b.skills !== undefined) {
+      const next = (Array.isArray(b.skills) ? b.skills : []).map((x) => L.clean(x, 60));
+      if (next.length !== 4 || next.some((x) => !x) || new Set(next.map(L.norm)).size !== 4) return fail(res, 400, 'Give four different skills.');
+      if (JSON.stringify(next) !== JSON.stringify(skills) && roleUse(cur.key).assessments) return fail(res, 409, 'Students have already been assessed on this role’s skills, so the skills can no longer be changed. You can still rename the role.');
+      skills = next;
+    }
+    if (b.target !== undefined) {
+      const t = (Array.isArray(b.target) ? b.target : []).map(Number);
+      if (t.length !== 4 || t.some((x) => !Number.isInteger(x) || x < 40 || x > 90)) return fail(res, 400, 'Each target level must be a whole number from 40 to 90.');
+      target = t;
+    }
+    h.run('UPDATE custom_roles SET label = ?, skills_json = ?, targets_json = ?, listed = ?, needs_review = ? WHERE key = ?', label, JSON.stringify(skills), JSON.stringify(target),
+      b.listed === undefined ? cur.listed : b.listed ? 1 : 0, b.skills !== undefined ? 0 : cur.needs_review, cur.key);
+    audit(req.user.id, 'admin.role_edited', cur.key); loadLibrary(); res.json({ key: cur.key, ...D.ROLES[cur.key] });
+  });
+  app.delete('/api/admin/library/roles/:key', need('admin'), (req, res) => {
+    if (!h.get('SELECT 1 FROM custom_roles WHERE key = ?', req.params.key)) return fail(res, 404, 'Not found.');
+    const u = roleUse(req.params.key);
+    if (u.students || u.posts || u.courses) return fail(res, 409, `This role is in use (${u.students} students, ${u.posts} employer posts, ${u.courses} courses), so it cannot be removed. You can rename or unlist it.`);
+    h.run('DELETE FROM custom_roles WHERE key = ?', req.params.key); audit(req.user.id, 'admin.role_removed', req.params.key); loadLibrary(); res.json({ ok: true });
+  });
+  app.put('/api/admin/library/programmes/:id', need('admin'), (req, res) => {
+    const cur = h.get('SELECT * FROM custom_programmes WHERE id = ?', req.params.id); if (!cur) return fail(res, 404, 'Not found.');
+    const b = req.body || {}, label = b.label === undefined ? cur.label : L.clean(b.label, 80), years = b.years === undefined ? cur.years : Number(b.years);
+    if (!label) return fail(res, 400, 'Give the programme a name.');
+    if (!Number.isInteger(years) || years < 1 || years > 6) return fail(res, 400, 'Years must be a whole number from 1 to 6.');
+    if (D.PROGRAMMES.some((p) => p.id !== cur.id && L.norm(p.label) === L.norm(label))) return fail(res, 409, 'Another programme already has that name.');
+    const d = L.disciplineOf(label);
+    h.run('UPDATE custom_programmes SET label = ?, years = ?, discipline = ?, listed = ? WHERE id = ?', label, years, d ? d.k : 'general', b.listed === undefined ? cur.listed : b.listed ? 1 : 0, cur.id);
+    h.run('UPDATE profiles SET year = MIN(year, ?) WHERE programme = ?', years, cur.id);
+    audit(req.user.id, 'admin.programme_edited', cur.id); loadLibrary(); res.json(D.programme(cur.id));
+  });
+  app.delete('/api/admin/library/programmes/:id', need('admin'), (req, res) => {
+    if (!h.get('SELECT 1 FROM custom_programmes WHERE id = ?', req.params.id)) return fail(res, 404, 'Not found.');
+    const n = h.get('SELECT COUNT(*) AS n FROM profiles WHERE programme = ?', req.params.id).n;
+    if (n) return fail(res, 409, `${n} ${n === 1 ? 'student is' : 'students are'} on this programme, so it cannot be removed. You can rename or unlist it.`);
+    h.run('DELETE FROM custom_programmes WHERE id = ?', req.params.id); audit(req.user.id, 'admin.programme_removed', req.params.id); loadLibrary(); res.json({ ok: true });
+  });
+
   app.get('/api/meta', (req, res) => res.json({
-    formulaVersion: D.FORMULA_VERSION, minGroup: D.MIN_GROUP, factors: D.FACTORS, roles: D.ROLES, programmes: D.PROGRAMMES,
+    formulaVersion: D.FORMULA_VERSION, minGroup: D.MIN_GROUP, factors: D.FACTORS, ...libraryFor(req.user), fitLabels: L.FIT_LABEL,
     evidenceTypes: D.EVIDENCE_TYPES, slots: D.SLOTS, consentPurposes: D.CONSENT_PURPOSES, demoMode, signUp: signUpOpen, emailCodes,
     // Who runs this pilot and whom to contact about personal data (shown on the privacy notice).
     operator: { name: String(process.env.ORG_NAME || '').slice(0, 120) || null, contact: String(process.env.PRIVACY_CONTACT || '').slice(0, 160) || null },
@@ -267,7 +369,7 @@ function createApp(db, opts = {}) {
     const c = computeFor(userId); if (!c) return null;
     const last = h.get('SELECT id, formula_version, index_value, created_at FROM score_runs WHERE user_id = ? ORDER BY id DESC LIMIT 1', userId);
     const verified = Object.keys(verifiedSkills(userId, c.p.role)).map(Number);
-    return { profile: { ...c.p, optInIntros: !!c.row.opt_in_intros, verifiedSkills: verified, commVerified: verifiedComm(userId) != null }, score: c.result, band: D.band(c.result.index), lastRecorded: last || null };
+    return { profile: { ...c.p, optInIntros: !!c.row.opt_in_intros, verifiedSkills: verified, commVerified: verifiedComm(userId) != null }, path: D.pathNote(c.p), score: c.result, band: D.band(c.result.index), lastRecorded: last || null };
   }
   // Withdrawing questionnaire consent removes the answers everywhere they were kept, including recorded scores and the study baseline.
   function scrubPsychometric(userId) {
@@ -428,7 +530,7 @@ function createApp(db, opts = {}) {
         }));
       }
       const accepted = r.list.filter((x) => x.state?.student_status === 'accepted').map((x) => x.id);
-      res.json({ score: r.c.result, projected: D.projectIndex(r.c.p, r.c.ev, accepted), role: r.c.p.role, programme: r.c.p.prog, year: r.c.p.year,
+      res.json({ score: r.c.result, projected: D.projectIndex(r.c.p, r.c.ev, accepted), role: r.c.p.role, programme: r.c.p.prog, year: r.c.p.year, path: D.pathNote(r.c.p),
         items: r.list.map((x) => ({ id: x.id, factor: x.factor, slot: x.slot, effort: x.effort, gain: x.gain, always: x.always, title: x.title, what: x.what, why: x.why, aiWhy: x.aiWhy || null, assume: x.assume, learn: x.learn,
           student: x.state?.student_status || null, mentor: x.state?.mentor_status || null, mentorNote: x.state?.mentor_note || null,
           mentorName: x.state?.mentor_id ? (h.get('SELECT name FROM users WHERE id = ?', x.state.mentor_id) || {}).name : null })) });
@@ -524,7 +626,7 @@ function createApp(db, opts = {}) {
     const out = rows.filter((r) => hasConsent(r.id, 'profile')).map((r) => {
       const c = computeFor(r.id); if (!c) return null;
       return { id: r.id, name: r.name, programme: c.p.prog, year: c.p.year, role: c.p.role, index: c.result.index, band: D.band(c.result.index),
-        cgpa: c.p.cgpa, cgpaConfirmed: c.p.cgpaConfirmed, skills: c.p.skills, skillsVerified: c.p.skillsVerified, commAssessed: c.result.factors.communication !== null };
+        fit: D.pathNote(c.p).label, cgpa: c.p.cgpa, cgpaConfirmed: c.p.cgpaConfirmed, skills: c.p.skills, skillsVerified: c.p.skillsVerified, commAssessed: c.result.factors.communication !== null };
     }).filter(Boolean);
     audit(req.user.id, 'mentor.viewed_mentees');
     res.json(out);
@@ -603,16 +705,25 @@ function createApp(db, opts = {}) {
 
   // ---------- College (mentor or college admin; own institution, aggregates only) ----------
   app.get('/api/college/cohort', need('mentor', 'college_admin'), (req, res) => {
-    const prog = req.query.programme && req.query.programme !== 'all' ? String(req.query.programme) : null;
-    const all = h.all("SELECT u.id, p.programme FROM users u JOIN profiles p ON p.user_id = u.id WHERE u.role = 'student' AND u.institution_id = ?", req.user.institution_id)
+    // One filter at a time, a programme or a target role, so two views can never be subtracted to isolate a student.
+    const role = req.query.role && req.query.role !== 'all' ? String(req.query.role) : null;
+    const prog = !role && req.query.programme && req.query.programme !== 'all' ? String(req.query.programme) : null;
+    const everyone = h.all("SELECT u.id, p.programme, p.target_role FROM users u JOIN profiles p ON p.user_id = u.id WHERE u.role = 'student' AND u.institution_id = ?", req.user.institution_id)
       .filter((s) => hasConsent(s.id, 'profile'));
+    const roleSizes = {}; for (const s of everyone) roleSizes[s.target_role] = (roleSizes[s.target_role] || 0) + 1;
+    const progSizes = {}; for (const s of everyone) progSizes[s.programme] = (progSizes[s.programme] || 0) + 1;
+    // What this college actually has, for the filter: only groups of 5 or more are named.
+    const groups = { programmes: Object.keys(progSizes).filter((k) => progSizes[k] >= D.MIN_GROUP).map((k) => ({ id: k, label: D.programme(k).label })),
+      roles: Object.keys(roleSizes).filter((k) => roleSizes[k] >= D.MIN_GROUP && D.ROLES[k]).map((k) => ({ id: k, label: D.ROLES[k].label })) };
+    if (role && !(roleSizes[role] >= D.MIN_GROUP)) { audit(req.user.id, 'college.viewed_cohort', 'role:' + role); return res.json({ n: null, suppressed: true, smallProgrammesLeftOut: false, groups }); }
+    const all = role ? everyone.filter((s) => s.target_role === role) : everyone;
     // Programmes with fewer than 5 students are left out of every view, including "all programmes".
     // Otherwise subtracting one view from another could reveal a single student's score.
     const sizes = {}; for (const s of all) sizes[s.programme] = (sizes[s.programme] || 0) + 1;
     const students = all.filter((s) => sizes[s.programme] >= D.MIN_GROUP && (!prog || s.programme === prog));
-    audit(req.user.id, 'college.viewed_cohort', prog || 'all');
+    audit(req.user.id, 'college.viewed_cohort', role ? 'role:' + role : prog || 'all');
     const leftOut = Object.values(sizes).some((n) => n < D.MIN_GROUP);
-    if (students.length < D.MIN_GROUP) return res.json({ n: null, suppressed: true, smallProgrammesLeftOut: leftOut });
+    if (students.length < D.MIN_GROUP) return res.json({ n: null, suppressed: true, smallProgrammesLeftOut: leftOut, groups });
     const rs = students.map((s) => computeFor(s.id).result);
     const bands = { building: 0, progressing: 0, ready: 0 }; rs.forEach((r) => bands[D.band(r.index).k]++);
     // Counts rounded to 5 and averages to whole numbers, so comparing views before and after one student
@@ -622,7 +733,9 @@ function createApp(db, opts = {}) {
     const hidden = Object.keys(shown).filter((k) => shown[k] === null);
     if (hidden.length === 1) { const next = Object.keys(shown).filter((k) => shown[k] !== null).sort((a, b) => bands[a] - bands[b])[0]; shown[next] = null; }
     const factors = {}; for (const F of D.FACTORS) { const vals = rs.map((r) => r.factors[F.k]).filter((v) => v !== null); factors[F.k] = vals.length >= D.MIN_GROUP ? Math.round(D.avg(vals)) : null; }
-    res.json({ n: approx(rs.length), suppressed: false, smallProgrammesLeftOut: leftOut, avgIndex: Math.round(D.avg(rs.map((r) => r.index))), factors, bands: shown,
+    // For one role: how many have each of its skills assessed at the target level, so the college knows what to teach.
+    const roleSkills = role ? D.ROLES[role].skills.map((name, k) => { const ok = students.filter((s) => { const v = verifiedSkills(s.id, role)[k]; return v != null && v >= D.ROLES[role].target[k]; }).length; return { name, target: D.ROLES[role].target[k], atTargetPct: safePct(ok, students.length) }; }) : null;
+    res.json({ groups, roleSkills, n: approx(rs.length), suppressed: false, smallProgrammesLeftOut: leftOut, avgIndex: Math.round(D.avg(rs.map((r) => r.index))), factors, bands: shown,
       noInternshipPct: safePct(rs.filter((r) => r.counts.internship === 0).length, rs.length), rounding: 5 });
   });
   app.get('/api/demand', need(), (req, res) => {
@@ -663,7 +776,14 @@ function createApp(db, opts = {}) {
     const total = Object.fromEntries(['foundation', 'intermediate', 'strong', 'optedIn'].map((k) => { const shown = byCollege.map((c) => c[k]).filter((v) => v !== null); return [k, shown.length ? shown.reduce((a, b) => a + b, 0) : null]; }));
     const skills = rows.length >= D.MIN_GROUP ? D.ROLES[role].skills.map((name, k) => ({ name, sharePct: safePct(rows.filter((r) => (r.assessed[k] ?? 0) >= 70).length, rows.length) })) : null;
     audit(req.user.id, 'employer.viewed_supply', role);
-    res.json({ role, byCollege, total, canRequestIntroductions: canRequest, pool: approx(rows.length), skills, rounding: 5, totalIsSumOfShown: true, assessedOnly: true });
+    // Students often word the same job differently, so point to nearby roles that have enough students to show.
+    const fam = D.ROLES[role].family, related = [];
+    for (const k of Object.keys(D.ROLES)) {
+      if (k === role || D.ROLES[k].family !== fam || fam === 'general') continue;
+      const n = h.all("SELECT u.id FROM users u JOIN profiles p ON p.user_id = u.id WHERE u.role = 'student' AND p.target_role = ?", k).filter((r) => hasConsent(r.id, 'profile')).length;
+      if (n >= D.MIN_GROUP) related.push({ key: k, label: D.ROLES[k].label, students: approx(n) });
+    }
+    res.json({ role, related, byCollege, total, canRequestIntroductions: canRequest, pool: approx(rows.length), skills, rounding: 5, totalIsSumOfShown: true, assessedOnly: true });
   });
   app.post('/api/employer/demand', need('employer'), (req, res) => {
     const b = req.body || {};

@@ -101,7 +101,11 @@
 
   /** Load meta and the signed-in user; send people to sign-in or their own home if they lack the role. */
   function boot(page, roles) {
-    return Promise.all([api('GET', '/api/meta'), api('GET', '/api/me').then(function (m) { return m.user ? m : null; })])
+    return Promise.all([api('GET', '/api/meta').then(function (m) {
+      // A role typed by someone after this page loaded is not in the list yet: show a stand-in, never break the page.
+      m.roles = new Proxy(m.roles, { get: function (t, k) { return typeof k !== 'string' || k in t ? t[k] : { label: 'A newly added role (reload to see it)', skills: ['Skill 1', 'Skill 2', 'Skill 3', 'Skill 4'], target: [65, 65, 65, 65], family: 'general' }; } });
+      return m;
+    }), api('GET', '/api/me').then(function (m) { return m.user ? m : null; })])
       .then(function (r) {
         var meta = r[0], me = r[1];
         if (roles && !me) { location.href = 'login.html?next=' + encodeURIComponent(location.pathname.split('/').pop()); return new Promise(function () {}); }
@@ -146,5 +150,35 @@
   }
   function showError(el, e) { el.innerHTML = '<div class="error-box">' + esc(e.message || 'Something went wrong.') + '</div>'; }
 
-  window.NGRM = { $: $, $$: $$, esc: esc, f1: f1, f0: f0, ordinal: ordinal, bandCls: bandCls, api: api, toast: toast, live: live, boot: boot, consentPanel: consentPanel, ring: ring, showError: showError, HOME: HOME };
+  // A box you can pick from or type into, for target roles and programmes.
+  // Picking a suggestion uses it; typing something new adds it (the server matches it to a role family or discipline).
+  //   typeable(input, { kind: 'role' | 'programme', meta, onPick(key, created), note: element for a status line })
+  function typeable(input, o) {
+    var list = document.createElement('datalist'); list.id = input.id + '-list'; input.setAttribute('list', list.id); input.setAttribute('autocomplete', 'off'); input.parentNode.appendChild(list);
+    function options() { return o.kind === 'role' ? Object.keys(o.meta.roles).map(function (k) { return [k, o.meta.roles[k].label, o.meta.roles[k].listed]; }) : o.meta.programmes.map(function (p) { return [p.id, p.label, p.listed]; }); }
+    function label(key) { var m = options().filter(function (x) { return x[0] === key; })[0]; return m ? m[1] : ''; }
+    function fillList() { list.innerHTML = options().filter(function (x) { return x[2] || x[0] === input.dataset.key; }).sort(function (a, b) { return a[1].localeCompare(b[1]); }).map(function (x) { return '<option value="' + esc(x[1]) + '">'; }).join(''); }
+    function set(key) { input.dataset.key = key || ''; input.value = label(key); fillList(); }
+    function say(t) { if (o.note) o.note.textContent = t || ''; }
+    function choose(text) {
+      text = String(text || '').replace(/\s+/g, ' ').trim();
+      if (!text) { input.value = label(input.dataset.key); return Promise.resolve(); }
+      var hit = options().filter(function (x) { return x[1].toLowerCase() === text.toLowerCase(); })[0];
+      if (hit) { if (hit[0] !== input.dataset.key) { set(hit[0]); say(''); o.onPick(hit[0], false); } else input.value = hit[1]; return Promise.resolve(); }
+      if (text.length < 2) { input.value = label(input.dataset.key); return Promise.resolve(); }
+      input.disabled = true; say('Adding “' + text + '”…');
+      return api('POST', '/api/library/' + o.kind, { text: text }).then(function (r) {
+        var key = o.kind === 'role' ? r.key : r.id;
+        if (o.kind === 'role') o.meta.roles[key] = r.role; else if (!o.meta.programmes.some(function (p) { return p.id === key; })) o.meta.programmes.push(r.programme);
+        var changed = key !== input.dataset.key; set(key);
+        say(!r.created ? '' : o.kind === 'role' ? (r.role.needsReview ? 'Added “' + r.role.label + '”. NGRM does not know this role yet, so it starts with general workplace skills until the NGRM admin sets the specific ones.' : 'Added “' + r.role.label + '” with the skills this kind of role usually needs. The NGRM admin can adjust them.') : 'Added “' + r.programme.label + '” as a ' + r.programme.years + '-year programme.');
+        if (changed) o.onPick(key, r.created);
+      }).catch(function (e) { input.value = label(input.dataset.key); say(e.message); }).then(function () { input.disabled = false; });
+    }
+    input.addEventListener('change', function () { choose(input.value); });
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } });
+    input.addEventListener('focus', function () { input.select(); });
+    return { set: set, choose: choose, refresh: fillList, key: function () { return input.dataset.key; } };
+  }
+  window.NGRM = { typeable: typeable, $: $, $$: $$, esc: esc, f1: f1, f0: f0, ordinal: ordinal, bandCls: bandCls, api: api, toast: toast, live: live, boot: boot, consentPanel: consentPanel, ring: ring, showError: showError, HOME: HOME };
 })();

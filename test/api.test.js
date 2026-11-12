@@ -911,3 +911,99 @@ test('confirmation: a typed CGPA and self-rated skills count only once the mento
   const more = (await ananya('GET', '/api/me/profile')).body;
   assert.ok(more.score.factors.technical > after.score.factors.technical); assert.equal(more.score.skillsAssessed, after.score.skillsAssessed + 1);
 });
+
+test('typed roles and programmes: anything can be typed, and the plan follows the role and the programme', async () => {
+  const db2 = open(':memory:'); seed(db2); require('../server/seed').bootstrap(db2, {}); const h2 = helpers(db2);
+  const s = createApp(db2, { demoMode: true, sendCode: () => {}, uploadDir: uploads }).listen(0); await new Promise((r) => s.once('listening', r));
+  const b2 = 'http://localhost:' + s.address().port;
+  const who = async (email) => { let cookie = ''; const c = async (method, url, body) => { const r = await fetch(b2 + url, { method, headers: { 'content-type': 'application/json', cookie }, body: body ? JSON.stringify(body) : undefined });
+    const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0]; let json = null; try { json = await r.json(); } catch {} return { status: r.status, body: json }; }; if (email) await c('POST', '/api/auth/demo', { email }); return c; };
+  try {
+    const ananya = await who('ananya@demo.ngrm.in'), admin = await who('admin@demo.ngrm.in'), employer = await who('recruiter@demo.ngrm.in'), mentor = await who('kavya@demo.ngrm.in');
+    assert.equal((await (await who())('POST', '/api/library/role', { text: 'Data Scientist' })).status, 401);
+    // A typed role is matched to its kind of work and gets that kind's four skills.
+    const ds = await ananya('POST', '/api/library/role', { text: '  data   scientist ' });
+    assert.equal(ds.status, 201); assert.equal(ds.body.role.label, 'data scientist'); assert.equal(ds.body.role.family, 'ai');
+    assert.deepEqual(ds.body.role.skills, ['Python', 'Statistics and probability', 'Machine learning basics', 'Data handling with SQL']);
+    assert.equal(ds.body.role.listed, false, 'a student’s typed role is not offered to everyone until an admin lists it');
+    assert.equal((await ananya('POST', '/api/library/role', { text: 'Data Scientist' })).body.created, false, 'same name, same role');
+    assert.equal((await ananya('POST', '/api/library/role', { text: 'UX Researcher' })).body.key, 'ux', 'an existing role is reused');
+    for (const bad of ['', 'x', '12345', 'see http://evil.example', '<script>alert(1)</script>@x']) assert.equal((await ananya('POST', '/api/library/role', { text: bad })).status, 400, bad);
+    // A typed programme is matched to a discipline and a usual length.
+    const prog = await ananya('POST', '/api/library/programme', { text: 'B.E. Mechanical Engineering' });
+    assert.equal(prog.status, 201); assert.equal(prog.body.programme.years, 4); assert.equal(prog.body.programme.discipline, 'engineering');
+    // Other students do not see it; the student who typed it and staff do.
+    assert.ok(!(await (await who())('GET', '/api/meta')).body.roles[ds.body.key]);
+    assert.ok((await mentor('GET', '/api/meta')).body.roles[ds.body.key]);
+    // Choosing them personalises the profile and the plan.
+    const saved = await ananya('PUT', '/api/me/profile', { role: ds.body.key, prog: prog.body.id, year: 4 });
+    assert.equal(saved.status, 200); assert.equal(saved.body.profile.role, ds.body.key); assert.equal(saved.body.profile.year, 4);
+    assert.equal(saved.body.path.fit, 'related'); assert.match(saved.body.path.text, /B\.E\. Mechanical Engineering is a workable base for data scientist/);
+    assert.ok((await ananya('GET', '/api/meta')).body.roles[ds.body.key], 'her own role is in her list');
+    const plan = (await ananya('GET', '/api/me/recommendations')).body;
+    assert.equal(plan.path.label, 'Related path');
+    const course = plan.items.find((x) => x.id === 'course'), project = plan.items.find((x) => x.id === 'project'), intern = plan.items.find((x) => x.id === 'internship');
+    assert.match(course.title, /python|statistics and probability|machine learning basics|data handling with sql/);
+    assert.match(course.why, /B\.E\. Mechanical Engineering touches this only lightly/);
+    assert.match(project.what, /Train and evaluate a small model/); assert.match(intern.what, /data science or machine learning internship/);
+    assert.equal(course.learn.skill.length > 0, true); assert.ok(course.learn.searches.length >= 1, 'live course searches work for any typed skill');
+    // A switch is worded as a switch.
+    await ananya('PUT', '/api/me/profile', { prog: 'ba-jour' });
+    assert.equal((await ananya('GET', '/api/me/profile')).body.path.fit, 'switch');
+    // The mentor assesses the typed role's own skills.
+    const id = h2.get("SELECT id FROM users WHERE email = 'ananya@demo.ngrm.in'").id;
+    const a = await mentor('POST', '/api/mentor/assessments', { studentId: id, what: '2', value: 66 });
+    assert.equal(a.status, 201); assert.equal(a.body.label, 'Machine learning basics');
+    assert.equal((await mentor('GET', '/api/mentor/mentees')).body.find((m) => m.id === id).fit, 'Career switch');
+    // An employer can type a role too; theirs is listed at once and can carry a requirement.
+    const ca = await employer('POST', '/api/library/role', { text: 'Chartered Accountant' });
+    assert.equal(ca.body.role.family, 'finance'); assert.equal(ca.body.role.listed, true);
+    assert.equal((await employer('POST', '/api/employer/demand', { role: ca.body.key, skills: ['Taxation and GST basics'], openings: 4, city: 'Mysuru' })).status, 201);
+    assert.equal((await employer('GET', '/api/employer/supply?role=' + ca.body.key)).body.total.strong, null, 'no students yet, so nothing is shown');
+    const se = await employer('POST', '/api/library/role', { text: 'Software Engineer' });
+    const rel = (await employer('GET', '/api/employer/supply?role=' + se.body.key)).body.related;
+    assert.ok(rel.some((r) => r.key === 'dev' && r.students >= 5), 'points to the nearby role students actually chose');
+    // Something NGRM cannot place starts with general skills and is flagged for the admin.
+    const odd = await ananya('POST', '/api/library/role', { text: 'Astronaut' });
+    assert.equal(odd.body.role.needsReview, true); assert.equal(odd.body.role.family, 'general');
+    // Admin tools: correct the skills, list it, and remove only when unused.
+    assert.equal((await ananya('GET', '/api/admin/library')).status, 403);
+    const lib = (await admin('GET', '/api/admin/library')).body;
+    assert.equal(lib.roles.find((r) => r.key === ds.body.key).use.students, 1);
+    assert.equal((await admin('PUT', '/api/admin/library/roles/' + odd.body.key, { skills: ['Physics', 'Physics', 'Fitness', 'Teamwork'] })).status, 400);
+    const fixed = await admin('PUT', '/api/admin/library/roles/' + odd.body.key, { label: 'Astronaut', skills: ['Orbital mechanics', 'Flight systems', 'Physical fitness', 'Crew teamwork'], target: [70, 70, 80, 75], listed: true });
+    assert.equal(fixed.status, 200); assert.equal(fixed.body.needsReview, false); assert.equal(fixed.body.listed, true);
+    assert.ok((await (await who())('GET', '/api/meta')).body.roles[odd.body.key], 'listed roles are offered to everyone');
+    assert.equal((await admin('PUT', '/api/admin/library/roles/' + ds.body.key, { skills: ['A one', 'B two', 'C three', 'D four'] })).status, 409, 'skills lock once students are assessed');
+    assert.equal((await admin('PUT', '/api/admin/library/roles/' + ds.body.key, { label: 'UX Researcher' })).status, 409);
+    assert.equal((await admin('DELETE', '/api/admin/library/roles/' + ds.body.key)).status, 409);
+    assert.equal((await admin('DELETE', '/api/admin/library/roles/' + odd.body.key)).status, 200);
+    assert.equal((await admin('DELETE', '/api/admin/library/programmes/' + prog.body.id)).status, 200);
+    assert.equal((await admin('PUT', '/api/admin/library/roles/hr', { label: 'X role' })).status, 404, 'built-in roles cannot be edited here');
+    // College view: a role with enough students can be picked and shows its skills; a small one is hidden.
+    const college = await who('placement@demo.ngrm.in');
+    const all = (await college('GET', '/api/college/cohort')).body;
+    assert.ok(all.groups.roles.length >= 3 && all.groups.programmes.length >= 3);
+    const one = (await college('GET', '/api/college/cohort?role=' + all.groups.roles[0].id)).body;
+    assert.equal(one.suppressed, false); assert.equal(one.roleSkills.length, 4);
+    assert.equal((await college('GET', '/api/college/cohort?role=' + ds.body.key)).body.suppressed, true);
+    // Role ideas follow the programme.
+    const ideas = (await ananya('GET', '/api/library/suggest?programme=bcom')).body;
+    assert.equal(ideas.roles[0].label, 'Chartered Accountant', 'a listed role of that kind is offered first'); assert.equal(ideas.roles[0].fit, 'direct'); assert.ok(ideas.roles.some((r) => r.key === 'marketing'));
+    // A student cannot flood the list.
+    for (let i = 0; i < 8; i++) await ananya('POST', '/api/library/role', { text: 'Made up role number ' + String.fromCharCode(97 + i) });
+    assert.equal((await ananya('POST', '/api/library/role', { text: 'One more made up role' })).status, 429);
+  } finally { s.close(); }
+});
+
+test('role and programme matching is fixed and predictable', () => {
+  const L = require('../server/library');
+  const fam = (t) => L.familyOf(t).k, disc = (t) => (L.disciplineOf(t) || {}).k;
+  assert.deepEqual(['UX Researcher', 'HR Analyst', 'Data Scientist', 'Software Engineer', 'Bank PO', 'Civil Engineer', 'IAS officer', 'Clinical Psychologist', 'High school teacher', 'Journalist', 'Zzz'].map(fam),
+    ['ux', 'hr', 'ai', 'software', 'banking', 'engineering', 'civil', 'wellbeing', 'teaching', 'content', 'general']);
+  assert.deepEqual(['B.A. Psychology', 'B.Sc. Computer Science', 'B.Com', 'BBA LLB', 'M.A. English', 'MBBS'].map(disc), ['psychology', 'cs', 'commerce', 'law', 'humanities', 'health']);
+  assert.deepEqual(['B.Tech. Computer Science', 'MBBS', 'MBA Finance', 'B.Sc. Physics'].map(L.yearsOf), [4, 5, 2, 3]);
+  assert.deepEqual([L.fit('psychology', 'hr'), L.fit('cs', 'product'), L.fit('commerce', 'ai'), L.fit('general', 'hr')], ['direct', 'related', 'switch', 'open']);
+  // Every family has four skills and four sensible targets.
+  for (const f of L.FAMILIES.concat([L.GENERAL])) { assert.equal(f.skills.length, 4, f.k); assert.equal(new Set(f.skills).size, 4, f.k); assert.ok(f.target.every((t) => t >= 40 && t <= 90), f.k); }
+});

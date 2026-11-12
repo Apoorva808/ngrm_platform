@@ -20,6 +20,18 @@
     <div id="actDays" class="days" role="img" aria-label="Actions per day over the last 14 days"></div>
     <p class="small muted" id="actWeek" style="margin-top:0.5rem"></p>
   </section>
+  <section class="card" aria-labelledby="libTitle">
+    <header><h2 id="libTitle">Typed roles and programmes</h2><span class="small muted">What people have typed in, and the skills each role uses</span></header>
+    <p class="small">Anyone can type a target role or programme. A typed role takes four skills from the nearest kind of role; correct them here if they are wrong. “Listed” offers it to everyone as a suggestion; a student’s own typed entries stay private to them and their college until you list them.</p>
+    <form id="libAdd" novalidate style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:end;margin:0.6rem 0 1rem">
+      <div class="field" style="flex:1 1 240px"><label for="lib-text">Add a role or programme</label><input type="text" id="lib-text" maxlength="80" placeholder="For example: Data Scientist, or B.Sc. Physics"></div>
+      <div class="field"><label for="lib-kind">Kind</label><select id="lib-kind"><option value="role">Target role</option><option value="programme">Programme</option></select></div>
+      <button class="btn btn-primary" type="submit">Add</button>
+    </form>
+    <h3 style="font-size:1rem">Roles</h3><div id="libRoles"></div>
+    <h3 style="font-size:1rem;margin-top:1rem">Programmes</h3><div id="libProgs"></div>
+    <p class="small" id="lib-err" role="alert" style="color:var(--danger)" hidden></p>
+  </section>
   <section class="card" aria-labelledby="suTitle">
     <header><h2 id="suTitle">Sign-up requests</h2><span class="small muted">Staff, employers and researchers who signed up and confirmed their email</span></header>
     <div id="signups"></div>
@@ -107,6 +119,41 @@
       $('#recent').innerHTML = d.recent.map(function (u) { return '<tr><td>' + esc(u.name) + '</td><td>' + esc(u.email) + '</td><td>' + esc(u.role) + '</td><td>' + esc(u.org || '—') + '</td><td>' + (u.role === 'student' ? '<form data-mentor="' + u.id + '" novalidate style="display:flex;gap:0.3rem"><input type="email" value="' + esc(u.mentor || '') + '" placeholder="No mentor" aria-label="Mentor email for ' + esc(u.name) + '" style="min-width:11rem"><button class="btn btn-secondary btn-sm" type="submit">Save</button></form>' : '—') + '</td><td>' + (u.id === me.id ? '' : '<button class="btn-link" type="button" data-reset="' + u.id + '" data-name="' + esc(u.name) + '">Reset password</button> · <button class="btn-link" type="button" data-remove="' + u.id + '" data-name="' + esc(u.name) + '">Remove</button>') + '</td></tr>'; }).join('') || '<tr><td colspan="6" class="muted">No matching accounts.</td></tr>';
     });
   }
+  // Typed roles and programmes: list, correct, list or unlist, remove when unused.
+  function loadLibrary() {
+    return N.api('GET', '/api/admin/library').then(function (d) {
+      var fam = {}; d.families.forEach(function (f) { fam[f.k] = f.name; });
+      $('#libRoles').innerHTML = d.roles.length ? d.roles.map(function (r, n) {
+        return '<form class="libRole" data-key="' + esc(r.key) + '" novalidate style="border:1px solid var(--border);border-radius:var(--radius-md);padding:0.75rem 0.9rem;display:grid;gap:0.6rem;margin-bottom:0.6rem">' +
+          '<div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:end"><div class="field" style="flex:1 1 220px"><label for="lr-l' + n + '">Role name</label><input type="text" id="lr-l' + n + '" data-f="label" maxlength="60" value="' + esc(r.label) + '"></div>' +
+          '<span class="small muted">Matched to: ' + esc(fam[r.family] || r.family) + ' · ' + r.use.students + (r.use.students === 1 ? ' student' : ' students') + ' · ' + r.use.posts + (r.use.posts === 1 ? ' employer post' : ' employer posts') + (r.needsReview ? ' · <b>needs its skills set</b>' : '') + '</span></div>' +
+          '<div class="grid-4">' + r.skills.map(function (k, i) { return '<div class="field"><label for="lr-s' + n + i + '">Skill ' + (i + 1) + '</label><input type="text" id="lr-s' + n + i + '" data-f="skill" maxlength="60" value="' + esc(k) + '"' + (r.use.assessments ? ' disabled' : '') + '><label for="lr-t' + n + i + '" class="small muted">Target level (40–90)</label><input type="number" id="lr-t' + n + i + '" data-f="target" min="40" max="90" value="' + r.target[i] + '"></div>'; }).join('') + '</div>' +
+          (r.use.assessments ? '<p class="small muted" style="margin:0">Students have been assessed on these skills, so their names are locked.</p>' : '') +
+          '<div style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:center"><label class="check"><input type="checkbox" data-f="listed"' + (r.listed ? ' checked' : '') + '> <span>Listed for everyone</span></label><button class="btn btn-primary btn-sm" type="submit">Save</button>' +
+          (r.use.students || r.use.posts || r.use.courses ? '' : '<button class="btn btn-secondary btn-sm" type="button" data-lib-del="roles/' + esc(r.key) + '">Remove</button>') + '</div></form>'; }).join('')
+        : '<p class="small muted">No one has typed a new role yet. The eight built-in roles are always available.</p>';
+      $('#libProgs').innerHTML = d.programmes.length ? '<div class="table-wrap"><table><thead><tr><th>Programme</th><th class="n">Years</th><th class="n">Students</th><th>Listed</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>' + d.programmes.map(function (p, n) {
+        return '<tr data-prog="' + esc(p.id) + '"><td><label class="sr-only" for="lp-l' + n + '">Programme name</label><input type="text" id="lp-l' + n + '" data-f="label" maxlength="80" value="' + esc(p.label) + '"></td><td class="n"><label class="sr-only" for="lp-y' + n + '">Years</label><input type="number" id="lp-y' + n + '" data-f="years" min="1" max="6" value="' + p.years + '" style="width:5rem"></td><td class="n">' + p.students + '</td><td><label class="check"><input type="checkbox" data-f="listed"' + (p.listed ? ' checked' : '') + '> <span class="sr-only">Listed for everyone</span></label></td><td style="white-space:nowrap"><button class="btn btn-primary btn-sm" type="button" data-prog-save>Save</button>' + (p.students ? '' : ' <button class="btn btn-secondary btn-sm" type="button" data-lib-del="programmes/' + esc(p.id) + '">Remove</button>') + '</td></tr>'; }).join('') + '</tbody></table></div>'
+        : '<p class="small muted">No one has typed a new programme yet.</p>';
+    });
+  }
+  function libFail(e) { var x = $('#lib-err'); x.hidden = false; x.textContent = e.message; }
+  function libOk(msg) { $('#lib-err').hidden = true; N.toast(msg); return loadLibrary(); }
+  $('#libAdd').addEventListener('submit', function (e) {
+    e.preventDefault(); var kind = $('#lib-kind').value;
+    N.api('POST', '/api/library/' + kind, { text: $('#lib-text').value }).then(function (r) { $('#lib-text').value = ''; return libOk(r.created ? 'Added.' : 'That one already exists.'); }).catch(libFail);
+  });
+  $('#libRoles').addEventListener('submit', function (e) {
+    e.preventDefault(); var f = e.target.closest('.libRole'), get = function (k) { return N.$$('[data-f="' + k + '"]', f); };
+    var body = { label: get('label')[0].value, target: get('target').map(function (i) { return +i.value; }), listed: get('listed')[0].checked };
+    if (!get('skill')[0].disabled) body.skills = get('skill').map(function (i) { return i.value; });
+    N.api('PUT', '/api/admin/library/roles/' + encodeURIComponent(f.dataset.key), body).then(function () { return libOk('Role saved. Students aiming for it see the change at once.'); }).catch(libFail);
+  });
+  document.addEventListener('click', function (e) {
+    var del = e.target.closest('[data-lib-del]'), sv = e.target.closest('[data-prog-save]');
+    if (del) N.api('DELETE', '/api/admin/library/' + del.dataset.libDel.split('/').map(encodeURIComponent).join('/')).then(function () { return libOk('Removed.'); }).catch(libFail);
+    if (sv) { var tr = sv.closest('tr'); N.api('PUT', '/api/admin/library/programmes/' + encodeURIComponent(tr.dataset.prog), { label: N.$('[data-f="label"]', tr).value, years: +N.$('[data-f="years"]', tr).value, listed: N.$('[data-f="listed"]', tr).checked }).then(function () { return libOk('Programme saved.'); }).catch(libFail); }
+  });
   var tempList = [];
   function showTemp(list) {
     tempList = list; $('#tempBox').hidden = false;
@@ -169,7 +216,7 @@
   N.boot('admin', ['admin']).then(function (ctx) { me = ctx.me; meta = ctx.meta;
     $('#c-role').innerHTML = Object.keys(meta.roles).map(function (k) { return '<option value="' + k + '">' + esc(meta.roles[k].label) + '</option>'; }).join('') + '<option value="communication">Communication (all roles)</option>';
     skillOptions(); loadCourses().catch(fail); loadFeed().catch(fail);
-    loadActivity().catch(fail); N.live(loadActivity, 30); loadPeople().catch(fail); loadSignups().catch(fail); N.live(loadSignups, 30); loadRules().catch(fail); loadAudit().catch(fail); });
+    loadActivity().catch(fail); N.live(loadActivity, 30); loadPeople().catch(fail); loadSignups().catch(fail); N.live(loadSignups, 30); loadLibrary().catch(fail); loadRules().catch(fail); loadAudit().catch(fail); });
 
   // A line can name a college that itself contains a comma ("Sample College, Bengaluru"), so read
   // name, email and role from the start, the mentor email from the end, and treat the middle as the college.

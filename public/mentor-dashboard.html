@@ -23,7 +23,7 @@
 <div class="page-banner"><div class="container">
   <div><span class="eyebrow" id="bannerCollege"></span><h1 id="pageTitle">Mentor and college</h1>
   <p class="lead">Mentors review every recommendation and verify evidence. The cohort view shows, anonymously, where the curriculum falls short. Groups under 5 are hidden.</p></div>
-  <div class="field" style="min-width:min(260px,100%)"><label for="progFilter">Programme</label><select id="progFilter"><option value="all">All programmes</option></select></div>
+  <div class="field" style="min-width:min(300px,100%)"><label for="viewText">Show a programme or target role</label><input type="text" id="viewText" list="viewList" autocomplete="off" placeholder="All students. Type to narrow"><datalist id="viewList"></datalist><input type="hidden" id="progFilter" value="all"><span class="hint" id="viewNote" role="status">Type a programme or a role your students are aiming for.</span></div>
 </div></div>
 <main id="main" tabindex="-1">
 <div class="container stack">
@@ -34,7 +34,7 @@
     <div style="margin-top:0.75rem"><button class="btn btn-secondary btn-sm" type="button" id="more" hidden>Show more</button></div>
   </section>
   <div class="grid-2">
-    <section class="card" aria-labelledby="wTitle"><header><h2 id="wTitle">Where the cohort is weakest</h2><span class="small muted">Average factor score, out of 100</span></header><div id="cFactors"></div><div class="note warning" style="margin-top:1rem" id="signal" hidden></div></section>
+    <section class="card" aria-labelledby="wTitle"><header><h2 id="wTitle">Where the cohort is weakest</h2><span class="small muted">Average factor score, out of 100</span></header><div id="cFactors"></div><div id="roleSkills" hidden></div><div class="note warning" style="margin-top:1rem" id="signal" hidden></div></section>
     <section class="card" aria-labelledby="bTitle">
       <header><h2 id="bTitle">Readiness bands</h2><span class="small muted">Students see only their own band</span></header>
       <div class="stackbar" id="bands" role="img"></div>
@@ -55,6 +55,7 @@
   </section>
   <section class="card" id="menteeCard" hidden aria-labelledby="mTitle">
     <header><h2 id="mTitle">My mentees</h2><span class="small muted">Visible only to the student’s own mentor</span></header>
+    <div class="field" style="max-width:420px;margin-bottom:0.75rem"><label for="menteeFind">Find a mentee</label><input type="text" id="menteeFind" autocomplete="off" placeholder="Type a name, programme or target role"></div>
     <div class="table-wrap"><table><thead><tr><th>Student</th><th>Programme</th><th>Year</th><th>Target role</th><th class="n">Score</th><th>Band</th><th>Waiting for you</th></tr></thead><tbody id="mentees"></tbody></table></div>
     <form id="assessForm" novalidate style="display:grid;gap:0.75rem;margin-top:1.25rem;border-top:1px solid var(--border);padding-top:1rem">
       <h3>Confirm a CGPA or record a college assessment</h3>
@@ -69,7 +70,7 @@
 <script src="assets/app.js"></script>
 <script>
 (function () {
-  var N = NGRM, $ = N.$, $$ = N.$$, esc = N.esc, meta, me, q = null, filter = 'todo', shown = 12;
+  var N = NGRM, $ = N.$, $$ = N.$$, esc = N.esc, meta, me, q = null, filter = 'todo', shown = 12, groups = { programmes: [], roles: [] };
   function progLabel(id) { var p = meta.programmes.filter(function (x) { return x.id === id; })[0]; return p ? p.label : id; }
   function renderQueue() {
     var recs = q.recommendations.filter(function (x) { return filter === 'all' || (!x.mentor && x.student !== 'declined'); });
@@ -91,8 +92,13 @@
   }
   function loadQueue() { return N.api('GET', '/api/mentor/queue').then(function (d) { q = d; renderQueue(); return d; }); }
   function loadCohort() {
-    var prog = $('#progFilter').value;
-    return N.api('GET', '/api/college/cohort?programme=' + encodeURIComponent(prog)).then(function (c) {
+    var view = $('#progFilter').value, isRole = view.indexOf('r:') === 0;
+    return N.api('GET', '/api/college/cohort?' + (isRole ? 'role=' : 'programme=') + encodeURIComponent(view === 'all' ? 'all' : view.slice(2))).then(function (c) {
+      groups = c.groups || groups;
+      $('#viewList').innerHTML = groups.programmes.map(function (g) { return '<option value="' + esc(g.label) + '">'; }).join('') + groups.roles.map(function (g) { return '<option value="' + esc(g.label) + '">'; }).join('');
+      $('#roleSkills').hidden = !c.roleSkills;
+      if (c.roleSkills) $('#roleSkills').innerHTML = '<h3 style="margin-top:1.25rem">Skills for ' + esc(meta.roles[view.slice(2)].label) + '</h3><p class="small muted" style="margin:0.2rem 0 0.6rem">Share of these students assessed at or above the level the role expects. Low bars are what to teach or assess next.</p>' +
+        c.roleSkills.map(function (k) { return '<div class="bar-row' + (k.atTargetPct != null && k.atTargetPct < 25 ? ' low' : '') + '"><div class="lbl"><b>' + esc(k.name) + '</b><small>Target ' + k.target + '</small></div><div class="track"><i style="width:' + (k.atTargetPct || 0) + '%"></i></div><span class="val">' + (k.atTargetPct == null ? 'hidden' : '~' + k.atTargetPct + '%') + '</span></div>'; }).join('');
       var pending = q ? q.evidence.filter(function (e) { return e.status !== 'needs_proof'; }).length + q.recommendations.filter(function (x) { return !x.mentor && x.student !== 'declined'; }).length : null;
       if (c.suppressed) {
         $('#kpis').innerHTML = '<div class="kpi"><b>&lt;5</b><span>Students in view</span></div>';
@@ -120,7 +126,6 @@
     meta = ctx.meta; me = ctx.me;
     N.api('GET', '/api/me').then(function (r) { $('#bannerCollege').textContent = (r.user.institution ? r.user.institution.name : '') + (me.role === 'mentor' ? ' · faculty mentor' : ' · placement cell'); });
     $('#pageTitle').textContent = me.role === 'mentor' ? 'Mentor dashboard' : 'College dashboard';
-    $('#progFilter').innerHTML += meta.programmes.map(function (p) { return '<option value="' + p.id + '">' + esc(p.label) + '</option>'; }).join('');
     N.api('GET', '/api/demand').then(function (d) { $('#demand').innerHTML = d.slice(0, 4).map(function (x) { return '<div style="border:1px solid var(--border);border-radius:var(--radius-md);padding:0.6rem 0.8rem;display:grid;gap:0.15rem"><b class="small">' + esc(x.employer) + '</b><span class="small">' + esc(meta.roles[x.role].label) + ' · ' + x.openings + ' opening' + (x.openings == 1 ? '' : 's') + (x.city ? ' · ' + esc(x.city) : '') + '</span><span class="small muted">Needs: ' + x.skills.map(esc).join(', ') + '</span></div>'; }).join('') || '<p class="small muted">No requirements posted yet.</p>'; });
     if (me.role === 'mentor') {
       $('#queueCard').hidden = false; $('#menteeCard').hidden = false;
@@ -161,8 +166,12 @@
     return w.length ? esc(w.join(' · ')) : '<span class="muted">Nothing</span>';
   }
   function menteeRows(list) {
-    $('#mentees').innerHTML = list.map(function (s) { return '<tr><td>' + esc(s.name) + '</td><td>' + esc(progLabel(s.programme)) + '</td><td>' + N.ordinal(s.year) + '</td><td>' + esc(meta.roles[s.role].label) + '</td><td class="n">' + N.f1(s.index) + '</td><td><span class="chip ' + N.bandCls[s.band.k] + '">' + s.band.label + '</span></td><td class="small">' + waiting(s) + '</td></tr>'; }).join('');
+    var t = ($('#menteeFind').value || '').trim().toLowerCase();
+    if (t) list = list.filter(function (s) { return (s.name + ' ' + progLabel(s.programme) + ' ' + meta.roles[s.role].label + ' ' + s.fit).toLowerCase().indexOf(t) >= 0; });
+    if (!list.length) { $('#mentees').innerHTML = '<tr><td colspan="7" class="muted">' + (t ? 'No mentee matches “' + esc(t) + '”.' : 'No mentees linked to you yet.') + '</td></tr>'; return; }
+    $('#mentees').innerHTML = list.map(function (s) { return '<tr><td>' + esc(s.name) + '</td><td>' + esc(progLabel(s.programme)) + '</td><td>' + N.ordinal(s.year) + '</td><td>' + esc(meta.roles[s.role].label) + '<br><span class="small muted">' + esc(s.fit) + '</span></td><td class="n">' + N.f1(s.index) + '</td><td><span class="chip ' + N.bandCls[s.band.k] + '">' + s.band.label + '</span></td><td class="small">' + waiting(s) + '</td></tr>'; }).join('');
   }
+  $('#menteeFind').addEventListener('input', function () { menteeRows(mentees); });
   function current() { return mentees.filter(function (m) { return String(m.id) === $('#as-student').value; })[0]; }
   function whatOptions(keep) {
     var s = current(); if (!s) return; var was = keep === true ? $('#as-what').value : null;
@@ -184,7 +193,18 @@
       .then(function (list) { mentees = list; menteeRows(list); whatOptions(true); })
       .catch(function (x) { err.hidden = false; err.textContent = x.message; });
   });
-  $('#progFilter').addEventListener('change', loadCohort);
+  // Type a programme or a role: the cohort view narrows to it.
+  function pickView() {
+    var t = $('#viewText').value.replace(/\s+/g, ' ').trim().toLowerCase(), note = $('#viewNote');
+    var all = groups.programmes.map(function (g) { return { v: 'p:' + g.id, label: g.label, kind: 'programme' }; }).concat(groups.roles.map(function (g) { return { v: 'r:' + g.id, label: g.label, kind: 'target role' }; }));
+    var hit = !t ? null : all.filter(function (g) { return g.label.toLowerCase() === t; })[0] || (function () { var m = all.filter(function (g) { return g.label.toLowerCase().indexOf(t) >= 0; }); return m.length === 1 ? m[0] : null; })();
+    if (!t) { $('#progFilter').value = 'all'; note.textContent = 'Showing all students.'; }
+    else if (hit) { $('#progFilter').value = hit.v; $('#viewText').value = hit.label; note.textContent = 'Showing the ' + hit.kind + ' ' + hit.label + '.'; }
+    else { $('#progFilter').value = 'all'; note.textContent = 'No group of 5 or more students matches “' + $('#viewText').value.trim() + '”. Showing all students. Smaller groups are never shown on their own.'; }
+    loadCohort();
+  }
+  $('#viewText').addEventListener('change', pickView);
+  $('#viewText').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); pickView(); } });
   $('#more').addEventListener('click', function () { shown += 12; renderQueue(); });
   $$('[data-filter]').forEach(function (b) { b.addEventListener('click', function () { filter = b.dataset.filter; shown = 12; $$('[data-filter]').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); }); renderQueue(); }); });
   document.addEventListener('click', function (e) {

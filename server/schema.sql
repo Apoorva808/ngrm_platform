@@ -62,6 +62,31 @@ CREATE TABLE IF NOT EXISTS passwords (
   must_change INTEGER NOT NULL DEFAULT 0,   -- 1 for a temporary password handed out by an admin
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- Target roles and programmes that someone typed in. A typed role takes its four skills from a role family
+-- (server/library.js); an admin can correct them. listed = 1 means it is offered to everyone as a suggestion.
+CREATE TABLE IF NOT EXISTS custom_roles (
+  key           TEXT PRIMARY KEY,
+  label         TEXT NOT NULL,
+  family        TEXT NOT NULL,
+  skills_json   TEXT NOT NULL,
+  targets_json  TEXT NOT NULL,
+  project       TEXT NOT NULL,
+  internship    TEXT NOT NULL,
+  needs_review  INTEGER NOT NULL DEFAULT 0,
+  listed        INTEGER NOT NULL DEFAULT 0,
+  created_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS custom_programmes (
+  id          TEXT PRIMARY KEY,
+  label       TEXT NOT NULL,
+  years       INTEGER NOT NULL,
+  discipline  TEXT NOT NULL,
+  listed      INTEGER NOT NULL DEFAULT 0,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- People who are signing up. A row is 'unverified' until the emailed code is entered. Students then get an account at once;
 -- other roles stay 'waiting' until an admin approves. The password is held only as a salted hash.
 CREATE TABLE IF NOT EXISTS signups (

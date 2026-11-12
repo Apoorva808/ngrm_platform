@@ -1,6 +1,8 @@
 // Reference data, the scoring formula and the recommendation rules.
 // The score is pure arithmetic. Nothing in this file calls an AI model.
 
+const L = require('./library');
+
 const FORMULA_VERSION = 'v0.3';
 const MIN_GROUP = 5; // aggregates for groups smaller than this are suppressed
 
@@ -16,29 +18,46 @@ const FACTORS = [
 ];
 
 const ROLES = {
-  hr: { label: 'HR / People Analytics Associate', skills: ['Excel and data analysis', 'Research methods', 'Psychometric testing basics', 'Labour law basics'], target: [70, 70, 65, 60],
+  hr: { family: 'hr', listed: true, label: 'HR / People Analytics Associate', skills: ['Excel and data analysis', 'Research methods', 'Psychometric testing basics', 'Labour law basics'], target: [70, 70, 65, 60],
     project: 'Run a short employee-wellbeing survey for a local NGO or startup and present what you find', internship: 'an HR or people-analytics internship' },
-  wellbeing: { label: 'Mental Health and Wellbeing Associate', skills: ['Active listening', 'Case documentation', 'Psychological first aid', 'Ethics and confidentiality'], target: [75, 65, 70, 75],
+  wellbeing: { family: 'wellbeing', listed: true, label: 'Mental Health and Wellbeing Associate', skills: ['Active listening', 'Case documentation', 'Psychological first aid', 'Ethics and confidentiality'], target: [75, 65, 70, 75],
     project: 'Co-run a peer-support or awareness programme with your college counselling centre', internship: 'a supervised placement with a hospital, NGO or counselling centre' },
-  ux: { label: 'UX Researcher', skills: ['User interviews', 'Survey design', 'Usability testing', 'Figma basics'], target: [70, 70, 70, 60],
+  ux: { family: 'ux', listed: true, label: 'UX Researcher', skills: ['User interviews', 'Survey design', 'Usability testing', 'Figma basics'], target: [70, 70, 70, 60],
     project: 'Run a usability study on a public-service app and write it up as a case study', internship: 'a UX research internship with a product team' },
-  data: { label: 'Data Analyst', skills: ['SQL', 'Python', 'Statistics', 'Data visualisation'], target: [70, 65, 70, 65],
+  data: { family: 'data', listed: true, label: 'Data Analyst', skills: ['SQL', 'Python', 'Statistics', 'Data visualisation'], target: [70, 65, 70, 65],
     project: 'Analyse an open dataset from data.gov.in and publish a short dashboard', internship: 'a data or MIS internship' },
-  dev: { label: 'Software Developer', skills: ['Data structures and algorithms', 'Git', 'Web development', 'Databases'], target: [70, 65, 70, 65],
+  dev: { family: 'software', listed: true, label: 'Software Developer', skills: ['Data structures and algorithms', 'Git', 'Web development', 'Databases'], target: [70, 65, 70, 65],
     project: 'Build and deploy a small app that fixes a real campus problem', internship: 'a software development internship' },
-  content: { label: 'Content and Communications Associate', skills: ['Writing and editing', 'Fact-checking', 'Social media', 'SEO basics'], target: [75, 70, 65, 55],
+  content: { family: 'content', listed: true, label: 'Content and Communications Associate', skills: ['Writing and editing', 'Fact-checking', 'Social media', 'SEO basics'], target: [75, 70, 65, 55],
     project: 'Write and publish a six-part explainer series for a local organisation', internship: 'a content or communications internship' },
-  marketing: { label: 'Marketing Associate', skills: ['Market research', 'Digital marketing', 'Excel', 'Presentation'], target: [65, 65, 65, 70],
+  marketing: { family: 'marketing', listed: true, label: 'Marketing Associate', skills: ['Market research', 'Digital marketing', 'Excel', 'Presentation'], target: [65, 65, 65, 70],
     project: 'Run a market survey for a local business and pitch your recommendations', internship: 'a marketing internship' },
-  founder: { label: 'Founder / Entrepreneurship', skills: ['Customer discovery', 'Business model design', 'Basic finance', 'Pitching'], target: [70, 65, 60, 70],
+  founder: { family: 'founder', listed: true, label: 'Founder / Entrepreneurship', skills: ['Customer discovery', 'Business model design', 'Basic finance', 'Pitching'], target: [70, 65, 60, 70],
     project: 'Interview 20 potential users and turn what you learn into a one-page business model', internship: 'an internship at an early-stage startup or your college incubator' },
 };
 
 const PROGRAMMES = [
-  { id: 'ba-psy', label: 'B.A. Psychology', years: 3 }, { id: 'ba-jour', label: 'B.A. Journalism', years: 3 },
-  { id: 'bcom', label: 'B.Com', years: 3 }, { id: 'bba', label: 'BBA', years: 3 },
-  { id: 'bsc-cs', label: 'B.Sc. Computer Science', years: 3 }, { id: 'btech', label: 'B.Tech. Computer Science', years: 4 },
+  { id: 'ba-psy', discipline: 'psychology', listed: true, label: 'B.A. Psychology', years: 3 }, { id: 'ba-jour', discipline: 'media', listed: true, label: 'B.A. Journalism', years: 3 },
+  { id: 'bcom', discipline: 'commerce', listed: true, label: 'B.Com', years: 3 }, { id: 'bba', discipline: 'management', listed: true, label: 'BBA', years: 3 },
+  { id: 'bsc-cs', discipline: 'cs', listed: true, label: 'B.Sc. Computer Science', years: 3 }, { id: 'btech', discipline: 'cs', listed: true, label: 'B.Tech. Computer Science', years: 4 },
 ];
+
+// Roles and programmes people have typed are added to these at start-up and whenever one is created (see app.js).
+const BUILT_IN_ROLES = Object.keys(ROLES), BUILT_IN_PROGRAMMES = PROGRAMMES.map((x) => x.id);
+const programme = (id) => PROGRAMMES.find((x) => x.id === id) || { id, label: 'your programme', years: 3, discipline: 'general' };
+const fitOf = (p) => L.fit(programme(p.prog).discipline, (ROLES[p.role] || {}).family || 'general');
+// One short, plain note on how this programme relates to this role. It shapes the wording of the plan, never the score.
+function pathNote(p) {
+  const R = ROLES[p.role], P = programme(p.prog), f = fitOf(p), d = L.DISCIPLINES.find((x) => x.k === P.discipline);
+  const two = R.skills.map((s, i) => [s, +p.skills[i] || 0]).sort((a, b) => a[1] - b[1]).slice(0, 2).map((x) => x[0].toLowerCase()).join(' and ');
+  const text = {
+    direct: `${P.label} leads naturally to ${R.label}. Your coursework covers the base, so what sets you apart is proof: assessed skills, a finished project and an internship.`,
+    related: `${P.label} is a workable base for ${R.label}. Some of what the role needs comes from your programme; plan to build ${two} outside class.`,
+    switch: `${R.label} is a change of direction from ${d ? d.name : P.label}. That is common and doable, but your degree alone will not be read as evidence for this role, so courses with proctored exams, a finished project and an internship matter more for you than for most.`,
+    open: `Your plan is built around ${R.label} and ${P.label} as you typed them. ${R.needsReview ? 'This role is new to NGRM, so it starts with general workplace skills until the NGRM admin sets the specific ones.' : 'Ask your mentor how others have made this move.'}`,
+  }[f];
+  return { fit: f, label: L.FIT_LABEL[f], text };
+}
 
 const EVIDENCE_TYPES = {
   course: 'NPTEL / SWAYAM course', certificate: 'Certificate', project: 'Project', internship: 'Internship',
@@ -129,14 +148,14 @@ const RULES = {
     assume: 'Assumes the course lifts that skill by 15 points, your college then assesses it at that level, and the certificate is verified. The assessed result may differ.',
     title: (p) => `Take an NPTEL or SWAYAM course in ${ROLES[p.role].skills[weakest(p)].toLowerCase()}`,
     what: () => 'Pick a course on this skill and sit the proctored exam, so the certificate counts as verified evidence.',
-    why: (p) => { const i = weakest(p), a = p.skillsVerified && p.skillsVerified[i]; return `${ROLES[p.role].skills[i]} is your weakest role skill at ${p.skills[i]}/100${a ? '' : ' by your own rating'}, against a target of ${ROLES[p.role].target[i]}. Technical and role skills carry 20% of your score${a ? '' : ', and this skill starts counting once your college assesses it'}.`; },
+    why: (p) => { const i = weakest(p), a = p.skillsVerified && p.skillsVerified[i]; return `${ROLES[p.role].skills[i]} is your weakest role skill at ${p.skills[i]}/100${a ? '' : ' by your own rating'}, against a target of ${ROLES[p.role].target[i]}. Technical and role skills carry 20% of your score${a ? '' : ', and this skill starts counting once your college assesses it'}.${{ direct: ` ${programme(p.prog).label} gives you the basics; a proctored course turns that into evidence.`, related: ` ${programme(p.prog).label} touches this only lightly, so a structured course fills the gap.`, switch: ` ${programme(p.prog).label} does not teach this, so a structured course is the quickest way in.`, open: '' }[fitOf(p)]}`; },
   },
   project: {
     applies: (p, r, t) => r.counts.project < t,
     sim: (p, ev) => [p, withEv(ev, 'project')],
     assume: 'Counts one more project, once your mentor has verified it.',
     title: () => 'Do one applied project',
-    what: (p) => `${ROLES[p.role].project}.`,
+    what: (p) => `${ROLES[p.role].project}.${{ direct: ` Use a method from your ${programme(p.prog).label} coursework so it shows you can apply what you study.`, related: ` Pick a topic where your ${programme(p.prog).label} background is an advantage.`, switch: ` For someone moving from ${programme(p.prog).label}, a finished project is the clearest proof you can do this work.`, open: '' }[fitOf(p)]}`,
     why: (p, r) => `Projects carry 15% of your score. You have ${r.counts.project} completed project${r.counts.project === 1 ? '' : 's'}, which gives ${Math.round(r.factors.projects)}/100. Each verified project adds 35.`,
   },
   internship: {
@@ -144,7 +163,7 @@ const RULES = {
     sim: (p, ev) => [p, withEv(ev, 'internship')],
     assume: 'Counts one internship, once your mentor has verified it.',
     title: () => 'Line up a summer internship',
-    what: (p) => `Aim for ${ROLES[p.role].internship}. Start with your placement cell; the AICTE internship portal also lists openings for students.`,
+    what: (p) => `Aim for ${ROLES[p.role].internship}. Start with your placement cell; the AICTE internship portal also lists openings for students.${fitOf(p) === 'switch' ? ` Coming from ${programme(p.prog).label}, say plainly in your application why you want ${ROLES[p.role].label} and point to your project or course.` : ''}`,
     why: (p, r) => `Experience carries 15% of your score. ${r.counts.internship === 0 ? 'You have no verified internships yet, so this factor is at 0.' : `You are at ${Math.round(r.factors.experience)}/100.`}`,
   },
   communication: {
@@ -177,7 +196,7 @@ const RULES = {
     sim: (p, ev) => { const q = clone(p); q.clarity = Math.min(100, (+q.clarity || 0) + 20); return [q, ev]; },
     assume: 'Assumes your confidence rating rises by 20.',
     title: () => 'Test your career direction',
-    what: (p) => `Shortlist two roles, including ${ROLES[p.role].label}, and talk to one working person in each. Then re-rate your confidence with your mentor.`,
+    what: (p) => `Shortlist two roles, including ${ROLES[p.role].label}, and talk to one working person in each${fitOf(p) === 'switch' ? `, ideally someone who also moved into it from ${programme(p.prog).label}` : ''}. Then re-rate your confidence with your mentor.`,
     why: (p, r) => `You rated your career confidence ${Math.round(r.factors.clarity)}/100. It carries only 5% of your score, but it sharpens every other step in the plan.`,
   },
   counsellor: {
@@ -233,5 +252,5 @@ function projectIndex(p, evidence, ruleIds) {
   return score(q, ev).index;
 }
 
-module.exports = { projectIndex, FORMULA_VERSION, MIN_GROUP, FACTORS, ROLES, PROGRAMMES, EVIDENCE_TYPES, SLOTS, CONSENT_PURPOSES,
+module.exports = { pathNote, fitOf, programme, BUILT_IN_ROLES, BUILT_IN_PROGRAMMES, projectIndex, FORMULA_VERSION, MIN_GROUP, FACTORS, ROLES, PROGRAMMES, EVIDENCE_TYPES, SLOTS, CONSENT_PURPOSES,
   DEFAULT_RULE_SETTINGS, THRESHOLD_RANGE, weakest, score, band, recommend, counts, avg, round1, clamp };
