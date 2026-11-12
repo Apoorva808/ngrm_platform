@@ -118,23 +118,65 @@ function createApp(db, opts = {}) {
   const safePct = (count, total) => (count < D.MIN_GROUP || total - count < D.MIN_GROUP ? null : Math.round(count / total * 20) * 5);
   const approx = (n) => (n < D.MIN_GROUP ? null : Math.max(D.MIN_GROUP, Math.round(n / 5) * 5));
 
+  // Sign-up is open unless SIGNUP=off. SIGNUP_DOMAINS (comma-separated, e.g. "college.edu.in") limits student sign-up to those email domains.
+  const signUpOpen = (opts.signUp ?? process.env.SIGNUP) !== 'off';
+  const signUpDomains = String(opts.signUpDomains ?? process.env.SIGNUP_DOMAINS ?? '').toLowerCase().split(',').map((x) => x.trim().replace(/^@/, '')).filter(Boolean);
+  const SIGNUP_ROLES = ['student', 'mentor', 'college_admin', 'employer', 'researcher'];
+
   // ---------- Public ----------
   app.get('/api/meta', (req, res) => res.json({
     formulaVersion: D.FORMULA_VERSION, minGroup: D.MIN_GROUP, factors: D.FACTORS, roles: D.ROLES, programmes: D.PROGRAMMES,
-    evidenceTypes: D.EVIDENCE_TYPES, slots: D.SLOTS, consentPurposes: D.CONSENT_PURPOSES, demoMode,
+    evidenceTypes: D.EVIDENCE_TYPES, slots: D.SLOTS, consentPurposes: D.CONSENT_PURPOSES, demoMode, signUp: signUpOpen,
     // Who runs this pilot and whom to contact about personal data (shown on the privacy notice).
     operator: { name: String(process.env.ORG_NAME || '').slice(0, 120) || null, contact: String(process.env.PRIVACY_CONTACT || '').slice(0, 160) || null },
   }));
 
+  const ORG_ROLES = { student: 'institution', mentor: 'institution', college_admin: 'institution', employer: 'employer' };
+  const mailNotice = opts.sendNotice || ((to, subject, text) => { if (mail.provider()) mail.sendNotice(to, subject, text).catch((e) => console.error('Could not send an email:', e.message)); });
+
   // ---------- Auth ----------
   // Per-address limit too, so one sender cannot flood many inboxes with codes (30 an hour).
   const ipHits = new Map();
-  app.post('/api/auth/request-code', (req, res) => {
+  function ipLimited(req, res) {
     const now = Date.now(), ip = req.ip || 'unknown';
     const hits = (ipHits.get(ip) || []).filter((t) => now - t < 60 * 60 * 1000);
-    if (hits.length >= 30) return fail(res, 429, 'Too many sign-in codes asked for from this network. Try again in an hour.');
+    if (hits.length >= 30) { fail(res, 429, 'Too many sign-in codes asked for from this network. Try again in an hour.'); return true; }
     hits.push(now); ipHits.set(ip, hits);
     if (ipHits.size > 10000) for (const [k, v] of ipHits) if (!v.some((t) => now - t < 60 * 60 * 1000)) ipHits.delete(k);
+    return false;
+  }
+  // Sign-up. Anyone can ask; the emailed code proves the address. Students get an account at once,
+  // mentors, placement cells, employers and researchers wait for an admin, and admins are never created this way.
+  app.get('/api/auth/sign-up-options', (req, res) => res.json({ open: signUpOpen, domains: signUpDomains,
+    institutions: signUpOpen ? h.all('SELECT id, name, city FROM institutions ORDER BY name') : [] }));
+  app.post('/api/auth/sign-up', (req, res) => {
+    if (!signUpOpen) return fail(res, 403, 'Sign-up is closed. Ask your college or the NGRM team for an account.');
+    const b = req.body || {}, name = String(b.name || '').trim().replace(/\s+/g, ' ').slice(0, 120), email = String(b.email || '').trim().toLowerCase(), role = String(b.role || '');
+    if (name.length < 2) return fail(res, 400, 'Enter your full name.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return fail(res, 400, 'Enter a valid email address.');
+    if (!SIGNUP_ROLES.includes(role)) return fail(res, 400, 'Choose who you are signing up as.');
+    let institutionId = null, orgName = null;
+    if (ORG_ROLES[role] === 'institution') {
+      const inst = h.get('SELECT id FROM institutions WHERE id = ?', Number(b.institutionId) || 0);
+      if (!inst) return fail(res, 400, 'Choose your college from the list.');
+      institutionId = inst.id;
+    }
+    if (role === 'employer') { orgName = String(b.orgName || '').trim().replace(/\s+/g, ' ').slice(0, 160); if (orgName.length < 2) return fail(res, 400, 'Enter your company name.'); }
+    if (role === 'student' && signUpDomains.length && !signUpDomains.some((d) => email.endsWith('@' + d) || email.endsWith('.' + d)))
+      return fail(res, 400, 'Students sign up with their college email (' + signUpDomains.map((d) => '@' + d).join(', ') + ').');
+    if (ipLimited(req, res)) return;
+    const r = auth.signUpStart({ name, email, role, institutionId, orgName, password: b.password });
+    if (r.error) return fail(res, r.status, r.error);
+    res.json(r);
+  });
+  app.post('/api/auth/sign-up/verify', (req, res) => {
+    const r = auth.signUpVerify(req.body?.email, req.body?.code);
+    if (r.error) return fail(res, 400, r.error);
+    if (r.pending) return res.json({ pending: true });
+    setCookie(res, r.token); res.json({ user: { id: r.user.id, name: r.user.name, role: r.user.role } });
+  });
+  app.post('/api/auth/request-code', (req, res) => {
+    if (ipLimited(req, res)) return;
     const email = String(req.body?.email || '').trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return fail(res, 400, 'Enter a valid email address.');
     const r = auth.requestCode(email);
@@ -149,6 +191,8 @@ function createApp(db, opts = {}) {
   // Sign in with a password instead of a code (for people who have set one).
   app.post('/api/auth/password', (req, res) => {
     const r = auth.signInWithPassword(req.body?.email, req.body?.password);
+    // Said only to someone who knows the password they chose, so it gives nothing away to anyone else.
+    if (r.error && r.status === 400 && auth.waitingWith(req.body?.email, req.body?.password)) return fail(res, 403, 'Your email is confirmed and your account is waiting for approval by the NGRM admin. You will be able to sign in once it is approved.');
     if (r.error) return fail(res, r.status, r.error);
     setCookie(res, r.token); res.json({ user: { id: r.user.id, name: r.user.name, role: r.user.role } });
   });
@@ -696,8 +740,25 @@ function createApp(db, opts = {}) {
     catch (e) { res.json({ ok: false, message: String(e.message || e).slice(0, 200) }); }
   });
 
-  // People and organisations. In the pilot, accounts are added by an admin; there is no open sign-up.
-  const ORG_ROLES = { student: 'institution', mentor: 'institution', college_admin: 'institution', employer: 'employer' };
+  // Sign-ups from mentors, placement cells, employers and researchers wait here until an admin approves or declines them.
+  app.get('/api/admin/signups', need('admin'), (req, res) => res.json(h.all("SELECT s.email, s.name, s.role, COALESCE(i.name, s.org_name) AS org, s.created_at FROM signups s LEFT JOIN institutions i ON i.id = s.institution_id WHERE s.status = 'waiting' ORDER BY s.created_at")));
+  app.post('/api/admin/signups/decide', need('admin'), (req, res) => {
+    const row = h.get("SELECT * FROM signups WHERE email = ? AND status = 'waiting'", String(req.body?.email || '').trim().toLowerCase());
+    if (!row) return fail(res, 404, 'That request is no longer waiting.');
+    if (req.body?.approve !== true) { h.run('DELETE FROM signups WHERE email = ?', row.email); audit(req.user.id, 'admin.signup_declined', row.role); return res.json({ ok: true, approved: false }); }
+    if (h.get('SELECT id FROM users WHERE email = ?', row.email)) { h.run('DELETE FROM signups WHERE email = ?', row.email); return fail(res, 409, 'That email already has an account.'); }
+    let employerId = null;
+    if (row.role === 'employer') {
+      const e = h.get('SELECT id FROM employers WHERE lower(name) = lower(?)', row.org_name);
+      employerId = e ? e.id : Number(h.run('INSERT INTO employers (name, city, is_sample) VALUES (?, NULL, 0)', row.org_name).lastInsertRowid);
+    }
+    const user = auth.createFromSignup(row, row.institution_id, employerId);
+    audit(req.user.id, 'admin.signup_approved', user.id);
+    mailNotice(user.email, 'Your NGRM account is approved', `Hello ${user.name},\n\nYour NGRM account has been approved. You can now sign in with your email and the password you chose.`);
+    res.json({ ok: true, approved: true });
+  });
+
+  // People and organisations: admins can also add accounts directly.
   app.get('/api/admin/people', need('admin'), (req, res) => {
     const q = String(req.query.q || '').trim().toLowerCase().slice(0, 80);
     res.json({ institutions: h.all('SELECT i.id, i.name, i.city, (SELECT COUNT(*) FROM users u WHERE u.institution_id = i.id AND u.role = \'student\') AS students FROM institutions i ORDER BY i.name'),

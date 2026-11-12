@@ -20,6 +20,10 @@
     <div id="actDays" class="days" role="img" aria-label="Actions per day over the last 14 days"></div>
     <p class="small muted" id="actWeek" style="margin-top:0.5rem"></p>
   </section>
+  <section class="card" aria-labelledby="suTitle">
+    <header><h2 id="suTitle">Sign-up requests</h2><span class="small muted">Staff, employers and researchers who signed up and confirmed their email</span></header>
+    <div id="signups"></div>
+  </section>
   <div class="grid-2">
     <section class="card" aria-labelledby="pTitle">
       <header><h2 id="pTitle">Add people</h2><span class="small muted">One person per line</span></header>
@@ -97,6 +101,13 @@
       $('#recent').innerHTML = d.recent.map(function (u) { return '<tr><td>' + esc(u.name) + '</td><td>' + esc(u.email) + '</td><td>' + esc(u.role) + '</td><td>' + esc(u.org || '—') + '</td><td>' + (u.role === 'student' ? '<form data-mentor="' + u.id + '" novalidate style="display:flex;gap:0.3rem"><input type="email" value="' + esc(u.mentor || '') + '" placeholder="No mentor" aria-label="Mentor email for ' + esc(u.name) + '" style="min-width:11rem"><button class="btn btn-secondary btn-sm" type="submit">Save</button></form>' : '—') + '</td><td>' + (u.id === me.id ? '' : '<button class="btn-link" type="button" data-remove="' + u.id + '" data-name="' + esc(u.name) + '">Remove</button>') + '</td></tr>'; }).join('') || '<tr><td colspan="6" class="muted">No matching accounts.</td></tr>';
     });
   }
+  function loadSignups() {
+    return N.api('GET', '/api/admin/signups').then(function (list) {
+      $('#signups').innerHTML = list.length ? '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>College or company</th><th>Asked</th><th></th></tr></thead><tbody>' + list.map(function (s) {
+        return '<tr><td>' + esc(s.name) + '</td><td>' + esc(s.email) + '</td><td>' + esc(s.role) + '</td><td>' + esc(s.org || '—') + '</td><td>' + esc(String(s.created_at).slice(0, 10)) + '</td><td style="white-space:nowrap"><button class="btn btn-primary btn-sm" type="button" data-approve="' + esc(s.email) + '">Approve</button> <button class="btn btn-secondary btn-sm" type="button" data-decline="' + esc(s.email) + '">Decline</button></td></tr>'; }).join('') + '</tbody></table></div><p class="small muted" style="margin-top:0.5rem">Check that the person really works at the college or company before approving. Students do not need approval.</p>'
+        : '<p class="small muted">No requests are waiting. Students who sign up get their account straight away; other roles appear here for approval.</p>';
+    });
+  }
   function loadRules() {
     return N.api('GET', '/api/admin/rules').then(function (rules) {
       $('#rules').innerHTML = rules.map(function (r) { return '<tr><td>' + esc(r.id) + '</td><td>' + esc(r.factor) + '</td><td>' + esc(r.slot) + '</td><td class="n"><input type="number" step="0.1" id="th-' + r.id + '" value="' + (r.threshold == null ? '' : r.threshold) + '" style="max-width:6rem" aria-label="Threshold for ' + esc(r.id) + '" title="' + esc(HINT[r.id] || 'No threshold') + '"' + (r.threshold == null ? ' disabled' : '') + '></td><td><input type="checkbox" id="ac-' + r.id + '"' + (r.active ? ' checked' : '') + (r.id === 'counsellor' ? ' disabled title="Always offered"' : '') + ' aria-label="Active: ' + esc(r.id) + '"></td><td><button class="btn btn-secondary btn-sm" type="button" data-save="' + r.id + '">Save</button></td></tr>'; }).join('');
@@ -141,7 +152,7 @@
   N.boot('admin', ['admin']).then(function (ctx) { me = ctx.me; meta = ctx.meta;
     $('#c-role').innerHTML = Object.keys(meta.roles).map(function (k) { return '<option value="' + k + '">' + esc(meta.roles[k].label) + '</option>'; }).join('') + '<option value="communication">Communication (all roles)</option>';
     skillOptions(); loadCourses().catch(fail); loadFeed().catch(fail);
-    loadActivity().catch(fail); N.live(loadActivity, 30); loadPeople().catch(fail); loadRules().catch(fail); loadAudit().catch(fail); });
+    loadActivity().catch(fail); N.live(loadActivity, 30); loadPeople().catch(fail); loadSignups().catch(fail); N.live(loadSignups, 30); loadRules().catch(fail); loadAudit().catch(fail); });
 
   // A line can name a college that itself contains a comma ("Sample College, Bengaluru"), so read
   // name, email and role from the start, the mentor email from the end, and treat the middle as the college.
@@ -195,6 +206,12 @@
   });
   var armed = null;
   document.addEventListener('click', function (e) {
+    var su = e.target.closest('[data-approve],[data-decline]');
+    if (su) {
+      var yes = su.hasAttribute('data-approve'), em = yes ? su.dataset.approve : su.dataset.decline;
+      N.api('POST', '/api/admin/signups/decide', { email: em, approve: yes }).then(function () { N.toast(yes ? 'Approved. ' + em + ' can now sign in.' : 'Declined ' + em + '.'); loadSignups(); loadPeople(); loadAudit(); }).catch(fail);
+      return;
+    }
     var rm = e.target.closest('[data-remove]');
     if (rm) {
       // Two clicks: the first asks for confirmation in place, the second removes.

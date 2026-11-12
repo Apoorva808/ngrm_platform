@@ -24,18 +24,22 @@ function passwordMatches(stored, pw) {
 const DUMMY = hashPassword('not-a-real-password', '00');              // and five per hour, so codes cannot be guessed by asking again and again
 
 function makeAuth(h, { audit, sendCode }) {
-  function requestCode(email) {
-    email = String(email || '').trim().toLowerCase();
-    // Limits apply to every email, known or not, so the limit itself reveals nothing.
+  // Limits apply to every email, known or not, so the limit itself reveals nothing.
+  function throttle(email) {
     const now = Date.now();
     h.run('DELETE FROM otp_requests WHERE at < ?', now - 60 * 60 * 1000);
     const recent = h.all('SELECT at FROM otp_requests WHERE email = ? ORDER BY at DESC', email);
     if (recent.length && now - recent[0].at < MIN_GAP_MS) return { error: 'A code was sent a moment ago. Wait 30 seconds before asking for another.', status: 429 };
     if (recent.length >= HOURLY_LIMIT) return { error: 'Too many codes asked for this email. Try again in an hour.', status: 429 };
     h.run('INSERT INTO otp_requests (email, at) VALUES (?, ?)', email, now);
+    return null;
+  }
+  function requestCode(email) {
+    email = String(email || '').trim().toLowerCase();
+    const limited = throttle(email); if (limited) return limited;
     const user = h.get('SELECT id FROM users WHERE email = ?', email);
     // Same response whether or not the account exists, so emails can't be probed.
-    if (!user) return { sent: true, devNote: process.env.DEV_SHOW_OTP === 'true' ? 'No account uses this email. In the pilot, accounts are added by an admin.' : undefined };
+    if (!user) return { sent: true, devNote: process.env.DEV_SHOW_OTP === 'true' ? 'No account uses this email. Create one from the sign-up page.' : undefined };
     const code = String(crypto.randomInt(100000, 1000000));
     h.run('INSERT INTO otp_codes (email, code_hash, expires_at, attempts) VALUES (?, ?, ?, 0) ON CONFLICT(email) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0',
       email, hash(email + ':' + code), Date.now() + OTP_TTL_MS);
@@ -60,6 +64,58 @@ function makeAuth(h, { audit, sendCode }) {
     return { token: startSession(user.id), user };
   }
 
+  // ---------- Sign-up ----------
+  // Step 1: keep the details (password as a hash only) and email a code. The answer is the same whether or not the email
+  // already has an account; an existing account simply gets an ordinary sign-in code.
+  function signUpStart({ name, email, role, institutionId, orgName, password }) {
+    const problem = passwordProblem(password, email); if (problem) return { error: problem, status: 400 };
+    const limited = throttle(email); if (limited) return limited;
+    const code = String(crypto.randomInt(100000, 1000000));
+    const dev = process.env.DEV_SHOW_OTP === 'true' ? code : undefined;
+    h.run("DELETE FROM signups WHERE status = 'unverified' AND expires_at < ?", Date.now() - 24 * 60 * 60 * 1000);
+    if (h.get('SELECT id FROM users WHERE email = ?', email)) {
+      h.run('INSERT INTO otp_codes (email, code_hash, expires_at, attempts) VALUES (?, ?, ?, 0) ON CONFLICT(email) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0', email, hash(email + ':' + code), Date.now() + OTP_TTL_MS);
+      sendCode(email, code);
+      return { sent: true, devCode: dev };
+    }
+    // A request already waiting for approval is left untouched, so nobody else can overwrite it.
+    if (h.get("SELECT 1 FROM signups WHERE email = ? AND status = 'waiting'", email)) return { sent: true, devNote: process.env.DEV_SHOW_OTP === 'true' ? 'This email already has a request waiting for approval.' : undefined };
+    h.run(`INSERT INTO signups (email, name, role, institution_id, org_name, pw_hash, code_hash, expires_at, attempts, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'unverified')
+      ON CONFLICT(email) DO UPDATE SET name = excluded.name, role = excluded.role, institution_id = excluded.institution_id, org_name = excluded.org_name, pw_hash = excluded.pw_hash,
+      code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0, status = 'unverified', created_at = datetime('now')`,
+      email, name, role, institutionId ?? null, orgName || null, hashPassword(password), hash('signup:' + email + ':' + code), Date.now() + OTP_TTL_MS);
+    sendCode(email, code);
+    audit(null, 'auth.sign_up_started', role);
+    return { sent: true, devCode: dev };
+  }
+  // Step 2: the code proves the email. Students get their account now; other roles wait for an admin.
+  function signUpVerify(email, code) {
+    email = String(email || '').trim().toLowerCase();
+    if (h.get('SELECT id FROM users WHERE email = ?', email)) return verifyCode(email, code);
+    const row = h.get("SELECT * FROM signups WHERE email = ? AND status = 'unverified'", email);
+    if (!row || row.expires_at < Date.now()) return { error: 'That code has expired. Start again to get a new one.' };
+    if (row.attempts >= MAX_ATTEMPTS) return { error: 'Too many wrong attempts. Start again to get a new code.' };
+    const given = Buffer.from(hash('signup:' + email + ':' + String(code || '').trim()), 'hex'), stored = Buffer.from(row.code_hash, 'hex');
+    if (given.length !== stored.length || !crypto.timingSafeEqual(given, stored)) {
+      h.run('UPDATE signups SET attempts = attempts + 1 WHERE email = ?', email);
+      return { error: 'That code is not right. Check the email and try again.' };
+    }
+    if (row.role !== 'student') { h.run("UPDATE signups SET status = 'waiting', expires_at = 0 WHERE email = ?", email); audit(null, 'auth.sign_up_waiting', row.role); return { pending: true }; }
+    const user = createFromSignup(row, row.institution_id, null);
+    return { token: startSession(user.id, 'password'), user };
+  }
+  function createFromSignup(row, institutionId, employerId) {
+    return h.tx(() => {
+      const id = Number(h.run('INSERT INTO users (email, name, role, institution_id, employer_id, is_sample) VALUES (?, ?, ?, ?, ?, 0)', row.email, row.name, row.role, institutionId ?? null, employerId ?? null).lastInsertRowid);
+      h.run('INSERT INTO passwords (user_id, hash) VALUES (?, ?)', id, row.pw_hash);
+      h.run('DELETE FROM signups WHERE email = ?', row.email);
+      audit(id, 'auth.signed_up', row.role);
+      return h.get('SELECT * FROM users WHERE id = ?', id);
+    });
+  }
+  // True when this email has a verified sign-up waiting for approval and the password given is the one chosen.
+  const waitingWith = (email, pw) => { const r = h.get("SELECT pw_hash FROM signups WHERE email = ? AND status = 'waiting'", String(email || '').trim().toLowerCase()); return !!r && passwordMatches(r.pw_hash, pw); };
+
   const hasPassword = (userId) => !!h.get('SELECT 1 FROM passwords WHERE user_id = ?', userId);
   function passwordProblem(pw, email) {
     pw = String(pw ?? '');
@@ -70,7 +126,8 @@ function makeAuth(h, { audit, sendCode }) {
     const low = pw.toLowerCase(), core = low.replace(/[^a-z]/g, '');
     if (COMMON.some((w) => core === w || low.includes(w)) || /^\d+$/.test(pw) || /(0123|1234|2345|3456|4567|5678|6789|abcd|qwer|asdf|zxcv)/.test(low) && core.length < 8)
       return 'That password is too easy to guess. Try three or four unrelated words.';
-    if (email && pw.toLowerCase().includes(String(email).split('@')[0].toLowerCase())) return 'Do not use your email name in the password.';
+    const local = String(email || '').split('@')[0].toLowerCase();
+    if (local.length >= 4 && low.includes(local)) return 'Do not use your email name in the password.';
     return null;
   }
   // Sets or changes a password and signs the person out everywhere else.
@@ -114,7 +171,7 @@ function makeAuth(h, { audit, sendCode }) {
     return u ? { ...u, via: s.via } : null;
   }
 
-  return { requestCode, verifyCode, startSession, endSession, userFromToken, signInWithPassword, setPassword, checkPassword, hasPassword, SESSION_TTL_MS };
+  return { requestCode, verifyCode, startSession, endSession, userFromToken, signInWithPassword, setPassword, checkPassword, hasPassword, signUpStart, signUpVerify, createFromSignup, waitingWith, SESSION_TTL_MS };
 }
 
 function readCookie(req, name) {

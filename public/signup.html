@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Create an account · NGRM</title>
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<main id="main" tabindex="-1">
+<div class="container" style="max-width:560px">
+  <section class="card" aria-labelledby="sTitle">
+    <header><h1 id="sTitle" style="font-size:1.6rem">Create an account</h1></header>
+    <p class="small" id="closed" hidden>Sign-up is closed for this pilot. Ask your college or the NGRM team for an account, then <a href="login.html">sign in</a>.</p>
+    <form id="form" novalidate style="display:grid;gap:0.85rem">
+      <div class="field"><label for="role">I am a</label><select id="role">
+        <option value="student">Student</option><option value="mentor">Faculty mentor</option><option value="college_admin">College placement cell</option><option value="employer">Employer</option><option value="researcher">Researcher</option></select>
+        <span class="hint" id="roleHint"></span></div>
+      <div class="field"><label for="name">Full name</label><input type="text" id="name" autocomplete="name" maxlength="120"></div>
+      <div class="field"><label for="email" id="emailLbl">Email</label><input type="text" id="email" inputmode="email" autocomplete="email" placeholder="name@college.edu.in"><span class="hint" id="emailHint"></span></div>
+      <div class="field" id="instField"><label for="inst">College</label><select id="inst"></select><span class="hint">Not listed? Your college has not joined yet. Ask its placement cell to contact the NGRM team.</span></div>
+      <div class="field" id="orgField" hidden><label for="org">Company name</label><input type="text" id="org" autocomplete="organization" maxlength="160"></div>
+      <div class="field"><label for="password">Choose a password</label><input type="password" id="password" autocomplete="new-password" maxlength="200" aria-describedby="pwHint"><span class="hint" id="pwHint">At least 10 characters. Three or four unrelated words work well.</span></div>
+      <div class="field"><label for="password2">Type it again</label><input type="password" id="password2" autocomplete="new-password" maxlength="200"></div>
+      <div><button class="btn btn-primary" type="submit">Create my account</button></div>
+    </form>
+    <form id="codeForm" novalidate hidden style="display:grid;gap:0.85rem">
+      <p class="small" id="sentTo"></p>
+      <div class="field"><label for="code">6-digit code</label><input type="text" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></div>
+      <div style="display:flex;gap:0.6rem;flex-wrap:wrap"><button class="btn btn-primary" type="submit">Confirm my email</button><button class="btn btn-secondary" type="button" id="back">Change my details</button></div>
+    </form>
+    <div id="waiting" hidden><h2 style="font-size:1.15rem">Your email is confirmed</h2><p>Your account now waits for approval by the NGRM admin, because it gives access to information about students. You can sign in with your email and password once it is approved.</p><p><a class="btn btn-secondary" href="index.html">Back to home</a></p></div>
+    <p class="small" id="err" role="alert" style="color:var(--danger);margin-top:0.75rem" hidden></p>
+    <p class="small muted" style="margin-top:1rem">Already have an account? <a href="login.html">Sign in</a>. Read the <a href="privacy.html">privacy notice</a> to see what is kept and why.</p>
+  </section>
+</div>
+</main>
+<script src="assets/app.js"></script>
+<script>
+(function () {
+  var N = NGRM, $ = N.$, esc = N.esc, domains = [];
+  var HINT = { student: 'Your account is ready as soon as you confirm your email.', mentor: 'An admin approves mentor accounts before first sign-in.', college_admin: 'An admin approves placement cell accounts before first sign-in.', employer: 'An admin approves employer accounts before first sign-in.', researcher: 'An admin approves researcher accounts before first sign-in.' };
+  function err(m) { var e = $('#err'); e.hidden = !m; e.textContent = m || ''; }
+  function shape() {
+    var r = $('#role').value, college = r === 'student' || r === 'mentor' || r === 'college_admin';
+    $('#instField').hidden = !college; $('#orgField').hidden = r !== 'employer'; $('#roleHint').textContent = HINT[r];
+    $('#emailLbl').textContent = college ? 'College email' : 'Work email';
+    $('#emailHint').textContent = r === 'student' && domains.length ? 'Use your college email ending in ' + domains.map(function (d) { return '@' + d; }).join(' or ') + '.' : '';
+  }
+  N.boot('signup').then(function (ctx) {
+    if (ctx.me) { location.href = N.HOME[ctx.me.role]; return; }
+    return N.api('GET', '/api/auth/sign-up-options').then(function (o) {
+      if (!o.open) { $('#form').hidden = true; $('#closed').hidden = false; return; }
+      domains = o.domains || [];
+      $('#inst').innerHTML = '<option value="">Choose your college</option>' + o.institutions.map(function (i) { return '<option value="' + i.id + '">' + esc(i.name) + ', ' + esc(i.city) + '</option>'; }).join('');
+      shape();
+    });
+  }).catch(function (x) { err(x.message); });
+  $('#role').addEventListener('change', shape);
+  $('#form').addEventListener('submit', function (e) {
+    e.preventDefault(); err('');
+    if ($('#password').value !== $('#password2').value) return err('The two passwords do not match.');
+    var email = $('#email').value.trim();
+    N.api('POST', '/api/auth/sign-up', { role: $('#role').value, name: $('#name').value, email: email, institutionId: $('#inst').value, orgName: $('#org').value, password: $('#password').value }).then(function (r) {
+      $('#form').hidden = true; $('#codeForm').hidden = false;
+      $('#sentTo').textContent = 'We sent a 6-digit code to ' + email + '. Enter it here to confirm the email is yours. It expires in 10 minutes.' + (r.devCode ? ' (Development code: ' + r.devCode + ')' : '') + (r.devNote ? ' (Development note: ' + r.devNote + ')' : '');
+      $('#code').value = ''; $('#code').focus();
+    }).catch(function (x) { err(x.message); });
+  });
+  $('#codeForm').addEventListener('submit', function (e) {
+    e.preventDefault(); err('');
+    N.api('POST', '/api/auth/sign-up/verify', { email: $('#email').value.trim(), code: $('#code').value.trim() }).then(function (r) {
+      if (r.pending) { $('#codeForm').hidden = true; $('#waiting').hidden = false; return; }
+      location.href = N.HOME[r.user.role];
+    }).catch(function (x) { err(x.message); });
+  });
+  $('#back').addEventListener('click', function () { err(''); $('#codeForm').hidden = true; $('#form').hidden = false; $('#name').focus(); });
+})();
+</script>
+</body>
+</html>

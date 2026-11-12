@@ -13,7 +13,7 @@ Requires Node.js 22.13 or newer (tested on 22.13, 22.23 and 24). Nothing else is
 npm install
 cp .env.example .env      # demo settings are already on
 npm start                 # http://localhost:3000
-npm test                  # 67 tests
+npm test                  # 70 tests
 npm run seed              # wipe and reload the sample data
 ```
 
@@ -34,7 +34,9 @@ With `DEMO_MODE=true` the sign-in page shows one-click accounts. All end in `@de
 
 The sample students (`student1@sample.ngrm.in` to `student383@sample.ngrm.in`) sign in with an email code, which appears on screen while `DEV_SHOW_OTP=true`.
 
-There is no open sign-up. An admin adds people on the Admin page, one per line:
+**Sign-up.** Anyone can create an account on the sign-up page with their name, email and a password; a 6-digit code sent to that email confirms it is theirs. Students choose their college from the list and get their account straight away. Mentors, placement cells, employers and researchers can sign up too, but their account waits on the Admin page until an admin approves it, because those roles see information about students. Admin accounts are never created by sign-up. Set `SIGNUP=off` to close sign-up, and `SIGNUP_DOMAINS` to limit student sign-up to college email addresses.
+
+An admin can also add people directly on the Admin page, one per line:
 `name, email, role, college or employer, mentor email`. Nothing is saved if any line has a mistake.
 **Two ways to sign in, for all six roles.** An emailed one-time code always works. Anyone who prefers a password can set one on their Account page (click their name, top right) and then use either. Passwords are stored only as salted scrypt hashes, need at least 10 characters, and lock for 15 minutes after five wrong tries. A forgotten password is reset by signing in with a code and setting a new one; changing it signs the person out elsewhere.
 
@@ -95,7 +97,7 @@ Eight factors: academic 20, technical/role skills 20, projects 15, experience 15
 
 ## Quality checks done
 
-- 67 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
+- 70 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
 - The tests pass on Node 22.13, 22.23 and 24. Node 22.12 and older cannot run the built-in database, and the server says so.
 - A browser walk-through of every page for all six roles (133 checks), at desktop and phone widths, with no server errors.
 - An automated accessibility scan (axe-core, WCAG 2.1 AA) of every page in normal and high-contrast mode: no violations. Keyboard-only use works.
@@ -110,7 +112,7 @@ Not yet tested, because they need real services: email delivery, the live Gemini
 
 | Area | Routes |
 |---|---|
-| Sign-in | `POST /api/auth/request-code`, `POST /api/auth/verify`, `POST /api/auth/password`, `POST /api/me/password`, `POST /api/auth/sign-out`, `GET /api/me` |
+| Sign-in | `POST /api/auth/sign-up`, `POST /api/auth/sign-up/verify`, `POST /api/auth/request-code`, `POST /api/auth/verify`, `POST /api/auth/password`, `POST /api/me/password`, `POST /api/auth/sign-out`, `GET /api/me` |
 | Student | `GET/PUT /api/me/profile`, `POST /api/me/score`, `GET /api/me/score-history`, `GET/POST/PATCH/DELETE /api/me/evidence`, `GET/POST /api/me/intro-requests`, `GET /api/me/recommendations`, `PATCH /api/me/recommendations/:ruleId`, `GET/POST /api/me/consents`, `PATCH /api/me/intro-opt-in`, `POST /api/me/baseline`, `GET /api/me/export`, `DELETE /api/me` |
 | Mentor | `GET /api/mentor/mentees`, `GET /api/mentor/queue`, `POST /api/mentor/assessments`, `PATCH /api/mentor/reviews/:studentId/:ruleId`, `POST /api/mentor/evidence/:id` |
 | College | `GET /api/college/cohort?programme=`, `GET /api/college/intro-requests` |
@@ -129,6 +131,8 @@ Not yet tested, because they need real services: email delivery, the live Gemini
 | `GEMINI_API_KEY`, `GEMINI_MODEL` | Optional AI rewording |
 | `DB_FILE` | Local database path |
 | `MAIL_FROM`, `RESEND_API_KEY` or `BREVO_API_KEY` | Emails sign-in codes. Without these, codes only appear in the server log (development) and nobody can sign in (production) |
+| `SIGNUP` | `off` closes sign-up, so only admins add accounts. Default: open |
+| `SIGNUP_DOMAINS` | Optional. Comma-separated email domains students must sign up with, for example `college.edu.in` |
 | `COURSE_FEED` | `coursera` (default) or `off`. Controls the live course feed |
 | `UPLOAD_DIR` | Where proof files are kept. Default: an `uploads` folder beside the database |
 | `ORG_NAME`, `PRIVACY_CONTACT` | Required in production. Shown on the privacy notice: who runs the pilot and whom to write to |

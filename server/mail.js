@@ -10,15 +10,16 @@ function provider(env = process.env) {
   return null;
 }
 
-async function sendCode(email, code, env = process.env) {
+const sendCode = (email, code, env = process.env) => sendNotice(email, subject, text(code), env);
+async function sendNotice(email, subject, body, env = process.env) {
   const p = provider(env);
   if (!p) return false;
   const req = p === 'resend'
-    ? ['https://api.resend.com/emails', { authorization: 'Bearer ' + env.RESEND_API_KEY }, { from: env.MAIL_FROM, to: [email], subject, text: text(code) }]
-    : ['https://api.brevo.com/v3/smtp/email', { 'api-key': env.BREVO_API_KEY }, { sender: { email: env.MAIL_FROM, name: 'NGRM' }, to: [{ email }], subject, textContent: text(code) }];
+    ? ['https://api.resend.com/emails', { authorization: 'Bearer ' + env.RESEND_API_KEY }, { from: env.MAIL_FROM, to: [email], subject, text: body }]
+    : ['https://api.brevo.com/v3/smtp/email', { 'api-key': env.BREVO_API_KEY }, { sender: { email: env.MAIL_FROM, name: 'NGRM' }, to: [{ email }], subject, textContent: body }];
   const r = await fetch(req[0], { method: 'POST', headers: { 'content-type': 'application/json', ...req[1] }, body: JSON.stringify(req[2]), signal: AbortSignal.timeout(10000) });
   if (!r.ok) throw new Error(`${p} answered ${r.status}`);
   return true;
 }
 
-module.exports = { provider, sendCode };
+module.exports = { provider, sendCode, sendNotice };

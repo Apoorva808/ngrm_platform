@@ -756,3 +756,75 @@ test('research export: no record stands alone on programme, year, role and rough
   assert.ok(rows.every((r) => /^\d{4}-\d{2}$/.test(r.recordedAt)));
   assert.ok(rows.filter((r) => r.factors.academic != null).length > rows.length / 3, 'still useful: most groups keep their academic band');
 });
+
+test('sign-up: a student confirms their email and gets an account with the password they chose', async () => {
+  const c = client(), inst = h.get('SELECT id FROM institutions ORDER BY id LIMIT 1').id, pw = 'four quiet mango trains';
+  assert.equal((await c('GET', '/api/auth/sign-up-options')).body.open, true);
+  const base0 = { role: 'student', name: 'Meera Nair', email: 'Meera@newcollege.edu', institutionId: inst, password: pw };
+  assert.equal((await c('POST', '/api/auth/sign-up', { ...base0, password: 'password123' })).status, 400);
+  assert.equal((await c('POST', '/api/auth/sign-up', { ...base0, institutionId: 99999 })).status, 400);
+  assert.equal((await c('POST', '/api/auth/sign-up', { ...base0, role: 'admin' })).status, 400);
+  assert.equal((await c('POST', '/api/auth/sign-up', { ...base0, name: '' })).status, 400);
+  const start = await c('POST', '/api/auth/sign-up', base0);
+  assert.equal(start.status, 200); assert.match(start.body.devCode, /^\d{6}$/);
+  assert.equal(h.get('SELECT COUNT(*) AS n FROM users WHERE email = ?', 'meera@newcollege.edu').n, 0, 'no account before the email is confirmed');
+  assert.equal((await c('POST', '/api/auth/password', { email: 'meera@newcollege.edu', password: pw })).status, 400);
+  assert.equal((await c('POST', '/api/auth/sign-up/verify', { email: 'meera@newcollege.edu', code: '000000' })).status, 400);
+  const done = await c('POST', '/api/auth/sign-up/verify', { email: 'meera@newcollege.edu', code: start.body.devCode });
+  assert.equal(done.status, 200); assert.equal(done.body.user.role, 'student');
+  const me = (await c('GET', '/api/me')).body.user; assert.equal(me.hasPassword, true); assert.equal(me.institution.name.length > 0, true);
+  const again = client(); assert.equal((await again('POST', '/api/auth/password', { email: 'meera@newcollege.edu', password: pw })).status, 200);
+  assert.equal(h.get('SELECT COUNT(*) AS n FROM signups WHERE email = ?', 'meera@newcollege.edu').n, 0);
+  // Signing up again with an email that already has an account looks the same and creates nothing.
+  h.run('DELETE FROM otp_requests');
+  const dup = await client()('POST', '/api/auth/sign-up', { ...base0, name: 'Someone Else', password: 'another long pass phrase' });
+  assert.equal(dup.status, 200); assert.equal(h.get('SELECT COUNT(*) AS n FROM signups').n, 0);
+  assert.equal(h.get('SELECT name FROM users WHERE email = ?', 'meera@newcollege.edu').name, 'Meera Nair');
+  assert.equal((await client()('POST', '/api/auth/password', { email: 'meera@newcollege.edu', password: 'another long pass phrase' })).status, 400);
+});
+
+test('sign-up: staff and employers wait for an admin, and five wrong codes lock the request', async () => {
+  const c = client(), admin = await as('admin@demo.ngrm.in'), pw = 'seven green window kites';
+  const start = await c('POST', '/api/auth/sign-up', { role: 'employer', name: 'Ravi Menon', email: 'ravi@newfirm.example', orgName: 'Newfirm Analytics', password: pw });
+  assert.equal(start.status, 200);
+  const v = await c('POST', '/api/auth/sign-up/verify', { email: 'ravi@newfirm.example', code: start.body.devCode });
+  assert.deepEqual(v.body, { pending: true });
+  assert.equal((await c('GET', '/api/me')).body.user, null);
+  assert.equal(h.get('SELECT COUNT(*) AS n FROM users WHERE email = ?', 'ravi@newfirm.example').n, 0);
+  const wait = await c('POST', '/api/auth/password', { email: 'ravi@newfirm.example', password: pw });
+  assert.equal(wait.status, 403); assert.match(wait.body.error, /waiting for approval/);
+  assert.equal((await c('POST', '/api/auth/password', { email: 'ravi@newfirm.example', password: 'not the right password' })).status, 400);
+  // Nobody else can overwrite a waiting request.
+  h.run('DELETE FROM otp_requests');
+  await client()('POST', '/api/auth/sign-up', { role: 'researcher', name: 'Impostor', email: 'ravi@newfirm.example', password: 'different long pass phrase' });
+  assert.equal(h.get('SELECT name FROM signups WHERE email = ?', 'ravi@newfirm.example').name, 'Ravi Menon');
+  assert.equal((await (await as('ananya@demo.ngrm.in'))('GET', '/api/admin/signups')).status, 403);
+  const list = (await admin('GET', '/api/admin/signups')).body;
+  assert.equal(list.length, 1); assert.equal(list[0].org, 'Newfirm Analytics'); assert.equal(list[0].pw_hash, undefined);
+  assert.equal((await admin('POST', '/api/admin/signups/decide', { email: 'ravi@newfirm.example', approve: true })).status, 200);
+  const inn = client(); assert.equal((await inn('POST', '/api/auth/password', { email: 'ravi@newfirm.example', password: pw })).status, 200);
+  assert.equal((await inn('GET', '/api/me')).body.user.employer.name, 'Newfirm Analytics');
+  // A declined request leaves nothing behind.
+  h.run('DELETE FROM otp_requests');
+  const m = await c('POST', '/api/auth/sign-up', { role: 'mentor', name: 'Fake Mentor', email: 'fake@nowhere.example', institutionId: h.get('SELECT id FROM institutions LIMIT 1').id, password: pw });
+  await c('POST', '/api/auth/sign-up/verify', { email: 'fake@nowhere.example', code: m.body.devCode });
+  assert.equal((await admin('POST', '/api/admin/signups/decide', { email: 'fake@nowhere.example', approve: false })).status, 200);
+  assert.equal((await c('POST', '/api/auth/password', { email: 'fake@nowhere.example', password: pw })).status, 400);
+  assert.equal(h.get("SELECT COUNT(*) AS n FROM users WHERE email = 'fake@nowhere.example'").n + h.get('SELECT COUNT(*) AS n FROM signups').n, 0);
+  // Wrong codes lock the request.
+  h.run('DELETE FROM otp_requests');
+  const s = await c('POST', '/api/auth/sign-up', { role: 'researcher', name: 'Lock Test', email: 'lock@uni.example', password: pw });
+  for (let i = 0; i < 5; i++) await c('POST', '/api/auth/sign-up/verify', { email: 'lock@uni.example', code: '000000' });
+  const locked = await c('POST', '/api/auth/sign-up/verify', { email: 'lock@uni.example', code: s.body.devCode });
+  assert.equal(locked.status, 400); assert.match(locked.body.error, /Too many wrong attempts/);
+});
+
+test('sign-up can be closed, and student sign-up can be limited to college email domains', async () => {
+  const db2 = open(':memory:'); seed(db2); const inst = helpers(db2).get('SELECT id FROM institutions LIMIT 1').id;
+  const call = async (opts, body) => { const s = createApp(db2, { demoMode: true, sendCode: () => {}, uploadDir: uploads, ...opts }).listen(0); await new Promise((r) => s.once('listening', r));
+    const r = await fetch('http://localhost:' + s.address().port + '/api/auth/sign-up', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); s.close(); return r.status; };
+  const body = { role: 'student', name: 'Test Person', email: 'a@gmail.com', institutionId: inst, password: 'nine brave paper boats' };
+  assert.equal(await call({ signUp: 'off' }, body), 403);
+  assert.equal(await call({ signUpDomains: 'college.edu.in' }, body), 400);
+  assert.equal(await call({ signUpDomains: 'college.edu.in' }, { ...body, email: 'a@students.college.edu.in' }), 200);
+});

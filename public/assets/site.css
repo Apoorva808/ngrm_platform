@@ -156,7 +156,7 @@ main { padding-block: 2rem 4rem; }
 label { font-weight: 600; font-size: 0.9rem; }
 .field { display: grid; gap: 0.3rem; min-width: 0; }
 .hint { font-size: 0.8rem; color: var(--muted); font-weight: 400; }
-input[type=text], input[type=number], input[type=date], select, textarea { width: 100%; min-height: 42px; padding: 0.45rem 0.65rem; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface); color: var(--fg); font: inherit; font-size: 0.95rem; }
+input[type=text], input[type=password], input[type=email], input[type=number], input[type=date], select, textarea { width: 100%; min-height: 42px; padding: 0.45rem 0.65rem; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface); color: var(--fg); font: inherit; font-size: 0.95rem; }
 textarea { min-height: 76px; resize: vertical; }
 input[type=range] { width: 100%; accent-color: var(--accent); }
 input[type=checkbox], input[type=radio] { width: 20px; height: 20px; accent-color: var(--accent); flex-shrink: 0; }

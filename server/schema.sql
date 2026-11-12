@@ -61,6 +61,21 @@ CREATE TABLE IF NOT EXISTS passwords (
   hash        TEXT NOT NULL,
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- People who are signing up. A row is 'unverified' until the emailed code is entered. Students then get an account at once;
+-- other roles stay 'waiting' until an admin approves. The password is held only as a salted hash.
+CREATE TABLE IF NOT EXISTS signups (
+  email           TEXT PRIMARY KEY,
+  name            TEXT NOT NULL,
+  role            TEXT NOT NULL CHECK (role IN ('student','mentor','college_admin','employer','researcher')),
+  institution_id  INTEGER REFERENCES institutions(id) ON DELETE CASCADE,
+  org_name        TEXT,
+  pw_hash         TEXT NOT NULL,
+  code_hash       TEXT NOT NULL,
+  expires_at      INTEGER NOT NULL,
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  status          TEXT NOT NULL DEFAULT 'unverified' CHECK (status IN ('unverified','waiting')),
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS login_failures (
   email  TEXT NOT NULL,
   at     INTEGER NOT NULL
