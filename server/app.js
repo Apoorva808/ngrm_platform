@@ -93,17 +93,51 @@ function createApp(db, opts = {}) {
     const p = toDomain(row), ev = evidenceOf(userId);
     return { p, ev, row, result: D.score(p, ev) };
   }
+  // Everything about this student that the plan is built from (see recommend() in domain.js).
+  function planContext(userId, c) {
+    const P = D.programme(c.p.prog), role = c.p.role, words = inWords(c.row);
+    const u = h.get('SELECT institution_id FROM users WHERE id = ?', userId) || {};
+    // Employers' posts for this role in the last 90 days: openings per scored skill, skills they typed, and posts in the student's cities.
+    const posts = h.all("SELECT d.skills_json, d.extra_json, d.openings, d.city, e.name AS employer FROM demand_posts d JOIN employers e ON e.id = d.employer_id WHERE d.role = ? AND d.created_at > datetime('now', '-90 days') ORDER BY d.id DESC", role);
+    const bySkill = D.ROLES[role].skills.map(() => 0), extra = {}, mine = words.ownSkills.map((x) => L.norm(x.name)), cities = cityList(c.row);
+    for (const d of posts) {
+      for (const k of parse(d.skills_json, [])) { const i = D.ROLES[role].skills.indexOf(k); if (i >= 0) bySkill[i] += d.openings; }
+      for (const k of parse(d.extra_json, [])) { const key = L.norm(k); (extra[key] = extra[key] || { name: k, openings: 0 }).openings += d.openings; }
+    }
+    const cityPosts = cities.length ? posts.filter((d) => d.city && cities.some((x) => L.norm(d.city).includes(x))).map((d) => ({ employer: d.employer, city: d.city, openings: d.openings })) : [];
+    // Students at the same college aiming for the same role (or, if too few, on the same programme): shares with each kind of verified evidence.
+    // Shown only for groups of 5 or more, rounded to 5%, and only when the rest of the group is also 5 or more.
+    let peers = null;
+    for (const [col, val, label] of [['target_role', role, `students at your college aiming for ${D.ROLES[role].label}`], ['programme', c.p.prog, `${P.label} students at your college`]]) {
+      const ids = h.all(`SELECT u.id FROM users u JOIN profiles p ON p.user_id = u.id WHERE u.role = 'student' AND u.institution_id = ? AND p.${col} = ? AND u.id != ?`, u.institution_id, val, userId).map((x) => x.id).filter((id) => hasConsent(id, 'profile'));
+      if (ids.length < D.MIN_GROUP) continue;
+      const has = {};
+      for (const t of ['internship', 'project', 'role', 'certificate']) has[t] = safePct(h.get(`SELECT COUNT(DISTINCT user_id) AS n FROM evidence WHERE type = ? AND status = 'verified' AND user_id IN (${ids.map(() => '?').join(',')})`, t, ...ids).n, ids.length);
+      peers = { label, n: approx(ids.length), has }; break;
+    }
+    let goal = null;
+    if (words.goal) { const f = L.familyOf(words.goal); if (f.k !== 'general') { const k = Object.keys(D.ROLES).find((x) => D.ROLES[x].family === f.k && D.ROLES[x].listed); goal = { text: words.goal, family: f.k, roleLabel: k ? D.ROLES[k].label : f.name }; } }
+    return { yearsLeft: Math.max(0, P.years - c.p.year), words, goal, peers,
+      demand: { bySkill, cityPosts, extra: Object.values(extra).sort((a, b) => b.openings - a.openings).map((k) => ({ ...k, have: mine.includes(L.norm(k.name)) })) } };
+  }
   function recsFor(userId) {
     const c = computeFor(userId); if (!c) return null;
-    const list = D.recommend(c.p, c.ev, ruleSettings());
+    const ctx = planContext(userId, c);
+    const list = D.recommend(c.p, c.ev, ruleSettings(), ctx);
     const states = {}; for (const s of h.all('SELECT * FROM recommendation_states WHERE user_id = ?', userId)) states[s.rule_id] = s;
-    return { c, list: list.map((r) => ({ ...r, state: states[r.id] || null, learn: learnFor(r.id, c.p) })) };
+    return { c, ctx, list: list.map((r) => ({ ...r, state: states[r.id] || null, learn: learnFor(r, c.p) })) };
   }
   // Where to learn: vetted courses from the catalogue plus live searches on course sites, for the exact skill in the step.
   const httpsUrl = (u) => { try { const x = new URL(String(u)); return x.protocol === 'https:' ? x.href : null; } catch { return null; } };
-  function learnFor(ruleId, p) {
+  function learnFor(item, p) {
+    const ruleId = item.id;
+    if (ruleId === 'demand' && item.skillName) {
+      const searches = h.all('SELECT name, url_template FROM course_sources ORDER BY id').map((s) => ({ name: s.name, url: httpsUrl(s.url_template.replace('{q}', encodeURIComponent(item.skillName))) })).filter((s) => s.url);
+      const live = feeds.forSkill(item.skillName);
+      return { skill: item.skillName, courses: [], searches, live: live.courses, liveCheckedAt: live.checkedAt, demand: null };
+    }
     if (ruleId !== 'course' && ruleId !== 'communication') return null;
-    const role = ruleId === 'course' ? p.role : 'communication', idx = ruleId === 'course' ? D.weakest(p) : null;
+    const role = ruleId === 'course' ? p.role : 'communication', idx = ruleId === 'course' ? (item.skillIndex ?? D.weakest(p)) : null;
     const skill = ruleId === 'course' ? D.ROLES[p.role].skills[idx] : 'Communication skills';
     const courses = h.all('SELECT id, title, provider, url, weeks, free FROM courses WHERE role = ? AND ' + (idx === null ? 'skill_index IS NULL' : 'skill_index = ?') + ' ORDER BY id DESC LIMIT 5', ...(idx === null ? [role] : [role, idx]));
     const searches = h.all('SELECT name, url_template FROM course_sources ORDER BY id').map((s) => ({ name: s.name, url: httpsUrl(s.url_template.replace('{q}', encodeURIComponent(skill))) })).filter((s) => s.url);
@@ -514,7 +548,8 @@ function createApp(db, opts = {}) {
     const newCgpa = sticky('cgpa', 'cgpa', 10);
     // The student's own ratings. A blank stays blank; a new role starts with all four unrated.
     const sameRole = role === cur.target_role, prevSkills = [0, 1, 2, 3].map((i) => (sameRole ? parse(cur.skills_json, [])[i] ?? null : null));
-    const skills = Array.isArray(b.skills) && b.skills.length === 4 ? b.skills.map((s, i) => { const v = num(s, 0, 100); return v === null ? prevSkills[i] : Math.round(v); }) : prevSkills.slice();
+    // Ratings sent with a role change belong to the old role's boxes, so they are ignored.
+    const skills = sameRole && Array.isArray(b.skills) && b.skills.length === 4 ? b.skills.map((s, i) => { const v = num(s, 0, 100); return v === null ? prevSkills[i] : Math.round(v); }) : prevSkills.slice();
     // A skill verified by a college assessment keeps the assessed value; the student cannot overwrite it.
     for (const [i, v] of Object.entries(verifiedSkills(req.user.id, role))) if (v != null) skills[+i] = v;
     // Questionnaire answers: keep what is stored unless new answers are sent; never store them without consent.
@@ -651,8 +686,8 @@ function createApp(db, opts = {}) {
         }));
       }
       const accepted = r.list.filter((x) => x.state?.student_status === 'accepted').map((x) => x.id);
-      res.json({ score: r.c.result, projected: D.projectIndex(r.c.p, r.c.ev, accepted), role: r.c.p.role, programme: r.c.p.prog, year: r.c.p.year, path: D.pathNote(r.c.p), own: ownSteps(req.user.id), mine: inWords(r.c.row),
-        items: r.list.map((x) => ({ id: x.id, factor: x.factor, slot: x.slot, effort: x.effort, gain: x.gain, always: x.always, title: x.title, what: x.what, why: x.why, aiWhy: x.aiWhy || null, assume: x.assume, learn: x.learn,
+      res.json({ score: r.c.result, projected: D.projectIndex(r.c.p, r.c.ev, accepted, r.ctx), context: { yearsLeft: r.ctx.yearsLeft, peers: r.ctx.peers ? { label: r.ctx.peers.label, n: r.ctx.peers.n } : null, employerPosts: r.ctx.demand.bySkill.reduce((a, b) => a + b, 0) }, role: r.c.p.role, programme: r.c.p.prog, year: r.c.p.year, path: D.pathNote(r.c.p), own: ownSteps(req.user.id), mine: inWords(r.c.row),
+        items: r.list.map((x) => ({ id: x.id, factor: x.factor, slot: x.slot, effort: x.effort, gain: x.gain, always: x.always, title: x.title, what: x.what, why: x.why, aiWhy: x.aiWhy || null, assume: x.assume, learn: x.learn, because: x.because, crosses: x.crosses, personal: x.personal,
           student: x.state?.student_status || null, mentor: x.state?.mentor_status || null, mentorNote: x.state?.mentor_note || null,
           mentorName: x.state?.mentor_id ? (h.get('SELECT name FROM users WHERE id = ?', x.state.mentor_id) || {}).name : null })) });
     } catch (e) { next(e); }
@@ -758,7 +793,7 @@ function createApp(db, opts = {}) {
     for (const s of mentees) {
       if (!hasConsent(s.id, 'profile')) continue;
       const r = recsFor(s.id); if (!r) continue;
-      for (const x of r.list) recItems.push({ studentId: s.id, studentName: s.name, ruleId: x.id, title: x.title, why: x.why, gain: x.gain,
+      for (const x of r.list) recItems.push({ studentId: s.id, studentName: s.name, ruleId: x.id, title: x.title, why: x.why, gain: x.gain, because: x.because, personal: x.personal,
         student: x.state?.student_status || null, mentor: x.state?.mentor_status || null, note: x.state?.mentor_note || null });
       for (const e of r.c.ev.filter((e) => e.status !== 'verified')) evItems.push({ studentId: s.id, studentName: s.name, ...e, typeLabel: D.EVIDENCE_TYPES[e.type] });
     }

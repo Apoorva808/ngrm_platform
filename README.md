@@ -13,7 +13,7 @@ Requires Node.js 22.13 or newer (tested on 22.13, 22.23 and 24). Nothing else is
 npm install
 cp .env.example .env      # demo settings are already on
 npm start                 # http://localhost:3000
-npm test                  # 78 tests
+npm test                  # 79 tests
 npm run seed              # wipe and reload the sample data
 ```
 
@@ -90,6 +90,24 @@ Target roles and programmes are not limited to a list. Anyone can pick a suggest
 - **Admins** see every typed role and programme with how much it is used, correct a role's skills and target levels, list it for everyone, or remove it when unused. A student's typed entries are visible only to them and to staff until an admin lists them. Skills lock once students have been assessed on them.
 - **Limits.** Matching is by keyword, so an unusual title can land in the wrong kind of work until the admin corrects it. The same job typed two ways ("Software Engineer", "Software Developer") is two roles; employers are pointed to the nearby one, but the two are not merged.
 
+## How the plan is personalised
+
+The plan is what makes NGRM different, so every step is built from the student's own data rather than a template with the role name swapped in. Two students aiming for the same role get different plans.
+
+- **Which skill to work on.** Not simply the lowest number: the biggest gap to the role's target level, weighted up by how many openings employers posted for that skill. The card says so ("Employers on NGRM asked for it in 4 openings…"), and claims a skill is the most asked-for only when it is.
+- **Proof first.** Evidence the mentor asked proof for comes straight after confirmation ("Add proof for “Summer internship”"), with the points it is worth once verified. Evidence still waiting is a step of its own, ranked by what it adds.
+- **Time left.** A final-year student is told to line up an internship or placement before graduating, this semester; first-years are pointed to a short first internship or job-shadowing; CGPA advice changes in the final year.
+- **Where they want to work.** The internship step names employers that posted for the role in the student's typed cities, or says plainly that none has yet.
+- **What they wrote.** The project, leadership and communication steps are built around the student's typed interests and goal. If the goal points to a different kind of work from the target role ("I want to teach…" with Data Analyst), a step asks them to check it with their mentor.
+- **What employers typed.** A skill an employer typed in their own words becomes a step: learn it, or, if the student already listed it, add proof of it. These never change the score and say so.
+- **Peers.** Where 5 or more students at the same college aim for the same role (or are on the same programme), steps say what share of them have a verified internship, project or role. Rounded to 5%, shown only when the rest of the group is also 5 or more, never with names.
+- **Programme and role.** Course, project and internship wording follows whether the student is on a direct path, a related path or a career switch.
+- **Bands.** A step that alone would move the student into the next band says so.
+- **Built from.** Every step lists the facts it was built from, on the student's plan and in the mentor's review queue, so both can see why it is there.
+- **Ranking.** Confirmation and requested proof first; then up to five steps that raise the score, largest gain first (the role-skill course is always kept); then the personal steps that do not change the score; then the human counsellor.
+- **Assumptions are stated.** A course is assumed to lift a rated skill by 15, or to bring an unrated skill to 50; the card says which.
+- **Limits.** Keyword matching decides what a typed goal "sounds like", so it can misread unusual wording. Peer shares describe what others have done, not what caused their scores. Employer demand only counts posts made on NGRM.
+
 ## Typed and personal, everywhere
 
 - **Nothing is filled in for anyone.** A new student has no profile until they type their programme, their year and the job they are aiming for; there is no default programme, role or year. Skill ratings, CGPA, personality, career clarity and every own-words box start empty, and a blank rating stays blank ("Not rated yet"). Every other typed box on the site starts empty too (kind of evidence, account type at sign-up, the mentor's student and skill boxes, the employer's role, openings and city, the admin's choices), and a form cannot be sent while one of its typed boxes is empty, so nothing is ever assumed.
@@ -128,7 +146,7 @@ Eight factors: academic 20, technical/role skills 20, projects 15, experience 15
 
 ## Quality checks done
 
-- 78 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
+- 79 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
 - The tests pass on Node 22.13, 22.23 and 24. Node 22.12 and older cannot run the built-in database, and the server says so.
 - A browser walk-through of every page for all six roles (133 checks), at desktop and phone widths, with no server errors.
 - An automated accessibility scan (axe-core, WCAG 2.1 AA) of every page in normal and high-contrast mode: no violations. Keyboard-only use works.

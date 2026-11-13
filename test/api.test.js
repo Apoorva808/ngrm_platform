@@ -352,7 +352,7 @@ test('a new production database gets the rules and the first admin, and no sampl
   const db2 = open(':memory:'), h2 = helpers(db2);
   assert.equal(bootstrap(db2, { ADMIN_EMAIL: 'First@Admin.org', ADMIN_NAME: 'First Admin' }), 'first@admin.org');
   assert.equal(bootstrap(db2, { ADMIN_EMAIL: 'first@admin.org' }), null, 'running again changes nothing');
-  assert.equal(h2.get('SELECT COUNT(*) AS n FROM rules').n, 9);
+  assert.equal(h2.get('SELECT COUNT(*) AS n FROM rules').n, D.DEFAULT_RULE_SETTINGS.length);
   assert.deepEqual(h2.all('SELECT email, role FROM users').map((u) => ({ ...u })), [{ email: 'first@admin.org', role: 'admin' }]);
 });
 
@@ -583,8 +583,14 @@ test('course steps carry real, checked courses for the exact weak skill, plus li
   assert.ok(catalogue.length >= 20);
   for (const [role, idx, title, provider, url] of catalogue) { assert.ok(title && provider && /^https:\/\//.test(url)); assert.ok(D.ROLES[role].skills[idx]); }
   const student = await as('ananya@demo.ngrm.in');
-  // Ananya's weakest HR skill is labour law (index 3).
+  // The course step works on the biggest gap to the role's target, weighted up by employer demand. With equal gaps
+  // (Excel 55 and labour law 45 against targets 70 and 60), the skill employers posted for more wins.
+  const p0 = { role: 'hr', skills: [55, 72, 60, 45], skillsRated: [true, true, true, true] };
+  assert.equal(D.focusSkill(p0, {}), 0); assert.equal(D.focusSkill(p0, { demand: { bySkill: [0, 0, 0, 9] } }), 3); assert.equal(D.focusSkill(p0, { demand: { bySkill: [9, 0, 0, 0] } }), 0);
+  // Make labour law clearly Ananya's biggest gap (index 3).
+  await student('PUT', '/api/me/profile', { skills: [55, 72, 60, 25] });
   const course = (await student('GET', '/api/me/recommendations')).body.items.find((x) => x.id === 'course');
+  assert.ok(course.because.some((b) => /^Labour law basics: your own rating 25 · target 60$/.test(b)), JSON.stringify(course.because));
   assert.equal(course.learn.skill, 'Labour law basics');
   assert.ok(course.learn.courses.some((c) => c.title === 'Legal Essentials for Human Resource Management'));
   assert.ok(course.learn.searches.length >= 3 && course.learn.searches.every((s) => s.url.startsWith('https://') && /Labour%20law%20basics/.test(s.url)));
@@ -636,6 +642,7 @@ test('live course feed: fetched once a day per skill, shown on the course step, 
     const step = (await student('GET', '/api/me/recommendations')).body.items.find((x) => x.id === 'course');
     assert.equal(step.learn.live[0].url, 'https://www.coursera.org/learn/employment-law');
     assert.equal(step.learn.demand.skill, 'Labour law basics');
+    await student('PUT', '/api/me/profile', { skills: [55, 72, 60, 45] });
   } finally { global.fetch = realFetch; process.env.COURSE_FEED = 'off'; h.run('DELETE FROM live_courses'); }
 });
 
@@ -948,7 +955,7 @@ test('typed roles and programmes: anything can be typed, and the plan follows th
     const plan = (await ananya('GET', '/api/me/recommendations')).body;
     assert.equal(plan.path.label, 'Related path');
     const course = plan.items.find((x) => x.id === 'course'), project = plan.items.find((x) => x.id === 'project'), intern = plan.items.find((x) => x.id === 'internship');
-    assert.match(course.title, /python|statistics and probability|machine learning basics|data handling with sql/);
+    assert.match(course.title, /python|statistics and probability|machine learning basics|data handling with sql/i);
     assert.match(course.why, /B\.E\. Mechanical Engineering touches this only lightly/);
     assert.match(project.what, /Train and evaluate a small model/); assert.match(intern.what, /data science or machine learning internship/);
     assert.equal(course.learn.skill.length > 0, true); assert.ok(course.learn.searches.length >= 1, 'live course searches work for any typed skill');
@@ -1107,5 +1114,71 @@ test('every student gets a mentor, and impossible dates are refused', async () =
     await meera('POST', '/api/me/consents', { purposes: { profile: true }, isAdult: true });
     for (const bad of ['2031-01-01', '1900-01-01', '2026-13-45', '2026-02-30', 'yesterday']) assert.equal((await meera('POST', '/api/me/evidence', { type: 'project', title: 'A project', completedOn: bad })).status, 400, bad);
     assert.equal((await meera('POST', '/api/me/evidence', { type: 'project', title: 'A project', completedOn: '2026-10-05' })).status, 201);
+  } finally { s.close(); }
+});
+
+test('recommendations are built from each student’s own data, so two students on the same role get different plans', async () => {
+  const db2 = open(':memory:'); seed(db2); require('../server/seed').bootstrap(db2, {}); const h2 = helpers(db2);
+  const s = createApp(db2, { demoMode: true, sendCode: () => {}, uploadDir: uploads }).listen(0); await new Promise((r) => s.once('listening', r));
+  const b2 = 'http://localhost:' + s.address().port;
+  const who = async (email) => { let cookie = ''; const c = async (method, url, body) => { const r = await fetch(b2 + url, { method, headers: { 'content-type': 'application/json', cookie }, body: body ? JSON.stringify(body) : undefined });
+    const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0]; let json = null; try { json = await r.json(); } catch {} return { status: r.status, body: json }; }; if (email) await c('POST', '/api/auth/demo', { email }); return c; };
+  try {
+    const inst = h2.get("SELECT institution_id AS i FROM users WHERE email = 'ananya@demo.ngrm.in'").i;
+    const make = async (email, name) => { const c = await who(); await c('POST', '/api/auth/sign-up', { role: 'student', name, email, institutionId: inst, password: 'four quiet mango trains' }); await c('POST', '/api/me/consents', { purposes: { profile: true }, isAdult: true }); return c; };
+    // Two students, both aiming for Data Analyst.
+    const asha = await make('asha@x.example', 'Asha Rao'), ravi = await make('ravi@x.example', 'Ravi Kumar');
+    await asha('PUT', '/api/me/profile', { prog: 'bcom', year: 3, role: 'data' }); await asha('PUT', '/api/me/profile', { skills: [30, 60, 65, 60], goal: 'I want to be a school teacher', interests: 'cricket, writing', cities: 'Mysuru' });
+    await ravi('PUT', '/api/me/profile', { prog: 'bsc-cs', year: 1, role: 'data' }); await ravi('PUT', '/api/me/profile', { skills: [70, 70, 30, 70], cities: 'Pune' });
+    // Ratings sent together with a role change belong to the old role, so they are ignored.
+    const sw = (await ravi('PUT', '/api/me/profile', { role: 'dev', skills: [9, 9, 9, 9] })).body.profile; assert.deepEqual(sw.skillsRated, [false, false, false, false]);
+    await ravi('PUT', '/api/me/profile', { role: 'data' }); await ravi('PUT', '/api/me/profile', { skills: [70, 70, 30, 70] });
+    // Ravi has an internship waiting, and his mentor asks for proof.
+    await ravi('POST', '/api/me/evidence', { type: 'internship', title: 'Summer analytics internship', completedOn: '2026-07-31' });
+    const mentorId = h2.get("SELECT l.mentor_id AS m FROM mentor_links l JOIN users u ON u.id = l.student_id WHERE u.email = 'ravi@x.example'").m;
+    h2.run("UPDATE evidence SET status = 'needs_proof' WHERE title = 'Summer analytics internship'");
+    // An employer posts for Data Analyst in Mysuru, typing a skill of their own.
+    const employer = await who('recruiter@demo.ngrm.in');
+    assert.equal((await employer('POST', '/api/employer/demand', { role: 'data', skills: ['Statistics'], extraSkills: 'Power BI', openings: 6, city: 'Mysuru' })).status, 201);
+    const A = (await asha('GET', '/api/me/recommendations')).body, R = (await ravi('GET', '/api/me/recommendations')).body;
+    const step = (plan, id) => plan.items.find((x) => x.id === id);
+    // The course works on each student's own biggest gap.
+    assert.match(step(A, 'course').title, /SQL/); assert.match(step(R, 'course').title, /statistics/);
+    assert.match(step(R, 'course').why, /Employers on NGRM asked for it in \d+ openings/);
+    // Asha is in her final year (B.Com runs 3 years): the internship is due now, and it names the Mysuru post.
+    assert.equal(A.context.yearsLeft, 0); assert.equal(step(A, 'internship').slot, 'now');
+    assert.match(step(A, 'internship').title, /before you graduate/); assert.match(step(A, 'internship').what, /Sample Employer A[^(]*\(6 openings in Mysuru\) has posted for Data Analyst where you want to work/);
+    assert.equal(step(R, 'internship').title, 'Find a short first internship or job-shadowing this summer'); assert.equal(step(R, 'internship').slot, 'summer');
+    assert.match(step(R, 'internship').what, /No employer on NGRM has posted for Data Analyst in Pune yet/);
+    // Ravi's mentor asked for proof: that comes first.
+    assert.deepEqual(R.items.slice(0, 2).map((x) => x.id), ['confirm', 'proof']); assert.equal(R.items[1].title, 'Add proof for “Summer analytics internship”');
+    assert.ok(R.items[1].gain > 0); assert.equal(R.items[1].factor, 'experience'); assert.match(R.items[1].crosses || 'none', /none|moves you from/);
+    // Asha's project is built around what she wrote; Ravi wrote nothing, so his is not.
+    assert.match(step(A, 'project').title, /around cricket/); assert.match(step(A, 'project').what, /cricket and writing/);
+    assert.equal(step(R, 'project').title, 'Do one applied project');
+    // Asha's goal points elsewhere, so she is asked to check it. Ravi wrote no goal.
+    assert.match(step(A, 'goal').what, /school teacher.*closer to Teacher than to Data Analyst/); assert.equal(step(R, 'goal'), undefined);
+    // The skill the employer typed is offered to both, without claiming score points.
+    assert.equal(step(A, 'demand').title, 'Learn Power BI: employers are asking for it'); assert.equal(step(A, 'demand').gain, 0);
+    assert.ok(step(A, 'demand').learn.searches.every((x) => /Power%20BI/.test(x.url)));
+    await asha('PUT', '/api/me/profile', { ownSkills: [{ name: 'Power BI', level: 60 }] });
+    assert.equal(step((await asha('GET', '/api/me/recommendations')).body, 'demand').title, 'Show employers your Power BI');
+    // Every step says what it was built from.
+    for (const x of A.items.concat(R.items)) if (x.id !== 'counsellor') assert.ok(x.because.length >= 1, x.id);
+    // Steps that do not change the score never add to the projection.
+    await asha('PATCH', '/api/me/recommendations/goal', { action: 'accept' });
+    assert.equal((await asha('GET', '/api/me/recommendations')).body.projected, A.score.index);
+    // The two plans differ.
+    assert.notDeepEqual(A.items.map((x) => x.title), R.items.map((x) => x.title));
+    // Students at a college with 5 or more aiming for the same role see how their peers compare (rounded, never names).
+    const ananya = await who('ananya@demo.ngrm.in'), Y = (await ananya('GET', '/api/me/recommendations')).body;
+    assert.ok(Y.context.peers && /students at your college aiming for HR/.test(Y.context.peers.label));
+    const pl = Y.items.map((x) => x.why).join(' ');
+    assert.ok(!/Ananya|@/.test(JSON.stringify(Y.context.peers)));
+    if (/About \d+% of students at your college/.test(pl)) assert.ok(/About (\d+)%/.exec(pl)[1] % 5 === 0);
+    // The mentor sees what each step was built from.
+    const mentor = await who(h2.get('SELECT email FROM users WHERE id = ?', mentorId).email);
+    const q = (await mentor('GET', '/api/mentor/queue')).body;
+    if (q.recommendations) assert.ok(q.recommendations.filter((x) => x.studentName === 'Ravi Kumar').every((x) => Array.isArray(x.because)));
   } finally { s.close(); }
 });

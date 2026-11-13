@@ -193,7 +193,8 @@
   function sync(p) {
     var set = function (el, v) { if (el && el !== document.activeElement && String(el.value) !== String(v == null ? '' : v)) el.value = v == null ? '' : v; };
     set($('#f-cgpa'), p.cgpa); set($('#f-comm'), p.comm); set($('#f-year'), String(p.year));
-    p.skills.forEach(function (v, i) { set($('#sk-' + i), v); });
+    // A skill not rated yet stays blank: the 0 the server uses for it in the score is never shown as a rating.
+    p.skills.forEach(function (v, i) { set($('#sk-' + i), p.skillsRated && !p.skillsRated[i] && (p.verifiedSkills || []).indexOf(i) < 0 ? null : v); });
   }
   // Recorded scores over time: a small line for the eye and a list for exact values.
   function history() {

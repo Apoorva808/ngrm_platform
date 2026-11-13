@@ -265,3 +265,6 @@ input[type="file"] { max-width: 100%; min-width: 0; width: 100%; font-size: 0.9r
 
 .for-you { background: var(--accent-light); border-bottom: 1px solid var(--accent-border); font-size: 0.92rem; }
 .for-you .container { padding-block: 0.55rem; }
+
+.rec .built { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.rec .built .chip { font-size: 0.78rem; font-weight: 500; white-space: normal; text-align: left; }
