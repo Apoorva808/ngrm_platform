@@ -29,6 +29,11 @@ function migrate(db) {
   // Formula v0.3: a CGPA counts only once a mentor confirms it. Existing ones start unconfirmed.
   if (!db.prepare('PRAGMA table_info(profiles)').all().some((c) => c.name === 'cgpa_confirmed')) db.exec('ALTER TABLE profiles ADD COLUMN cgpa_confirmed INTEGER NOT NULL DEFAULT 0');
   for (const c of ['file_path', 'file_type']) if (!cols.includes(c)) db.exec(`ALTER TABLE evidence ADD COLUMN ${c} TEXT`);
+  // Formula v0.4: five transversal skills the student rates, up to two more aspired roles to compare, and the
+  // communication and leadership rules replaced by transversal and co-curricular ones.
+  addCol('profiles', 'transversal_json', 'TEXT');
+  addCol('profiles', 'other_roles_json', 'TEXT');
+  for (const id of ['communication', 'leadership']) { db.prepare('DELETE FROM recommendation_states WHERE rule_id = ?').run(id); db.prepare('DELETE FROM rules WHERE id = ?').run(id); }
 }
 
 // Small helpers so route code stays readable.

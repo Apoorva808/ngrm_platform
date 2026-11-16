@@ -23,7 +23,7 @@
 <div class="page-banner"><div class="container">
   <div><span class="eyebrow" id="bannerCollege"></span><h1 id="pageTitle">Mentor and college</h1>
   <p class="lead">Mentors review every recommendation and verify evidence. The cohort view shows, anonymously, where the curriculum falls short. Groups under 5 are hidden.</p></div>
-  <div class="field" style="min-width:min(300px,100%)"><label for="viewText">Show a programme or target role</label><input type="text" id="viewText" autocomplete="off" placeholder="All students. Type to narrow"><input type="hidden" id="progFilter" value="all"><span class="hint" id="viewNote" role="status">Type a programme or a role your students are aiming for.</span></div>
+  <div class="field" style="min-width:min(300px,100%)"><label for="viewText">Show a programme or aspired role</label><input type="text" id="viewText" autocomplete="off" placeholder="All students. Type to narrow"><input type="hidden" id="progFilter" value="all"><span class="hint" id="viewNote" role="status">Type a programme or a role your students are aiming for.</span></div>
 </div></div>
 <main id="main" tabindex="-1">
 <div class="container stack">
@@ -60,10 +60,10 @@
   <section class="card" id="menteeCard" hidden aria-labelledby="mTitle">
     <header><h2 id="mTitle">My mentees</h2><span class="small muted">Visible only to the student’s own mentor</span></header>
     <div class="field" style="max-width:420px;margin-bottom:0.75rem"><label for="menteeFind">Find a mentee</label><input type="text" id="menteeFind" autocomplete="off" placeholder="Type a name, programme, role, skill, interest or city"></div>
-    <div class="table-wrap"><table><thead><tr><th>Student</th><th>Programme</th><th>Year</th><th>Target role</th><th class="n">Score</th><th>Band</th><th>Waiting for you</th></tr></thead><tbody id="mentees"></tbody></table></div>
+    <div class="table-wrap"><table><thead><tr><th>Student</th><th>Programme</th><th>Year</th><th>Aspired role</th><th class="n">Score</th><th>Band</th><th>Waiting for you</th></tr></thead><tbody id="mentees"></tbody></table></div>
     <form id="assessForm" novalidate style="display:grid;gap:0.75rem;margin-top:1.25rem;border-top:1px solid var(--border);padding-top:1rem">
-      <h3>Confirm a CGPA or record a college assessment</h3>
-      <p class="small muted" style="margin:0">A student’s CGPA and skills count towards their score only once you confirm them here. Enter the figure from college records or the assessment result; it replaces what the student typed, and they cannot change an assessed skill.</p>
+      <h3>Confirm a CGPA or record an assessment</h3>
+      <p class="small muted" style="margin:0">Students are never kept waiting for you: what they report counts at half until you confirm it here, then in full. Enter the figure from college records, the assessment result, or your own judgement of a transversal skill. It replaces what the student typed, and they cannot change an assessed skill.</p>
       <div class="row-2"><div class="field"><label for="as-student">Student</label><select id="as-student"></select></div><div class="field"><label for="as-what">What was assessed</label><select id="as-what"></select></div></div>
       <div class="row-2"><div class="field"><label for="as-score" id="as-scoreLbl">Score (0–100)</label><input type="number" id="as-score" min="0" max="100" step="any" inputmode="decimal"></div><div class="field" style="align-self:end"><button class="btn btn-primary" type="submit">Record result</button></div></div>
       <p class="small" id="as-err" style="color:var(--danger)" hidden></p>
@@ -113,7 +113,7 @@
         (pending != null ? '<div class="kpi"><b>' + pending + '</b><span>Items awaiting your review</span></div>' : '<div class="kpi"><b>' + esc(meta.formulaVersion) + '</b><span>Scoring formula</span></div>');
       // A factor too few students have a rating for (for example communication before assessments) is left off.
       var avgs = meta.factors.map(function (F) { return { F: F, v: c.factors[F.k] }; }).filter(function (x) { return x.v != null; });
-      var low = avgs.filter(function (x) { return x.F.k !== 'psychometric'; }).sort(function (a, b) { return a.v - b.v; }).slice(0, 2);
+      var low = avgs.filter(function (x) { return x.F.k !== 'socioemotional'; }).sort(function (a, b) { return a.v - b.v; }).slice(0, 2);
       $('#cFactors').innerHTML = avgs.map(function (x) { var isLow = low.some(function (l) { return l.F.k === x.F.k; });
         return '<div class="bar-row' + (isLow ? ' low' : '') + '"><div class="lbl"><b>' + x.F.label + '</b><small>Weight ' + x.F.w + '%</small></div><div class="track"><i style="width:' + Math.min(100, x.v) + '%"></i></div><span class="val">' + x.v + '</span></div>'; }).join('');
       if (c.smallProgrammesLeftOut) $('#cFactors').insertAdjacentHTML('beforeend', '<p class="small muted" style="margin-top:0.6rem">Programmes with fewer than 5 students are left out of every view, so no one can work out an individual’s score.</p>');
@@ -172,11 +172,11 @@
   });
   var mentees = [];
   function waiting(s) {
-    var w = [], n = s.skillsVerified.filter(function (v) { return !v; }).length;
+    var w = [], n = s.skillsVerified.filter(function (v, i) { return !v && s.skillsRated[i]; }).length, t = s.transversal.filter(function (v, i) { return v != null && !s.transversalVerified[i]; }).length;
     if (s.cgpa != null && !s.cgpaConfirmed) w.push('CGPA ' + s.cgpa + ' to confirm'); else if (s.cgpa == null) w.push('CGPA not entered');
-    if (n) w.push(n + (n === 1 ? ' skill' : ' skills') + ' to assess');
-    if (!s.commAssessed) w.push('communication to assess');
-    return w.length ? esc(w.join(' · ')) : '<span class="muted">Nothing</span>';
+    if (n) w.push(n + (n === 1 ? ' role skill' : ' role skills') + ' to assess');
+    if (t) w.push(t + (t === 1 ? ' transversal skill' : ' transversal skills') + ' to assess');
+    return w.length ? esc(w.join(' · ')) + '<br><span class="muted">Counting at half meanwhile</span>' : '<span class="muted">Nothing</span>';
   }
   function menteeRows(list) {
     var t = ($('#menteeFind').value || '').trim().toLowerCase();
@@ -190,7 +190,8 @@
   function whatOptions(keep) {
     var s = current(); if (!s) return; var was = keep === true ? $('#as-what').value : null;
     $('#as-what').innerHTML = '<option value="cgpa">CGPA' + (s.cgpaConfirmed ? ' (confirmed: ' + s.cgpa + ')' : s.cgpa != null ? ' (student entered ' + s.cgpa + ')' : '') + '</option>' +
-      meta.roles[s.role].skills.map(function (k, i) { return '<option value="' + i + '">' + esc(k) + (s.skillsVerified[i] ? ' (assessed: ' + s.skills[i] + ')' : ' (not assessed)') + '</option>'; }).join('') + '<option value="communication">Communication' + (s.commAssessed ? ' (assessed)' : ' (not assessed)') + '</option>';
+      meta.roles[s.role].skills.map(function (k, i) { return '<option value="' + i + '">' + esc(k) + (s.skillsVerified[i] ? ' (assessed: ' + s.skills[i] + ')' : s.skillsRated[i] ? ' (student rated ' + s.skills[i] + ')' : ' (not rated)') + '</option>'; }).join('') +
+      meta.transversal.map(function (k, i) { return '<option value="t' + i + '">' + esc(k) + (s.transversalVerified[i] ? ' (assessed: ' + s.transversal[i] + ')' : s.transversal[i] != null ? ' (student rated ' + s.transversal[i] + ')' : ' (not rated)') + '</option>'; }).join('');
     if (was != null) $('#as-what').value = was;
     whatShape();
   }
@@ -210,7 +211,7 @@
   // Type a programme or a role: the cohort view narrows to it.
   function pickView() {
     var t = $('#viewText').value.replace(/\s+/g, ' ').trim().toLowerCase(), note = $('#viewNote');
-    var all = groups.programmes.map(function (g) { return { v: 'p:' + g.id, label: g.label, kind: 'programme' }; }).concat(groups.roles.map(function (g) { return { v: 'r:' + g.id, label: g.label, kind: 'target role' }; }));
+    var all = groups.programmes.map(function (g) { return { v: 'p:' + g.id, label: g.label, kind: 'programme' }; }).concat(groups.roles.map(function (g) { return { v: 'r:' + g.id, label: g.label, kind: 'aspired role' }; }));
     var hit = !t ? null : all.filter(function (g) { return g.label.toLowerCase() === t; })[0] || (function () { var m = all.filter(function (g) { return g.label.toLowerCase().indexOf(t) >= 0; }); return m.length === 1 ? m[0] : null; })();
     if (!t) { $('#progFilter').value = 'all'; note.textContent = ''; }
     else if (hit) { $('#progFilter').value = hit.v; $('#viewText').value = hit.label; note.textContent = 'Showing the ' + hit.kind + ' ' + hit.label + '.'; }

@@ -14,7 +14,7 @@ const LAST = ['Shetty', 'Rao', 'Gowda', 'Naik', 'Kulkarni', 'Hegde', 'Iyer', 'Pa
 // What every database needs, sample data or not: the rule library, and the first admin if ADMIN_EMAIL is set.
 function bootstrap(db, env = process.env) {
   const h = helpers(db);
-  for (const r of D.DEFAULT_RULE_SETTINGS) h.run('INSERT OR IGNORE INTO rules (id, factor, slot, effort, threshold, active) VALUES (?, ?, ?, ?, ?, 1)', r.id, r.factor, r.slot, r.effort, r.threshold);
+  for (const r of D.DEFAULT_RULE_SETTINGS) { h.run('INSERT OR IGNORE INTO rules (id, factor, slot, effort, threshold, active) VALUES (?, ?, ?, ?, ?, 1)', r.id, r.factor, r.slot, r.effort, r.threshold); h.run('UPDATE rules SET factor = ? WHERE id = ?', r.factor, r.id); }
   // Course sites students are sent to for a live search. An admin can change these on the Admin page.
   if (!h.get('SELECT 1 FROM course_sources')) for (const [name, url] of [['SWAYAM', 'https://swayam.gov.in/explorer?searchText={q}'], ['Class Central', 'https://www.classcentral.com/search?q={q}'], ['Coursera', 'https://www.coursera.org/search?query={q}']])
     h.run('INSERT INTO course_sources (name, url_template) VALUES (?, ?)', name, url);
@@ -42,8 +42,10 @@ function seed(db) {
       .map(([n, c]) => Number(h.run('INSERT INTO employers (name, city) VALUES (?, ?)', n, c).lastInsertRowid));
     const user = (email, name, role, inst, emp) => Number(h.run('INSERT INTO users (email, name, role, institution_id, employer_id) VALUES (?, ?, ?, ?, ?)', email, name, role, inst ?? null, emp ?? null).lastInsertRowid);
     const consent = (uid, purpose) => h.run('INSERT INTO consents (user_id, purpose, granted, is_adult) VALUES (?, ?, 1, 1)', uid, purpose);
-    const profile = (uid, p, optIn) => h.run('INSERT INTO profiles (user_id, programme, year, cgpa, cgpa_confirmed, target_role, skills_json, ocean_json, comm, clarity, opt_in_intros) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      uid, p.prog, p.year, p.cgpa, p.cgpaConfirmed ? 1 : 0, p.role, JSON.stringify(p.skills), p.ocean ? JSON.stringify(p.ocean) : null, p.comm ?? null, p.clarity ?? null, optIn ? 1 : 0);
+    const profile = (uid, p, optIn) => h.run('INSERT INTO profiles (user_id, programme, year, cgpa, cgpa_confirmed, target_role, skills_json, ocean_json, comm, clarity, opt_in_intros, transversal_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      uid, p.prog, p.year, p.cgpa, p.cgpaConfirmed ? 1 : 0, p.role, JSON.stringify(p.skills), p.answers ? JSON.stringify({ answers: p.answers }) : null, null, p.clarity ?? null, optIn ? 1 : 0, JSON.stringify(p.transversal || [null, null, null, null, null]));
+    // Questionnaire answers (1–5) for a sample student: a random but plausible pattern.
+    const answers = (rand) => D.IPIP.map(() => 1 + Math.min(4, Math.floor(rand() * 5)));
     const evidence = (uid, type, title, status, by, extra = {}) => h.run('INSERT INTO evidence (user_id, type, title, completed_on, status, verified_by, verified_at, skill_index, skill_role, skill_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       uid, type, title, extra.date || null, status, by || null, status === 'verified' ? '2026-10-01 10:00:00' : null, extra.skill ?? null, extra.role ?? null, extra.value ?? null);
 
@@ -56,10 +58,11 @@ function seed(db) {
     user('admin@demo.ngrm.in', 'NGRM admin', 'admin');
 
     consent(ananya, 'profile'); consent(ananya, 'psychometric');
-    profile(ananya, { prog: 'ba-psy', year: 2, cgpa: 7.6, cgpaConfirmed: true, role: 'hr', skills: [55, 72, 60, 45], ocean: { o: 72, c: 68, e: 48, a: 74, n: 55 }, comm: null, clarity: 55 }, false);
+    profile(ananya, { prog: 'ba-psy', year: 2, cgpa: 7.6, cgpaConfirmed: true, role: 'hr', skills: [55, 72, 60, 45], answers: [3, 4, 4, 3, 4, 3, 2, 2, 3, 2, 3, 5, 4, 3, 2, 3, 1, 2, 3, 2], transversal: [65, 50, 60, 55, 70], clarity: 55 }, false);
     evidence(ananya, 'course', 'NPTEL course in research methods', 'verified', 'Course certificate', { date: '2026-05-20' });
     evidence(ananya, 'project', 'Survey study on exam stress among first-year students', 'verified', 'Dr. Kavya S.', { date: '2026-09-15' });
     evidence(ananya, 'assessment', 'Research methods skill check', 'verified', 'Department of Psychology', { date: '2026-10-02', skill: 1, role: 'hr', value: 72 });
+    evidence(ananya, 'role', 'Inter-college policy hackathon, team entry', 'pending', null, { date: '2026-07-25' });
     h.run("INSERT INTO recommendation_states (user_id, rule_id, mentor_status, mentor_note, mentor_id, mentor_at) VALUES (?, 'project', 'approved', ?, ?, datetime('now'))", ananya, 'Good fit. Tie it to the NGO survey we discussed for next semester.', kavya);
     h.run('INSERT INTO mentor_links (mentor_id, student_id) VALUES (?, ?)', kavya, ananya);
 
@@ -77,12 +80,11 @@ function seed(db) {
       // Most sample students have had their CGPA confirmed and most of their skills assessed; the rest are still waiting.
       const skillVals = D.ROLES[role].skills.map(() => Math.round(30 + drive * 25 + R() * 40));
       const C = rng(n * 7919), cgpaConfirmed = C() < 0.85, skillsVerified = skillVals.map(() => C() < 0.85);
+      const tv = D.TRANSVERSAL.map(() => Math.round(35 + drive * 25 + R() * 35)), tvAssessed = tv.map(() => C() < 0.4);
       profile(uid, { prog, year: R() < 0.5 ? 1 : 2, cgpa: Math.round((5.6 + R() * 3.6) * 10) / 10, cgpaConfirmed, role, skills: skillVals,
-        ocean: { o: Math.round(35 + R() * 50), c: Math.round(35 + R() * 50), e: Math.round(30 + R() * 55), a: Math.round(40 + R() * 45), n: Math.round(25 + R() * 50) },
-        comm: R() < 0.4 ? Math.round(50 + R() * 40) : null, clarity: Math.round(35 + R() * 60) }, optIn);
+        answers: answers(R), transversal: tv, clarity: Math.round(35 + R() * 60) }, optIn);
       skillVals.forEach((v, i) => { if (skillsVerified[i]) evidence(uid, 'assessment', `${D.ROLES[role].skills[i]} assessment: ${v}/100`, 'verified', 'College assessment', { skill: i, role, value: v }); });
-      const assessed = h.get('SELECT comm FROM profiles WHERE user_id = ?', uid).comm;
-      if (assessed != null) evidence(uid, 'assessment', `Communication assessment: ${assessed}/100`, 'verified', 'College assessment', { role: 'communication', value: assessed });
+      tv.forEach((v, i) => { if (tvAssessed[i]) evidence(uid, 'assessment', `${D.TRANSVERSAL[i]} assessment: ${v}/100`, 'verified', 'Faculty mentor', { skill: i, role: 'transversal', value: v }); });
       for (let i = 0; i < Math.floor(R() * 3); i++) evidence(uid, 'course', 'NPTEL course', 'verified', 'Course certificate');
       if (R() < 0.3) evidence(uid, 'certificate', 'Skill certificate', 'verified', 'Issuer');
       for (let i = 0; i < Math.min(3, Math.floor(R() * 2 + drive * 2.4)); i++) evidence(uid, 'project', 'Course project', R() < 0.8 ? 'verified' : 'pending', 'Faculty mentor');
@@ -90,11 +92,12 @@ function seed(db) {
       if (drive > 0.6 && R() < 0.5) evidence(uid, 'internship', 'Winter internship', 'verified', 'Placement cell');
       if (R() < 0.2 + 0.6 * drive) evidence(uid, 'role', 'NSS volunteer', 'verified', 'NSS programme officer');
       if (drive > 0.7 && R() < 0.4) evidence(uid, 'role', 'Club coordinator', 'verified', 'Faculty in charge');
+      if (R() < 0.25) evidence(uid, 'role', 'Inter-college hackathon', R() < 0.7 ? 'verified' : 'pending', 'Faculty in charge');
       if (R() < 0.3) {
         consent(uid, 'study');
         const p = JSON.parse(JSON.stringify(h.get('SELECT * FROM profiles WHERE user_id = ?', uid)));
         const ev = h.all('SELECT type, status FROM evidence WHERE user_id = ?', uid);
-        const prof = { prog: p.programme, year: p.year, cgpa: p.cgpa, cgpaConfirmed, role: p.target_role, skills: JSON.parse(p.skills_json), skillsVerified, ocean: JSON.parse(p.ocean_json), comm: p.comm, clarity: p.clarity };
+        const prof = { prog: p.programme, year: p.year, cgpa: p.cgpa, cgpaConfirmed, role: p.target_role, skills: JSON.parse(p.skills_json), skillsVerified, transversal: tv, transversalVerified: tvAssessed, ocean: D.ipipTraits(JSON.parse(p.ocean_json).answers), clarity: p.clarity };
         const s = D.score(prof, ev);
         const run = h.run('INSERT INTO score_runs (user_id, formula_version, inputs_json, factors_json, index_value) VALUES (?, ?, ?, ?, ?)', uid, s.version, JSON.stringify({ profile: prof, counts: s.counts }), JSON.stringify(s.factors), s.index);
         h.run('INSERT INTO baselines (user_id, score_run_id) VALUES (?, ?)', uid, run.lastInsertRowid);
@@ -121,6 +124,9 @@ function seed(db) {
     h.run('INSERT INTO demand_posts (employer_id, role, skills_json, openings, city) VALUES (?, ?, ?, ?, ?)', emps[0], 'hr', JSON.stringify(['Excel and data analysis', 'Research methods']), 4, 'Bengaluru');
     h.run('INSERT INTO demand_posts (employer_id, role, skills_json, openings, city) VALUES (?, ?, ?, ?, ?)', emps[1], 'data', JSON.stringify(['SQL', 'Statistics']), 6, 'Bengaluru');
     h.run('INSERT INTO demand_posts (employer_id, role, skills_json, openings, city) VALUES (?, ?, ?, ?, ?)', emps[2], 'wellbeing', JSON.stringify(['Active listening', 'Ethics and confidentiality']), 3, 'Mysuru');
+    // Openings the team found in public sources. In this sample data they are fictional and say so.
+    for (const [title, org, role, city, skills, n] of [['People analytics trainee', 'Sample organisation D', 'hr', 'Bengaluru', ['Excel and data analysis', 'Power BI'], 3], ['Junior data analyst', 'Sample organisation E', 'data', 'Bengaluru', ['SQL', 'Python', 'Power BI'], 5], ['Counselling assistant', 'Sample organisation F', 'wellbeing', 'Mysuru', ['Active listening', 'Kannada'], 2]])
+      h.run("INSERT INTO public_openings (title, organisation, role, city, skills_json, openings, source_name, source_url, posted_on) VALUES (?, ?, ?, ?, ?, ?, 'Sample listing (not a real opening)', 'https://example.com/sample-listing', date('now', '-10 days'))", title, org, role, city, JSON.stringify(skills), n);
     // One earlier introduction request, with replies from some students who opted in.
     const intro = h.run("INSERT INTO intro_requests (employer_id, role, created_at) VALUES (?, 'data', datetime('now', '-5 days'))", emps[1]).lastInsertRowid;
     for (const u of h.all("SELECT p.user_id FROM profiles p WHERE p.target_role = 'data' AND p.opt_in_intros = 1")) if (R() < 0.6) h.run('INSERT INTO intro_replies (request_id, user_id) VALUES (?, ?)', intro, u.user_id);

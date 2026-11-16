@@ -52,13 +52,13 @@ server/
   index.js     start-up, .env loading, refuses unsafe production settings
   app.js       all API routes, role checks, consent checks, audit logging
   library.js   kinds of work and disciplines used to place typed roles and programmes
-  domain.js    scoring formula v0.3, bands, rule library, what-if projections
+  domain.js    scoring formula v0.4, Mini-IPIP items, bands, rule library, what-if projections
   auth.js      passwords, sign-up, sessions (and optional email codes)
   ai.js        optional Gemini rewording, with a safety check
   db.js        SQLite helpers
   schema.sql   local database tables
   seed.js      invented sample data
-public/        nine pages (plain HTML, CSS, JavaScript, no build step)
+public/        the pages (plain HTML, CSS, JavaScript, no build step)
 db/postgres/   production database scripts for Supabase, with row-level security
 test/          scoring and API tests
 ```
@@ -67,9 +67,9 @@ One dependency (Express). The scoring and rules live on the server only, so the 
 
 ## How the five pilot rules are enforced
 
-1. **Same answer every time.** The score is a fixed formula (`server/domain.js`, version `v0.3`). Every saved score stores its inputs, each factor and the formula version, so any number can be traced and re-checked. Students can attach a proof file (PDF, PNG or JPEG, up to 5 MB); only the student and their own mentor can open it, and it is deleted with the item or the account. Evidence counts only once a mentor has verified it. A mentor records college assessment results (a role skill or communication); that score is then locked and the student cannot change or delete it.
+1. **Same answer every time.** The score is a fixed formula (`server/domain.js`, version `v0.4`). Every saved score stores its inputs, each factor and the formula version, so any number can be traced and re-checked. Students can attach a proof file (PDF, PNG or JPEG, up to 5 MB); only the student and their own mentor can open it, and it is deleted with the item or the account. Evidence counts at half while it waits for a mentor and in full once verified. A mentor records assessment results (a role skill or a transversal skill); that score is then locked and the student cannot change or delete it.
 2. **Students decide.** Recommendations come from a rule library, ranked by how much each would raise the score. Students accept or decline each one. A mentor cannot override a decline (the API returns 409).
-3. **Consent first.** Each use needs its own consent: profile, personality questions, AI wording, employer introductions, research study. Under-18s must name a guardian, and that status is kept on every later consent change. Consent can be withdrawn and is stored as a history. Withdrawing questionnaire consent removes the answers everywhere, including earlier recorded scores and the study baseline. Questionnaire results are saved only when the student has set all five traits; nothing is filled in for them.
+3. **Consent first.** Each use needs its own consent: profile, personality questions, AI wording, employer introductions, research study. Under-18s must name a guardian, and that status is kept on every later consent change. Consent can be withdrawn and is stored as a history. Withdrawing questionnaire consent removes the answers everywhere, including earlier recorded scores and the study baseline. The personality questionnaire is answered inside the platform; answers save as they are given and count only once all 20 are in. Nothing is pre-selected.
 4. **No individual data for employers or colleges.** Employers and placement cells see counts only. Any group under 5 is hidden, and employer counts are rounded to the nearest 5 so one total cannot be subtracted from another to find a small group. Colleges never see programmes with fewer than 5 students, for the same reason, and college counts are also rounded to 5, averages to whole numbers, and percentages shown only when both sides have 5 or more students, so comparing views over time cannot reveal one student. Introduction requests need at least 5 students who opted in. Students who opted in see the request and choose "I'm interested"; only their own placement cell then sees their name, and puts them in touch. The employer sees only how many replied.
 5. **Everything is logged and reversible.** Sign-ins, score runs, consent changes, reviews, verifications, exports and deletions are written to an audit log. Students can download all their data or delete their account.
 
@@ -77,7 +77,7 @@ AI is optional. When switched on (`GEMINI_API_KEY` and the student's AI consent)
 
 ## Typed roles and programmes
 
-Target roles and programmes are not limited to a list. Anyone can pick a suggestion or type their own, on every kind of account.
+Aspired roles and programmes are not limited to a list. Anyone can pick a suggestion or type their own, on every kind of account.
 
 - **A typed role** ("Data Scientist", "Chartered Accountant", "IAS officer") is matched by keywords to one of 28 kinds of work in `server/library.js` and takes that kind's four skills, target levels, project idea and internship wording. No AI model is involved, so the same text always gives the same result. A role NGRM cannot place starts with four general workplace skills and is flagged for the admin.
 - **A typed programme** ("B.E. Mechanical Engineering") is matched to a discipline and a usual length in years.
@@ -97,8 +97,9 @@ The plan is what makes NGRM different, so every step is built from the student's
 - **Which skill to work on.** Not simply the lowest number: the biggest gap to the role's target level, weighted up by how many openings employers posted for that skill. The card says so ("Employers on NGRM asked for it in 4 openings…"), and claims a skill is the most asked-for only when it is.
 - **Proof first.** Evidence the mentor asked proof for comes straight after confirmation ("Add proof for “Summer internship”"), with the points it is worth once verified. Evidence still waiting is a step of its own, ranked by what it adds.
 - **Time left.** A final-year student is told to line up an internship or placement before graduating, this semester; first-years are pointed to a short first internship or job-shadowing; CGPA advice changes in the final year.
-- **Where they want to work.** The internship step names employers that posted for the role in the student's typed cities, or says plainly that none has yet.
-- **What they wrote.** The project, leadership and communication steps are built around the student's typed interests and goal. If the goal points to a different kind of work from the target role ("I want to teach…" with Data Analyst), a step asks them to check it with their mentor.
+- **Where they want to work.** The internship step names organisations with openings for the role in the student's typed cities, crediting the source, or says plainly that there are none on NGRM yet.
+- **What they wrote.** The project, co-curricular and transversal-skill steps are built around the student's typed interests and goal. If the goal points to a different kind of work from the aspired role ("I want to teach…" with Data Analyst), a step suggests adding it as another role to compare.
+- **Other roles.** A student can add up to two more roles they are considering. My score shows each side by side: path from their programme, which of the role's skills they already show (matched by name), and openings in the last 90 days. One tap makes another role the main one; the two swap.
 - **What employers typed.** A skill an employer typed in their own words becomes a step: learn it, or, if the student already listed it, add proof of it. These never change the score and say so.
 - **Peers.** Where 5 or more students at the same college aim for the same role (or are on the same programme), steps say what share of them have a verified internship, project or role. Rounded to 5%, shown only when the rest of the group is also 5 or more, never with names.
 - **Programme and role.** Course, project and internship wording follows whether the student is on a direct path, a related path or a career switch.
@@ -106,13 +107,13 @@ The plan is what makes NGRM different, so every step is built from the student's
 - **Built from.** Every step lists the facts it was built from, on the student's plan and in the mentor's review queue, so both can see why it is there.
 - **Ranking.** Confirmation and requested proof first; then up to five steps that raise the score, largest gain first (the role-skill course is always kept); then the personal steps that do not change the score; then the human counsellor.
 - **Assumptions are stated.** A course is assumed to lift a rated skill by 15, or to bring an unrated skill to 50; the card says which.
-- **Limits.** Keyword matching decides what a typed goal "sounds like", so it can misread unusual wording. Peer shares describe what others have done, not what caused their scores. Employer demand only counts posts made on NGRM.
+- **Limits.** Keyword matching decides what a typed goal "sounds like", so it can misread unusual wording. Peer shares describe what others have done, not what caused their scores. Demand counts only openings on NGRM: those employers posted and those the team added from public sources.
 
 ## Typed and personal, everywhere
 
 - **Nothing is filled in for anyone.** A new student has no profile until they type their programme, their year and the job they are aiming for; there is no default programme, role or year. Skill ratings, CGPA, personality, career clarity and every own-words box start empty, and a blank rating stays blank ("Not rated yet"). Every other typed box on the site starts empty too (kind of evidence, account type at sign-up, the mentor's student and skill boxes, the employer's role, openings and city, the admin's choices), and a form cannot be sent while one of its typed boxes is empty, so nothing is ever assumed.
 - **Every student has a mentor.** A student who signs up, or is added without a named mentor, is given the mentor at their college with the fewest students. When a mentor account is approved or added, students at that college who have nobody are shared among the mentors. The placement cell sees each mentor's load (counts only, no student names) and can share out anyone still waiting with one button. If a college has no mentor yet, its students wait and the placement cell is told so.
-- **Nothing drops down.** There are no dropdowns, suggestion lists, sliders or date pickers anywhere. Every answer is typed into a plain box, and the words the box understands are shown as ordinary text beside it ("Type one of: 1st year · 2nd year · 3rd year"). A few letters are enough when they fit only one answer, and "2" or "second" both mean 2nd year. Where the answers are fixed because the score or access depends on them (year, kind of evidence, kind of account), typing must match one of them and the box says so if it does not. Dates are typed as 5 Oct 2026, 05-10-2026 or Oct 2026. For roles and programmes the box says, as text, which wording NGRM already has, so the same job is not added twice.
+- **Nothing drops down.** There are no dropdowns, suggestion lists, sliders or date pickers anywhere. The one exception is the personality questionnaire, which keeps its published five-point answer scale as a row of choices. Every answer is typed into a plain box, and the words the box understands are shown as ordinary text beside it ("Type one of: 1st year · 2nd year · 3rd year"). A few letters are enough when they fit only one answer, and "2" or "second" both mean 2nd year. Where the answers are fixed because the score or access depends on them (year, kind of evidence, kind of account), typing must match one of them and the box says so if it does not. Dates are typed as 5 Oct 2026, 05-10-2026 or Oct 2026. For roles and programmes the box says, as text, which wording NGRM already has, so the same job is not added twice.
 - **College at sign-up** is typed. A few words that fit one known college are enough; words that fit several ask for the full name. A college not in the list is added as "typed at sign-up" and the student gets in; it is offered to others only after the admin confirms it.
 - **In the student's own words.** On the score page a student can type their goal, interests, where they want to work, and up to eight other skills with their own rating. NGRM uses these to suggest roles ("From what you wrote"), to show how many openings are in their cities, and to tell them when an employer has asked for a skill they listed. The mentor sees all of it and can search mentees by any of it. None of it changes the score.
 - **Steps of their own.** A student can type any step into their plan, give it a time, and tick it off. It appears on the roadmap and to the mentor, and does not change the score.
@@ -120,19 +121,30 @@ The plan is what makes NGRM different, so every step is built from the student's
 - **A personal line on every page** greets the signed-in person by name and says what is theirs and what is waiting: for a student their programme, role, path and score and what the mentor still has to confirm; for a mentor what is waiting to verify, confirm and assess; for a placement cell, employer, researcher and admin their own counts.
 - **Limits.** Role ideas from typed text use keyword matching, so they can miss or misread unusual wording. Typed skills are matched to employer wording by exact words only ("Tally" matches "tally", not "Tally Prime").
 
-## Scoring formula v0.3
+## Scoring formula v0.4
 
-Eight factors: academic 20, technical/role skills 20, projects 15, experience 15, personality 10, communication 10, leadership 5, career clarity 5.
+Set from the advisers' review in November 2026. Eight parts, weights out of 100:
 
-- **What a student types about themselves does not count until confirmed.** A CGPA counts only after the mentor confirms it against college records (the mentor enters the figure; a later change by the student sends it back for confirmation). Each of the four role skills counts only after a college assessment the mentor records; a skill not yet assessed counts as 0, so each assessment can only add. The student's own ratings still shape the plan. The plan's first step tells the student what is waiting, and the mentor's page lists it per student. Employers' skill totals use assessed skills only.
-- **Unanswered is left out, never guessed.** A factor with no answer (CGPA not entered or not yet confirmed, personality not entered or consent withdrawn, communication not yet assessed, clarity not rated) is "not yet rated". The score is the weighted average of the rated factors, and the page shows what share of the formula it covers.
-- **Limits against flooding.** A student can have at most 10 evidence items waiting for a mentor and 60 in total. An employer can post at most 3 requirements and 500 openings per role in 90 days, and can withdraw a post. Passwords need 10 characters and common ones ("password123") are refused. A CGPA outside 0 to 10 is refused, not adjusted.
-- **Research export.** Pseudonyms, month-only dates, scores rounded to 5, CGPA-based score in wide bands. Where fewer than 5 participants share a programme, year and target role, the role, then year, then programme is withheld; rare CGPA bands are withheld too. This costs detail: in the sample data about a third of records keep their target role and about a quarter keep their academic band.
-- **Only verified evidence counts.** Projects score 35 each, internships 50 each, leadership roles 50 each, capped at 100, and only after a mentor verifies them. With none verified these factors are 0.
-- **Communication** comes only from a college assessment a mentor records. Students cannot enter it.
+| Part | Weight |
+|---|---|
+| Academic excellence: CGPA 15, internships 10, projects and dissertation 10 | 35 |
+| Technical skills for the aspired role (four skills) | 20 |
+| Transversal skills: communication, leadership, creativity, problem solving, teamwork | 20 |
+| Social-emotional: conscientiousness and emotional stability from the Mini-IPIP | 10 |
+| Co-curricular achievements: hackathons, competitions, NSS, NCC, clubs, volunteering | 10 |
+| Career clarity | 5 |
+
+- **Students never wait.** What a student reports about themselves counts at half straight away and in full once confirmed: a CGPA once the mentor confirms it against college records (a later change sends it back), a role skill once the college assesses it, a transversal skill once the mentor assesses it, and evidence once the mentor verifies it. Evidence the mentor asked proof for counts nothing until the proof is added. Mentor review never blocks a step. The page also shows a "confirmed only" score.
+- **Unchecked claims are capped.** Items waiting for a mentor can add at most half of a factor (internships, projects, co-curricular), and at most 10 points to technical skills, so a list of invented items can never fill a factor. A student can have at most 10 items waiting and 60 in total.
+- **Personality.** The 20-item Mini-IPIP (Donnellan, Oswald, Baird & Lucas, 2006), public-domain IPIP items answered from very inaccurate to very accurate, with the published reverse keying. Only conscientiousness and emotional stability (100 − neuroticism) count, as the traits with the most evidence for job performance; the full five-trait profile is shown to the student only, never to mentors, employers or in the one-page report. It is self-report, and the outcome study will test whether it predicts anything.
+- **Unanswered is left out, never guessed.** A part with no answer (CGPA not entered, questionnaire not finished or consent withdrawn, no transversal skill rated, clarity not rated) is "not yet rated". The score is the weighted average of the rated parts, and the page shows what share of the formula it covers.
+- **Limits against flooding.** An employer can post at most 3 requirements and 500 openings per role in 90 days, and can withdraw a post. Passwords need 10 characters and common ones ("password123") are refused. A CGPA outside 0 to 10 is refused, not adjusted.
+- **Research export.** Pseudonyms, month-only dates, scores rounded to 5, CGPA-based score in wide bands. Where fewer than 5 participants share a programme, year and aspired role, the role, then year, then programme is withheld; rare CGPA bands are withheld too.
 - **CGPA and career clarity** can be corrected but not cleared once entered, so a low value cannot be hidden.
-- **Known limit.** Because unanswered factors are left out, a student who never enters personality results (or withdraws that consent) is scored without it, which can be higher or lower than with it. Completeness is shown beside every score so mentors can see this.
-- Every recorded score stores its inputs and formula version. Scores recorded under v0.1 or v0.2 keep that label.
+- **Openings from public sources.** Most employers will not post on a new platform, so an admin can add openings found on company career pages, government recruitment notices or Employment News, each with the source named and linked. They count in live demand for 90 days alongside employers' own posts, and students see where each came from.
+- **One-page report.** A student can print or save a one-page summary for employers: score and band, confirmed-only score, each part, skills marked assessed or self-rated, and verified evidence. Personality data is never included.
+- **Known limits.** The weights are a starting point, not yet validated against outcomes. Skill matching between roles is by exact skill name. Because unanswered parts are left out, a student who never answers the questionnaire is scored without it; completeness is shown beside every score.
+- Every recorded score stores its inputs and formula version. Scores recorded under v0.1 to v0.3 keep that label.
 
 ## Real courses and live updates
 
@@ -202,7 +214,7 @@ an employer and a placement cell see no student rows, students cannot mark their
 someone else's behalf, a placement cell sees introduction replies only from its own college, and the employer supply
 function hides groups under 5 and rounds the rest.
 
-Changing a target role clears that student's accepted steps and mentor reviews, since the plan is for a different role.
+Changing the aspired role clears that student's accepted steps and mentor reviews, since the plan is for a different role.
 
 Steps: create the Supabase project in the Mumbai region, run the two scripts, switch sign-in to Supabase Auth,
 and replace `server/db.js` queries with Supabase calls. The API routes and pages stay the same.

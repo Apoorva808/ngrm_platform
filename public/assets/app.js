@@ -182,7 +182,7 @@
     return choices.filter(function (x) { return x.t.toLowerCase().indexOf(t) >= 0; }).slice(0, max || 5);
   }
 
-  // Target roles and programmes: type anything. Wording that is already on NGRM is reused; anything new is added
+  // Aspired roles and programmes: type anything. Wording that is already on NGRM is reused; anything new is added
   // (the server matches it to a kind of work or a discipline).
   //   typeable(input, { kind: 'role' | 'programme', meta, onPick(key, created), note: element for a status line })
   function typeable(input, o) {

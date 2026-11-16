@@ -215,6 +215,23 @@ CREATE TABLE IF NOT EXISTS demand_posts (
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Openings the NGRM team found in public sources (company career pages, government recruitment notices, Employment News),
+-- added by an admin with the source named and linked. They count towards live demand alongside employers' own posts.
+CREATE TABLE IF NOT EXISTS public_openings (
+  id            INTEGER PRIMARY KEY,
+  title         TEXT NOT NULL,
+  organisation  TEXT NOT NULL,
+  role          TEXT NOT NULL,
+  city          TEXT,
+  skills_json   TEXT NOT NULL DEFAULT '[]',
+  openings      INTEGER NOT NULL DEFAULT 1,
+  source_name   TEXT NOT NULL,
+  source_url    TEXT NOT NULL,
+  posted_on     TEXT,
+  added_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS intro_requests (
   id           INTEGER PRIMARY KEY,
   employer_id  INTEGER NOT NULL REFERENCES employers(id) ON DELETE CASCADE,

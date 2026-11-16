@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>My one-page report · NGRM</title>
+<link rel="stylesheet" href="assets/site.css">
+<style>
+  .sheet { max-width: 820px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem 1.6rem; display: grid; gap: 1rem; }
+  .sheet h1 { font-size: 1.45rem; margin: 0; }
+  .sheet h2 { font-size: 1rem; margin: 0 0 0.4rem; }
+  .sheet table { width: 100%; min-width: 0; table-layout: fixed; border-collapse: collapse; font-size: 0.9rem; }
+  .sheet table th:first-child, .sheet table td:first-child { width: 55%; }
+  .two > section { min-width: 0; }
+  .sheet th, .sheet td { text-align: left; padding: 0.3rem 0.4rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .sheet td.n, .sheet th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .top { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: flex-start; }
+  .top > div:last-child { text-align: right; }
+  .big { font-family: var(--font-mono); font-size: 2.2rem; line-height: 1; }
+  .two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+  @media (max-width: 700px) { .two { grid-template-columns: 1fr; } }
+  @media print {
+    body { background: #fff; }
+    header.site, footer, .page-banner, .no-print, .for-you, .skip { display: none !important; }
+    html { font-size: 11px; }
+    .sheet { border: 0; padding: 0; max-width: none; gap: 0.6rem; }
+    .container { padding: 0 !important; }
+    main { padding: 0 !important; }
+    @page { size: A4; margin: 14mm; }
+  }
+</style>
+</head>
+<body>
+<div class="page-banner no-print"><div class="container">
+  <div><span class="eyebrow">For employers and applications</span><h1>My one-page report</h1>
+  <p class="lead">A summary of your readiness you can print or save as a PDF and share yourself. It shows what has been confirmed and what you reported. Your personality results are private and are never included.</p></div>
+</div></div>
+<main id="main" tabindex="-1">
+<div class="container" style="display:grid;gap:1rem">
+  <div class="no-print" style="display:flex;gap:0.6rem;flex-wrap:wrap"><button class="btn btn-primary" type="button" id="printBtn">Print or save as PDF</button><a class="btn btn-secondary" href="readiness-index.html">Back to My score</a></div>
+  <article class="sheet" id="sheet"><p class="loading">Loading…</p></article>
+</div>
+</main>
+<script src="assets/app.js"></script>
+<script>
+(function () {
+  var N = NGRM, $ = N.$, esc = N.esc;
+  var STATUS = { assessed: 'assessed', 'self-rated': 'self-rated', 'not rated': '—' };
+  function rows(list) { return list.map(function (x) { return '<tr><td>' + esc(x.name) + '</td><td class="n">' + (x.value == null ? '—' : x.value) + '</td><td>' + STATUS[x.status] + '</td></tr>'; }).join(''); }
+  N.boot('score', ['student']).then(function () {
+    N.api('GET', '/api/me/report').then(function (r) {
+      var d = new Date(r.generatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+      var ev = {}; r.evidence.forEach(function (e) { (ev[e.type] = ev[e.type] || []).push(e); });
+      $('#sheet').innerHTML =
+        '<div class="top"><div><h1>' + esc(r.name) + '</h1><p style="margin:0.2rem 0 0">' + esc(r.programme) + ', ' + N.ordinal(r.year) + ' year' + (r.college ? ' · ' + esc(r.college) : '') + '</p>' +
+          '<p style="margin:0.2rem 0 0"><b>Aspired role:</b> ' + esc(r.role) + (r.otherRoles.length ? ' <span class="muted">· also considering ' + r.otherRoles.map(esc).join(', ') + '</span>' : '') + '</p></div>' +
+          '<div style="text-align:right"><div class="big">' + N.f1(r.index) + '</div><div class="small">Graduate Readiness Index · ' + esc(r.band.label) + '</div><div class="small muted">Confirmed items only: ' + N.f1(r.confirmedIndex) + '</div></div></div>' +
+        '<p class="small muted" style="margin:0">Self-reported items count at half until a mentor confirms them. Formula ' + esc(r.version) + (r.completeness < 100 ? '; based on ' + r.completeness + '% of the formula, as some parts are not answered yet' : '') + '. Bands: Building below 50, Progressing 50–74, Ready 75 and above.</p>' +
+        '<div class="two"><section><h2>How the score is made up</h2><table><thead><tr><th>Part</th><th class="n">Weight</th><th class="n">Score /100</th></tr></thead><tbody>' +
+          r.factors.map(function (f) { return '<tr><td>' + esc(f.label) + '</td><td class="n">' + f.w + '%</td><td class="n">' + (f.value == null ? '—' : Math.round(f.value)) + '</td></tr>'; }).join('') + '</tbody></table>' +
+          '<p class="small muted" style="margin:0.3rem 0 0">CGPA ' + (r.cgpa == null ? 'not entered' : r.cgpa + (r.cgpaConfirmed ? ', confirmed by the college' : ', self-reported')) + '. Social-emotional (10%) is part of the score but is private, so it is not shown.</p></section>' +
+        '<section><h2>Skills for ' + esc(r.role) + '</h2><table><thead><tr><th>Skill</th><th class="n">Level</th><th>Status</th></tr></thead><tbody>' + rows(r.skills) + '</tbody></table>' +
+          '<h2 style="margin-top:0.8rem">Transversal skills</h2><table><thead><tr><th>Skill</th><th class="n">Level</th><th>Status</th></tr></thead><tbody>' + rows(r.transversal) + '</tbody></table></section></div>' +
+        '<section><h2>Verified evidence</h2>' + (r.evidence.length ? Object.keys(ev).map(function (t) { return '<p style="margin:0.3rem 0 0"><b>' + esc(t) + ':</b> ' + ev[t].map(function (e) { return esc(e.title) + (e.on ? ' (' + esc(e.on.slice(0, 7)) + ')' : ''); }).join('; ') + '</p>'; }).join('') : '<p class="muted" style="margin:0">Nothing verified yet.</p>') +
+          (r.waiting ? '<p class="small muted" style="margin:0.3rem 0 0">' + r.waiting + ' more item' + (r.waiting === 1 ? ' is' : 's are') + ' waiting for a mentor to check.</p>' : '') + '</section>' +
+        '<p class="small muted" style="margin:0;border-top:1px solid var(--border);padding-top:0.6rem">Generated on ' + d + ' by NGRM, an independent student-founded platform, not a government service. Shared by the student. To check it, ask the student’s placement cell.</p>';
+    }).catch(function (e) { N.showError($('#sheet'), e); });
+  });
+  $('#printBtn').addEventListener('click', function () { window.print(); });
+})();
+</script>
+</body>
+</html>
