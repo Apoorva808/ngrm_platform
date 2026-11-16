@@ -1,8 +1,8 @@
-// Start the NGRM server: opens the database, seeds sample data on first run, serves the API and frontend.
+// Start the GRM server: opens the database, seeds sample data on first run, serves the API and frontend.
 // The built-in database (node:sqlite) works without extra flags from Node 22.13.
 const [major, minor] = process.versions.node.split('.').map(Number);
 if (major < 22 || (major === 22 && minor < 13)) {
-  console.error(`NGRM needs Node.js 22.13 or newer. This computer has ${process.versions.node}. Install the current LTS from nodejs.org and try again.`);
+  console.error(`GRM needs Node.js 22.13 or newer. This computer has ${process.versions.node}. Install the current LTS from nodejs.org and try again.`);
   process.exit(1);
 }
 const fs = require('node:fs');
@@ -46,6 +46,6 @@ const app = createApp(db);
 // Behind a hosting proxy (Render, Railway, nginx), trust it so per-address limits see the real visitor address.
 if (process.env.TRUST_PROXY === 'true') app.set('trust proxy', 1);
 app.listen(port, () => {
-  console.log(`NGRM running at http://localhost:${port}`);
+  console.log(`GRM running at http://localhost:${port}`);
   if (process.env.DEMO_MODE === 'true') console.log('Demo mode is on: the sign-in page offers one-click sample accounts.');
 });

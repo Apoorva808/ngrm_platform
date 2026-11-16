@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Privacy notice · NGRM</title>
+<title>Privacy notice · GRM</title>
 <link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
 <div class="page-banner"><div class="container">
-  <div><span class="eyebrow">Your data</span><h1>Privacy notice</h1><p class="lead">What NGRM collects, why, who can see it, and how to take it back. Written to be read in two minutes.</p></div>
+  <div><span class="eyebrow">Your data</span><h1>Privacy notice</h1><p class="lead">What GRM collects, why, who can see it, and how to take it back. Written to be read in two minutes.</p></div>
 </div></div>
 <main id="main" tabindex="-1">
 <div class="container stack" style="max-width:48rem">
@@ -59,7 +59,7 @@
   var N = NGRM, $ = N.$, esc = N.esc;
   N.boot('privacy').then(function (ctx) {
     var o = ctx.meta.operator || {};
-    $('#who').textContent = o.name ? 'This NGRM pilot is run by ' + o.name + ', which decides how your data is used and is responsible for it.' : 'This is a demonstration with sample data. A live pilot names the organisation responsible for your data here.';
+    $('#who').textContent = o.name ? 'This GRM pilot is run by ' + o.name + ', which decides how your data is used and is responsible for it.' : 'This is a demonstration with sample data. A live pilot names the organisation responsible for your data here.';
     $('#contact2').innerHTML = o.contact ? 'write to <a href="mailto:' + esc(o.contact) + '">' + esc(o.contact) + '</a>.' : 'write to the contact email a live pilot lists here.';
     $('#contact').innerHTML = o.contact ? 'write to <a href="mailto:' + esc(o.contact) + '">' + esc(o.contact) + '</a>.' : 'a live pilot lists a contact email here.';
     if (ctx.meta.demoMode) $('#demoNote').textContent = 'Demo mode: all people shown are fictional.';

@@ -33,6 +33,9 @@ function migrate(db) {
   // communication and leadership rules replaced by transversal and co-curricular ones.
   addCol('profiles', 'transversal_json', 'TEXT');
   addCol('profiles', 'other_roles_json', 'TEXT');
+  // Class 12 marks stand in for the CGPA until a first-year student has one (advisers' review, November 2026).
+  addCol('profiles', 'class12', 'REAL');
+  addCol('profiles', 'class12_confirmed', 'INTEGER NOT NULL DEFAULT 0');
   for (const id of ['communication', 'leadership']) { db.prepare('DELETE FROM recommendation_states WHERE rule_id = ?').run(id); db.prepare('DELETE FROM rules WHERE id = ?').run(id); }
 }
 

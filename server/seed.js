@@ -24,7 +24,7 @@ function bootstrap(db, env = process.env) {
   const email = String(env.ADMIN_EMAIL || '').trim().toLowerCase();
   if (!email) return null;
   let u = h.get('SELECT id FROM users WHERE email = ?', email), created = false;
-  if (!u) { u = { id: h.run("INSERT INTO users (email, name, role, is_sample) VALUES (?, ?, 'admin', 0)", email, String(env.ADMIN_NAME || 'NGRM admin').trim()).lastInsertRowid }; created = true; }
+  if (!u) { u = { id: h.run("INSERT INTO users (email, name, role, is_sample) VALUES (?, ?, 'admin', 0)", email, String(env.ADMIN_NAME || 'GRM admin').trim()).lastInsertRowid }; created = true; }
   // The first admin signs in with ADMIN_PASSWORD and must then choose their own. Once they have a password, ADMIN_PASSWORD is ignored.
   if (env.ADMIN_PASSWORD && !h.get('SELECT 1 FROM passwords WHERE user_id = ?', u.id)) h.run('INSERT INTO passwords (user_id, hash, must_change) VALUES (?, ?, 1)', u.id, hashPassword(String(env.ADMIN_PASSWORD)));
   return created ? email : null;
@@ -50,12 +50,12 @@ function seed(db) {
       uid, type, title, extra.date || null, status, by || null, status === 'verified' ? '2026-10-01 10:00:00' : null, extra.skill ?? null, extra.role ?? null, extra.value ?? null);
 
     // Demo accounts (sign in with one click when DEMO_MODE=true)
-    const ananya = user('ananya@demo.ngrm.in', 'Ananya Rao', 'student', insts[0]);
-    const kavya = user('kavya@demo.ngrm.in', 'Dr. Kavya S.', 'mentor', insts[0]);
-    user('placement@demo.ngrm.in', 'Placement Cell, Sample College Bengaluru', 'college_admin', insts[0]);
-    user('recruiter@demo.ngrm.in', 'Recruiter, Sample Employer A', 'employer', null, emps[0]);
-    user('research@demo.ngrm.in', 'Study researcher', 'researcher');
-    user('admin@demo.ngrm.in', 'NGRM admin', 'admin');
+    const ananya = user('ananya@demo.grm.in', 'Ananya Rao', 'student', insts[0]);
+    const kavya = user('kavya@demo.grm.in', 'Dr. Kavya S.', 'mentor', insts[0]);
+    user('placement@demo.grm.in', 'Placement Cell, Sample College Bengaluru', 'college_admin', insts[0]);
+    user('recruiter@demo.grm.in', 'Recruiter, Sample Employer A', 'employer', null, emps[0]);
+    user('research@demo.grm.in', 'Study researcher', 'researcher');
+    user('admin@demo.grm.in', 'GRM admin', 'admin');
 
     consent(ananya, 'profile'); consent(ananya, 'psychometric');
     profile(ananya, { prog: 'ba-psy', year: 2, cgpa: 7.6, cgpaConfirmed: true, role: 'hr', skills: [55, 72, 60, 45], answers: [3, 4, 4, 3, 4, 3, 2, 2, 3, 2, 3, 5, 4, 3, 2, 3, 1, 2, 3, 2], transversal: [65, 50, 60, 55, 70], clarity: 55 }, false);
@@ -72,7 +72,7 @@ function seed(db) {
     let n = 0;
     const makeStudent = (name, inst, prog, role) => {
       n++;
-      const uid = user(`student${n}@sample.ngrm.in`, name, 'student', inst);
+      const uid = user(`student${n}@sample.grm.in`, name, 'student', inst);
       const optIn = R() < 0.22;
       // How far along this sample student is, so the cohort spreads across all three bands.
       const drive = R();
@@ -111,7 +111,7 @@ function seed(db) {
     });
     insts.forEach((inst, c) => {
       // Sample mentors, so that sample students are mentored like real ones would be.
-      const sampleMentors = [1, 2, 3, 4].map((k) => user(`mentor${k}.c${c + 1}@sample.ngrm.in`, `Sample Mentor ${k}`, 'mentor', inst));
+      const sampleMentors = [1, 2, 3, 4].map((k) => user(`mentor${k}.c${c + 1}@sample.grm.in`, `Sample Mentor ${k}`, 'mentor', inst));
       for (let i = 0; i < 120; i++) {
         const g = plan[Math.floor(R() * 3)];
         makeStudent(`${FIRST[Math.floor(R() * FIRST.length)]} ${LAST[Math.floor(R() * LAST.length)]}`, inst, g[0], roleKeys[Math.floor(R() * roleKeys.length)]);

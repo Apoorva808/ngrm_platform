@@ -38,20 +38,20 @@ test('signed-out requests to student data are refused', async () => {
 
 test('one-time code sign-in works and locks after five wrong attempts', async () => {
   const c = client();
-  const req = await c('POST', '/api/auth/request-code', { email: 'ananya@demo.ngrm.in' });
+  const req = await c('POST', '/api/auth/request-code', { email: 'ananya@demo.grm.in' });
   assert.match(req.body.devCode, /^\d{6}$/);
-  assert.equal((await c('POST', '/api/auth/verify', { email: 'ananya@demo.ngrm.in', code: '000000' })).status, 400);
-  const ok = await c('POST', '/api/auth/verify', { email: 'ananya@demo.ngrm.in', code: req.body.devCode });
+  assert.equal((await c('POST', '/api/auth/verify', { email: 'ananya@demo.grm.in', code: '000000' })).status, 400);
+  const ok = await c('POST', '/api/auth/verify', { email: 'ananya@demo.grm.in', code: req.body.devCode });
   assert.equal(ok.status, 200);
   assert.equal((await c('GET', '/api/me')).body.user.role, 'student');
-  const c2 = client(); await c2('POST', '/api/auth/request-code', { email: 'kavya@demo.ngrm.in' });
-  for (let i = 0; i < 5; i++) await c2('POST', '/api/auth/verify', { email: 'kavya@demo.ngrm.in', code: '111111' });
-  const locked = await c2('POST', '/api/auth/verify', { email: 'kavya@demo.ngrm.in', code: '111111' });
+  const c2 = client(); await c2('POST', '/api/auth/request-code', { email: 'kavya@demo.grm.in' });
+  for (let i = 0; i < 5; i++) await c2('POST', '/api/auth/verify', { email: 'kavya@demo.grm.in', code: '111111' });
+  const locked = await c2('POST', '/api/auth/verify', { email: 'kavya@demo.grm.in', code: '111111' });
   assert.match(locked.body.error, /Too many/);
 });
 
 test('codes cannot be requested over and over (stops guessing)', async () => {
-  const c = client(), email = 'placement@demo.ngrm.in';
+  const c = client(), email = 'placement@demo.grm.in';
   assert.equal((await c('POST', '/api/auth/request-code', { email })).status, 200);
   const again = await c('POST', '/api/auth/request-code', { email });
   assert.equal(again.status, 429);
@@ -65,7 +65,7 @@ test('codes cannot be requested over and over (stops guessing)', async () => {
 test('unknown emails get the same response as known ones', async () => {
   process.env.DEV_SHOW_OTP = 'false';
   try {
-    const known = await client()('POST', '/api/auth/request-code', { email: 'research@demo.ngrm.in' });
+    const known = await client()('POST', '/api/auth/request-code', { email: 'research@demo.grm.in' });
     const unknown = await client()('POST', '/api/auth/request-code', { email: 'nobody@example.com' });
     assert.deepEqual(unknown.body, { sent: true });
     assert.deepEqual(known.body, unknown.body);
@@ -78,8 +78,8 @@ test('a malformed cookie does not break the site', async () => {
 });
 
 test('roles cannot reach each other’s endpoints', async () => {
-  const student = await as('ananya@demo.ngrm.in');
-  const employer = await as('recruiter@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in');
+  const employer = await as('recruiter@demo.grm.in');
   assert.equal((await student('GET', '/api/mentor/queue')).status, 403);
   assert.equal((await student('GET', '/api/employer/supply?role=hr')).status, 403);
   assert.equal((await employer('GET', '/api/me/profile')).status, 403);
@@ -88,7 +88,7 @@ test('roles cannot reach each other’s endpoints', async () => {
 });
 
 test('employers only ever receive counts, and groups under 5 are hidden', async () => {
-  const employer = await as('recruiter@demo.ngrm.in');
+  const employer = await as('recruiter@demo.grm.in');
   for (const role of ['hr', 'data', 'dev', 'founder']) {
     const r = await employer('GET', '/api/employer/supply?role=' + role);
     assert.equal(r.status, 200);
@@ -100,8 +100,8 @@ test('employers only ever receive counts, and groups under 5 are hidden', async 
 });
 
 test('a student’s decline cannot be overridden by their mentor', async () => {
-  const student = await as('ananya@demo.ngrm.in');
-  const mentor = await as('kavya@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in');
+  const mentor = await as('kavya@demo.grm.in');
   assert.equal((await student('PATCH', '/api/me/recommendations/transversal', { action: 'decline' })).status, 200);
   const r = await mentor('PATCH', '/api/mentor/reviews/1/transversal', { action: 'approve' });
   assert.equal(r.status, 409);
@@ -109,22 +109,22 @@ test('a student’s decline cannot be overridden by their mentor', async () => {
 });
 
 test('mentors can only act on their own mentees', async () => {
-  const mentor = await as('kavya@demo.ngrm.in');
-  const other = h.get("SELECT u.id FROM users u WHERE u.role = 'student' AND u.id NOT IN (SELECT l.student_id FROM mentor_links l JOIN users m ON m.id = l.mentor_id WHERE m.email = 'kavya@demo.ngrm.in') LIMIT 1").id;
+  const mentor = await as('kavya@demo.grm.in');
+  const other = h.get("SELECT u.id FROM users u WHERE u.role = 'student' AND u.id NOT IN (SELECT l.student_id FROM mentor_links l JOIN users m ON m.id = l.mentor_id WHERE m.email = 'kavya@demo.grm.in') LIMIT 1").id;
   assert.equal((await mentor('PATCH', `/api/mentor/reviews/${other}/project`, { action: 'approve' })).status, 404);
   const ev = h.get('SELECT id FROM evidence WHERE user_id = ? LIMIT 1', other);
   if (ev) assert.equal((await mentor('POST', `/api/mentor/evidence/${ev.id}`, { action: 'verify' })).status, 404);
 });
 
 test('students cannot touch another student’s evidence', async () => {
-  const student = await as('ananya@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in');
   const foreign = h.get('SELECT id FROM evidence WHERE user_id != 1 LIMIT 1').id;
   assert.equal((await student('DELETE', '/api/me/evidence/' + foreign)).status, 404);
 });
 
 test('consent is required before a profile is stored, and under-18s need a guardian', async () => {
-  const id = Number(h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('new@demo.ngrm.in', 'New Student', 'student', 1)").lastInsertRowid);
-  const c = await as('new@demo.ngrm.in');
+  const id = Number(h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('new@demo.grm.in', 'New Student', 'student', 1)").lastInsertRowid);
+  const c = await as('new@demo.grm.in');
   const blocked = await c('GET', '/api/me/profile');
   assert.equal(blocked.status, 403); assert.match(blocked.body.error, /consent_required:profile/);
   assert.equal((await c('POST', '/api/me/consents', { purposes: { profile: true }, isAdult: false })).status, 400);
@@ -138,7 +138,7 @@ test('consent is required before a profile is stored, and under-18s need a guard
 });
 
 test('withdrawing introduction consent removes the student from opted-in counts', async () => {
-  const student = await as('ananya@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in');
   await student('PATCH', '/api/me/intro-opt-in', { optIn: true });
   assert.equal(h.get('SELECT opt_in_intros FROM profiles WHERE user_id = 1').opt_in_intros, 1);
   await student('POST', '/api/me/consents', { purposes: { introductions: false }, isAdult: true });
@@ -146,7 +146,7 @@ test('withdrawing introduction consent removes the student from opted-in counts'
 });
 
 test('every recorded score keeps its formula version and inputs', async () => {
-  const student = await as('ananya@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in');
   const r = await student('POST', '/api/me/score');
   const row = h.get('SELECT * FROM score_runs WHERE id = ?', r.body.id);
   assert.equal(row.formula_version, 'v0.4');
@@ -155,7 +155,7 @@ test('every recorded score keeps its formula version and inputs', async () => {
 });
 
 test('research export is de-identified', async () => {
-  const researcher = await as('research@demo.ngrm.in');
+  const researcher = await as('research@demo.grm.in');
   const r = await researcher('GET', '/api/research/export');
   assert.equal(r.status, 200);
   assert.ok(r.body.participants > 0);
@@ -163,17 +163,17 @@ test('research export is de-identified', async () => {
 });
 
 test('a student can export and then delete their account', async () => {
-  const c = await as('new@demo.ngrm.in');
+  const c = await as('new@demo.grm.in');
   const exp = await c('GET', '/api/me/export');
   assert.equal(exp.status, 200); assert.ok(exp.body.consents.length > 0);
   assert.equal((await c('DELETE', '/api/me', {})).status, 400);
   assert.equal((await c('DELETE', '/api/me', { confirm: 'DELETE' })).status, 200);
-  assert.equal(h.get("SELECT COUNT(*) AS n FROM users WHERE email = 'new@demo.ngrm.in'").n, 0);
+  assert.equal(h.get("SELECT COUNT(*) AS n FROM users WHERE email = 'new@demo.grm.in'").n, 0);
   assert.equal(h.get("SELECT COUNT(*) AS n FROM consents c LEFT JOIN users u ON u.id = c.user_id WHERE u.id IS NULL").n, 0);
 });
 
 test('a skill verified by assessment cannot be overwritten, and saving keeps questionnaire answers', async () => {
-  const student = await as('ananya@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in');
   const r = await student('PUT', '/api/me/profile', { prog: 'ba-psy', year: 2, cgpa: 7.6, role: 'hr', skills: [55, 100, 60, 45], clarity: 55 });
   assert.equal(r.body.profile.skills[1], 72);
   assert.deepEqual(r.body.profile.verifiedSkills, [1]);
@@ -184,7 +184,7 @@ test('a skill verified by assessment cannot be overwritten, and saving keeps que
 });
 
 test('out-of-range and junk profile values are cleaned, and a clarity of 0 counts as 0', async () => {
-  const student = await as('ananya@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in');
   const r = await student('PUT', '/api/me/profile', { prog: 'nope', year: 9, cgpa: 7.6, role: 'astronaut', skills: ['x', -5, 200, '70'], transversal: ['x', -5, 200, '70', null], otherRoles: ['astronaut', 'data', 'hr', 'ux', 'dev'], clarity: 0 });
   assert.equal(r.status, 200);
   assert.equal(r.body.profile.prog, 'ba-psy'); assert.equal(r.body.profile.year, 3); assert.equal(r.body.profile.cgpa, 7.6); assert.equal(r.body.profile.role, 'hr');
@@ -196,7 +196,7 @@ test('out-of-range and junk profile values are cleaned, and a clarity of 0 count
 });
 
 test('unchecked evidence counts at half and is capped; it never moves the confirmed score; impossible dates are refused', async () => {
-  const student = await as('ananya@demo.ngrm.in'), mentor = await as('kavya@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in'), mentor = await as('kavya@demo.grm.in');
   const before = (await student('GET', '/api/me/profile')).body.score;
   for (const completedOn of ['2031-01-01', '1900-01-01', '2026-02-31']) assert.equal((await student('POST', '/api/me/evidence', { type: 'internship', title: 'Dated oddly', completedOn })).status, 400, completedOn);
   const list = (await student('POST', '/api/me/evidence', { type: 'internship', title: 'Summer HR internship', completedOn: '2026-06-30' })).body;
@@ -219,7 +219,7 @@ test('unchecked evidence counts at half and is capped; it never moves the confir
 });
 
 test('bad mentor and admin input is refused instead of crashing', async () => {
-  const mentor = await as('kavya@demo.ngrm.in'), admin = await as('admin@demo.ngrm.in');
+  const mentor = await as('kavya@demo.grm.in'), admin = await as('admin@demo.grm.in');
   assert.equal((await mentor('PATCH', '/api/mentor/reviews/1/not-a-rule', { action: 'approve' })).status, 404);
   for (const threshold of ['abc', -5, 101, '']) assert.equal((await admin('PATCH', '/api/admin/rules/course', { threshold })).status, 400);
   assert.equal((await admin('PATCH', '/api/admin/rules/course', { threshold: 65 })).body.threshold, 65);
@@ -228,19 +228,19 @@ test('bad mentor and admin input is refused instead of crashing', async () => {
 });
 
 test('the counsellor option is always offered', async () => {
-  const student = await as('ananya@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in');
   const items = (await student('GET', '/api/me/recommendations')).body.items;
   assert.ok(items.some((x) => x.id === 'counsellor' && x.always));
 });
 
 test('admins add colleges and people; a bad line saves nothing', async () => {
-  const admin = await as('admin@demo.ngrm.in');
+  const admin = await as('admin@demo.grm.in');
   assert.equal((await admin('POST', '/api/admin/orgs', { kind: 'institution', name: 'Pilot University', city: 'Tumakuru' })).status, 201);
   assert.equal((await admin('POST', '/api/admin/orgs', { kind: 'institution', name: 'pilot university', city: 'X' })).status, 409);
   const bad = await admin('POST', '/api/admin/users', { rows: [{ name: 'Good One', email: 'good@pilot.edu', role: 'student', org: 'Pilot University' }, { name: 'Bad', email: 'nope', role: 'student', org: 'Pilot University' }] });
   assert.equal(bad.status, 400); assert.match(bad.body.error, /Line 2/);
   assert.equal(h.get("SELECT COUNT(*) AS n FROM users WHERE email = 'good@pilot.edu'").n, 0);
-  const wrongCollege = await admin('POST', '/api/admin/users', { rows: [{ name: 'S', email: 's@pilot.edu', role: 'student', org: 'Pilot University', mentorEmail: 'kavya@demo.ngrm.in' }] });
+  const wrongCollege = await admin('POST', '/api/admin/users', { rows: [{ name: 'S', email: 's@pilot.edu', role: 'student', org: 'Pilot University', mentorEmail: 'kavya@demo.grm.in' }] });
   assert.match(wrongCollege.body.error, /different college/);
   const ok = await admin('POST', '/api/admin/users', { rows: [{ name: 'Pilot Mentor', email: 'mentor@pilot.edu', role: 'mentor', org: 'Pilot University' }, { name: 'Pilot Student', email: 'Student@Pilot.edu', role: 'student', org: 'Pilot University', mentorEmail: 'mentor@pilot.edu' }] });
   assert.equal(ok.status, 201); assert.equal(ok.body.added, 2);
@@ -248,12 +248,12 @@ test('admins add colleges and people; a bad line saves nothing', async () => {
   const student = client();
   const code = (await student('POST', '/api/auth/request-code', { email: 'student@pilot.edu' })).body.devCode;
   assert.equal((await student('POST', '/api/auth/verify', { email: 'student@pilot.edu', code })).status, 200);
-  const placement = await as('placement@demo.ngrm.in');
+  const placement = await as('placement@demo.grm.in');
   assert.equal((await placement('POST', '/api/admin/users', { rows: [{ name: 'X', email: 'x@x.in', role: 'admin' }] })).status, 403, 'only admins add people');
 });
 
 test('introductions: one request per role a month, students reply, only their placement cell sees who', async () => {
-  const employer = await as('recruiter@demo.ngrm.in'), placement = await as('placement@demo.ngrm.in'), student = await as('ananya@demo.ngrm.in');
+  const employer = await as('recruiter@demo.grm.in'), placement = await as('placement@demo.grm.in'), student = await as('ananya@demo.grm.in');
   assert.equal((await employer('POST', '/api/employer/intros', { role: 'hr' })).status, 201);
   assert.equal((await employer('POST', '/api/employer/intros', { role: 'hr' })).status, 409);
   assert.deepEqual((await student('GET', '/api/me/intro-requests')).body, { optedIn: false, requests: [] });
@@ -276,10 +276,10 @@ test('introductions: one request per role a month, students reply, only their pl
 });
 
 test('college views leave out programmes under 5, so no single score can be worked out', async () => {
-  const id = Number(h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('solo@demo.ngrm.in', 'Solo BBA', 'student', 1)").lastInsertRowid);
+  const id = Number(h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('solo@demo.grm.in', 'Solo BBA', 'student', 1)").lastInsertRowid);
   h.run("INSERT INTO consents (user_id, purpose, granted, is_adult) VALUES (?, 'profile', 1, 1)", id);
   h.run("INSERT INTO profiles (user_id, programme, year, cgpa, target_role) VALUES (?, 'bba', 1, 9.9, 'hr')", id);
-  const placement = await as('placement@demo.ngrm.in');
+  const placement = await as('placement@demo.grm.in');
   const all = (await placement('GET', '/api/college/cohort?programme=all')).body;
   const parts = await Promise.all(['ba-psy', 'bcom', 'bsc-cs', 'bba', 'btech', 'ba-jour'].map((p) => placement('GET', '/api/college/cohort?programme=' + p)));
   const sum = parts.reduce((t, r) => t + (r.body.n || 0), 0);
@@ -290,7 +290,7 @@ test('college views leave out programmes under 5, so no single score can be work
 });
 
 test('changing aspired role starts a fresh plan; a partial save keeps other fields', async () => {
-  const student = await as('ananya@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in');
   await student('PATCH', '/api/me/recommendations/internship', { action: 'accept' });
   assert.ok(h.get("SELECT COUNT(*) AS n FROM recommendation_states WHERE user_id = 1").n > 0);
   const kept = await student('PUT', '/api/me/profile', { cgpa: 7.6 });
@@ -303,8 +303,8 @@ test('changing aspired role starts a fresh plan; a partial save keeps other fiel
 });
 
 test('an under-18 student keeps their guardian on record and cannot opt in without one', async () => {
-  h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('minor@demo.ngrm.in', 'Minor Student', 'student', 1)");
-  const c = await as('minor@demo.ngrm.in');
+  h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('minor@demo.grm.in', 'Minor Student', 'student', 1)");
+  const c = await as('minor@demo.grm.in');
   await c('POST', '/api/me/consents', { purposes: { profile: true }, isAdult: false, guardianName: 'Parent Name' });
   const cons = (await c('GET', '/api/me/consents')).body;
   assert.equal(cons.isAdult, false); assert.equal(cons.guardianName, 'Parent Name');
@@ -312,30 +312,30 @@ test('an under-18 student keeps their guardian on record and cannot opt in witho
   assert.equal((await c('PATCH', '/api/me/intro-opt-in', { optIn: true })).status, 200);
   const row = h.get("SELECT is_adult, guardian_name FROM consents WHERE purpose = 'introductions' ORDER BY id DESC LIMIT 1");
   assert.equal(row.is_adult, 0); assert.equal(row.guardian_name, 'Parent Name');
-  h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('minor2@demo.ngrm.in', 'Minor Two', 'student', 1)");
-  const c2 = await as('minor2@demo.ngrm.in');
-  const id2 = h.get("SELECT id FROM users WHERE email = 'minor2@demo.ngrm.in'").id;
+  h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('minor2@demo.grm.in', 'Minor Two', 'student', 1)");
+  const c2 = await as('minor2@demo.grm.in');
+  const id2 = h.get("SELECT id FROM users WHERE email = 'minor2@demo.grm.in'").id;
   h.run("INSERT INTO consents (user_id, purpose, granted, is_adult) VALUES (?, 'profile', 1, 0)", id2);
   await c2('GET', '/api/me/profile');
   assert.equal((await c2('PATCH', '/api/me/intro-opt-in', { optIn: true })).status, 400);
 });
 
 test('the data export includes study baselines and introduction replies', async () => {
-  const student = await as('ananya@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in');
   const exp = (await student('GET', '/api/me/export')).body;
   assert.ok(Array.isArray(exp.studyBaselines)); assert.ok(Array.isArray(exp.introductionReplies));
 });
 
 test('the counsellor referral cannot be switched off', async () => {
-  const admin = await as('admin@demo.ngrm.in');
+  const admin = await as('admin@demo.grm.in');
   assert.equal((await admin('PATCH', '/api/admin/rules/counsellor', { active: false })).status, 400);
   assert.equal((await admin('PATCH', '/api/admin/rules/counsellor', { threshold: 50 })).status, 200);
   await admin('PATCH', '/api/admin/rules/counsellor', { threshold: 40 });
 });
 
 test('admins can find and remove accounts, including a mentor with past reviews, but not themselves', async () => {
-  const admin = await as('admin@demo.ngrm.in');
-  await admin('POST', '/api/admin/users', { rows: [{ name: 'Leaving Mentor', email: 'leaving@demo.ngrm.in', role: 'mentor', org: 'Sample College, Bengaluru' }] });
+  const admin = await as('admin@demo.grm.in');
+  await admin('POST', '/api/admin/users', { rows: [{ name: 'Leaving Mentor', email: 'leaving@demo.grm.in', role: 'mentor', org: 'Sample College, Bengaluru' }] });
   const found = (await admin('GET', '/api/admin/people?q=leaving')).body.recent;
   assert.equal(found.length, 1);
   const mid = found[0].id;
@@ -343,7 +343,7 @@ test('admins can find and remove accounts, including a mentor with past reviews,
   h.run("INSERT OR REPLACE INTO recommendation_states (user_id, rule_id, mentor_status, mentor_note, mentor_id) VALUES (1, 'cocurricular', 'approved', 'Yes', ?)", mid);
   assert.equal((await admin('DELETE', '/api/admin/users/' + mid)).status, 200);
   assert.equal(h.get("SELECT mentor_id, mentor_note FROM recommendation_states WHERE user_id = 1 AND rule_id = 'cocurricular'").mentor_note, 'Yes', 'the review text stays with the student');
-  const self = h.get("SELECT id FROM users WHERE email = 'admin@demo.ngrm.in'").id;
+  const self = h.get("SELECT id FROM users WHERE email = 'admin@demo.grm.in'").id;
   assert.equal((await admin('DELETE', '/api/admin/users/' + self)).status, 400);
 });
 
@@ -372,7 +372,7 @@ test('AI wording: only with consent, never sees name or email, cached, unsafe te
   };
   process.env.GEMINI_API_KEY = 'test-key';
   try {
-    const student = await as('ananya@demo.ngrm.in');
+    const student = await as('ananya@demo.grm.in');
     await student('POST', '/api/me/consents', { purposes: { ai_wording: false }, isAdult: true });
     let items = (await student('GET', '/api/me/recommendations')).body.items;
     assert.ok(items.every((x) => x.aiWhy === null)); assert.equal(sent.length, 0, 'nothing sent without consent');
@@ -392,8 +392,8 @@ test('AI wording: only with consent, never sees name or email, cached, unsafe te
 });
 
 test('the study baseline is recorded once, and researchers count people, not rows', async () => {
-  h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('study@demo.ngrm.in', 'Study Student', 'student', 1)");
-  const c = await as('study@demo.ngrm.in');
+  h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('study@demo.grm.in', 'Study Student', 'student', 1)");
+  const c = await as('study@demo.grm.in');
   await c('POST', '/api/me/consents', { purposes: { profile: true, study: true }, isAdult: true });
   // A new student starts with nothing filled in, and nothing can be recorded until they say what they study and aim for.
   assert.deepEqual((await c('GET', '/api/me/profile')).body, { needsSetup: true });
@@ -405,12 +405,12 @@ test('the study baseline is recorded once, and researchers count people, not row
   assert.equal((await c('POST', '/api/me/baseline')).status, 201);
   const again = await c('POST', '/api/me/baseline');
   assert.equal(again.status, 409); assert.match(again.body.error, /only once/);
-  const r = (await (await as('research@demo.ngrm.in'))('GET', '/api/research/export')).body;
+  const r = (await (await as('research@demo.grm.in'))('GET', '/api/research/export')).body;
   assert.equal(r.participants, new Set(r.rows.map((x) => x.participant)).size);
 });
 
 test('mentors record college assessments; the student cannot overwrite or delete them', async () => {
-  const mentor = await as('kavya@demo.ngrm.in'), student = await as('ananya@demo.ngrm.in');
+  const mentor = await as('kavya@demo.grm.in'), student = await as('ananya@demo.grm.in');
   assert.equal((await mentor('POST', '/api/mentor/assessments', { studentId: 1, what: 3, value: 150 })).status, 400);
   assert.equal((await mentor('POST', '/api/mentor/assessments', { studentId: 1, what: 9, value: 50 })).status, 400);
   const other = h.get("SELECT u.id FROM users u WHERE u.role = 'student' AND u.id NOT IN (SELECT student_id FROM mentor_links) LIMIT 1").id;
@@ -448,11 +448,11 @@ test('one network cannot flood inboxes with sign-in codes', async () => {
 });
 
 test('names like "toString" are never accepted as roles, types or purposes', async () => {
-  const student = await as('ananya@demo.ngrm.in'), employer = await as('recruiter@demo.ngrm.in'), admin = await as('admin@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in'), employer = await as('recruiter@demo.grm.in'), admin = await as('admin@demo.grm.in');
   const r = await student('PUT', '/api/me/profile', { role: 'toString' });
   assert.equal(r.status, 200); assert.equal(r.body.profile.role, 'hr');
   assert.equal((await student('GET', '/api/me/recommendations')).status, 200);
-  assert.equal((await (await as('kavya@demo.ngrm.in'))('GET', '/api/mentor/queue')).status, 200);
+  assert.equal((await (await as('kavya@demo.grm.in'))('GET', '/api/mentor/queue')).status, 200);
   assert.equal((await employer('POST', '/api/employer/demand', { role: 'toString', skills: [], openings: 1 })).status, 400);
   assert.equal((await employer('GET', '/api/employer/supply?role=constructor')).status, 400);
   assert.equal((await student('POST', '/api/me/consents', { purposes: { constructor: true } })).status, 400);
@@ -461,8 +461,8 @@ test('names like "toString" are never accepted as roles, types or purposes', asy
 });
 
 test('questionnaire answers are never invented: traits count only once all 20 are answered', async () => {
-  h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('fresh@demo.ngrm.in', 'Fresh Student', 'student', 1)");
-  const c = await as('fresh@demo.ngrm.in');
+  h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('fresh@demo.grm.in', 'Fresh Student', 'student', 1)");
+  const c = await as('fresh@demo.grm.in');
   await c('POST', '/api/me/consents', { purposes: { profile: true, psychometric: true }, isAdult: true });
   let r = await c('PUT', '/api/me/profile', { prog: 'ba-psy', year: 1, role: 'hr', cgpa: 8 });
   assert.equal(r.body.profile.ocean, null); assert.equal(r.body.score.factors.socioemotional, null); assert.equal(r.body.score.factors.transversal, null);
@@ -481,46 +481,46 @@ test('questionnaire answers are never invented: traits count only once all 20 ar
 });
 
 test('withdrawing questionnaire consent removes the answers from recorded scores and the study baseline too', async () => {
-  const c = await as('fresh@demo.ngrm.in');
+  const c = await as('fresh@demo.grm.in');
   await c('POST', '/api/me/consents', { purposes: { study: true } });
   await c('POST', '/api/me/score'); await c('POST', '/api/me/baseline');
   await c('POST', '/api/me/consents', { purposes: { psychometric: false } });
-  const id = h.get("SELECT id FROM users WHERE email = 'fresh@demo.ngrm.in'").id;
+  const id = h.get("SELECT id FROM users WHERE email = 'fresh@demo.grm.in'").id;
   for (const r of h.all('SELECT inputs_json, factors_json FROM score_runs WHERE user_id = ?', id)) {
     assert.equal(JSON.parse(r.inputs_json).profile.ocean, 'withdrawn'); assert.equal(JSON.parse(r.factors_json).socioemotional, null);
   }
   const exp = (await c('GET', '/api/me/export')).body;
   assert.ok(exp.scoreRuns.length >= 2 && exp.scoreRuns.every((s) => s.inputs && s.inputs.profile));
-  const ananya = (await (await as('ananya@demo.ngrm.in'))('GET', '/api/me/export')).body;
+  const ananya = (await (await as('ananya@demo.grm.in'))('GET', '/api/me/export')).body;
   const reviewed = ananya.recommendationDecisions.find((d) => d.rule_id === 'project');
   assert.equal(reviewed.mentor_name, 'Dr. Kavya S.', 'export names the mentor who reviewed');
 });
 
 test('consent changes that do not mention age keep an under-18 student as under 18', async () => {
-  const c = await as('minor@demo.ngrm.in');
+  const c = await as('minor@demo.grm.in');
   const r = await c('POST', '/api/me/consents', { purposes: { ai_wording: true } });
   assert.equal(r.body.isAdult, false); assert.equal(r.body.guardianName, 'Parent Name');
 });
 
 test('college views cannot be compared before and after one student leaves', async () => {
-  const placement = await as('placement@demo.ngrm.in');
+  const placement = await as('placement@demo.grm.in');
   const before = (await placement('GET', '/api/college/cohort?programme=ba-psy')).body;
   assert.equal(before.n % 5, 0); assert.ok(Number.isInteger(before.avgIndex));
   for (const v of Object.values(before.factors)) assert.ok(Number.isInteger(v));
   assert.ok(before.noInternshipPct === null || before.noInternshipPct % 5 === 0);
   // One student withdrawing changes nothing visible, so their figures cannot be subtracted out.
-  const student = await as('ananya@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in');
   await student('POST', '/api/me/consents', { purposes: { profile: false } });
   const after = (await placement('GET', '/api/college/cohort?programme=ba-psy')).body;
   await student('POST', '/api/me/consents', { purposes: { profile: true } });
   const nb = before.n * before.avgIndex, na = after.n * after.avgIndex;
   assert.ok(after.n === before.n || Math.abs(nb - na) > 100, 'either nothing changed or the difference is meaningless');
-  const sup = (await (await as('recruiter@demo.ngrm.in'))('GET', '/api/employer/supply?role=hr')).body;
+  const sup = (await (await as('recruiter@demo.grm.in'))('GET', '/api/employer/supply?role=hr')).body;
   for (const k of sup.skills || []) assert.ok(k.sharePct === null || k.sharePct % 5 === 0);
 });
 
 test('replies to introduction requests older than 90 days are refused', async () => {
-  const student = await as('ananya@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in');
   await student('PATCH', '/api/me/intro-opt-in', { optIn: true });
   const old = Number(h.run("INSERT INTO intro_requests (employer_id, role, created_at) VALUES (1, 'hr', datetime('now', '-120 days'))").lastInsertRowid);
   assert.equal((await student('POST', '/api/me/intro-requests/' + old, { interested: true })).status, 404);
@@ -541,11 +541,11 @@ test('production refuses a short or example session secret', () => {
 });
 
 test('proof files: real PDF/PNG/JPEG only, private to the student and their mentor, deleted with the item', async () => {
-  const student = await as('ananya@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in');
   const list = (await student('POST', '/api/me/evidence', { type: 'certificate', title: 'Excel certificate' })).body;
   const id = list[list.length - 1].id;
   const cookieOf = async (email) => (await fetch(base + '/api/auth/demo', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email }) })).headers.get('set-cookie').split(';')[0];
-  const A = await cookieOf('ananya@demo.ngrm.in'), K = await cookieOf('kavya@demo.ngrm.in'), E = await cookieOf('recruiter@demo.ngrm.in'), P = await cookieOf('placement@demo.ngrm.in');
+  const A = await cookieOf('ananya@demo.grm.in'), K = await cookieOf('kavya@demo.grm.in'), E = await cookieOf('recruiter@demo.grm.in'), P = await cookieOf('placement@demo.grm.in');
   const put = (body, type, cookie = A) => fetch(base + `/api/me/evidence/${id}/file`, { method: 'PUT', headers: { cookie, 'content-type': type, 'x-file-name': encodeURIComponent('my "cert"/../x.pdf') }, body });
   assert.equal((await put(Buffer.from('<script>alert(1)</script>'), 'application/pdf')).status, 400, 'fake PDF refused');
   assert.equal((await put(Buffer.from('hello'), 'text/html')).status, 400, 'other types refused');
@@ -580,16 +580,16 @@ test('sign-in codes are emailed through the configured provider, and the code is
 });
 
 test('admins can set, change and clear a student\'s mentor, only within the same college', async () => {
-  const admin = await as('admin@demo.ngrm.in');
+  const admin = await as('admin@demo.grm.in');
   const sid = h.get("SELECT u.id FROM users u WHERE u.role = 'student' AND u.institution_id = 1 AND u.id NOT IN (SELECT student_id FROM mentor_links) LIMIT 1").id;
   assert.equal((await admin('PUT', `/api/admin/users/${sid}/mentor`, { mentorEmail: 'nobody@x.in' })).status, 400);
   assert.equal((await admin('PUT', `/api/admin/users/${sid}/mentor`, { mentorEmail: 'mentor@pilot.edu' })).status, 400, 'other college refused');
-  assert.equal((await admin('PUT', `/api/admin/users/${sid}/mentor`, { mentorEmail: 'Kavya@demo.ngrm.in' })).body.mentor, 'kavya@demo.ngrm.in');
+  assert.equal((await admin('PUT', `/api/admin/users/${sid}/mentor`, { mentorEmail: 'Kavya@demo.grm.in' })).body.mentor, 'kavya@demo.grm.in');
   assert.equal(h.get('SELECT COUNT(*) AS n FROM mentor_links WHERE student_id = ?', sid).n, 1);
-  assert.equal((await admin('GET', '/api/admin/people?q=' + encodeURIComponent(h.get('SELECT email FROM users WHERE id = ?', sid).email))).body.recent[0].mentor, 'kavya@demo.ngrm.in');
+  assert.equal((await admin('GET', '/api/admin/people?q=' + encodeURIComponent(h.get('SELECT email FROM users WHERE id = ?', sid).email))).body.recent[0].mentor, 'kavya@demo.grm.in');
   assert.equal((await admin('PUT', `/api/admin/users/${sid}/mentor`, { mentorEmail: '' })).body.mentor, null);
   assert.equal(h.get('SELECT COUNT(*) AS n FROM mentor_links WHERE student_id = ?', sid).n, 0);
-  assert.equal((await (await as('kavya@demo.ngrm.in'))('PUT', `/api/admin/users/${sid}/mentor`, { mentorEmail: '' })).status, 403);
+  assert.equal((await (await as('kavya@demo.grm.in'))('PUT', `/api/admin/users/${sid}/mentor`, { mentorEmail: '' })).status, 403);
 });
 
 test('course steps carry real, checked courses for the exact weak skill, plus live search links', async () => {
@@ -597,7 +597,7 @@ test('course steps carry real, checked courses for the exact weak skill, plus li
   const catalogue = require('../server/courses');
   assert.ok(catalogue.length >= 20);
   for (const [role, idx, title, provider, url] of catalogue) { assert.ok(title && provider && /^https:\/\//.test(url)); assert.ok(D.ROLES[role].skills[idx]); }
-  const student = await as('ananya@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in');
   // The course step works on the biggest gap to the role's target, weighted up by employer demand. With equal gaps
   // (Excel 55 and labour law 45 against targets 70 and 60), the skill employers posted for more wins.
   const p0 = { role: 'hr', skills: [55, 72, 60, 45], skillsRated: [true, true, true, true] };
@@ -609,7 +609,7 @@ test('course steps carry real, checked courses for the exact weak skill, plus li
   assert.equal(course.learn.skill, 'Labour law basics');
   assert.ok(course.learn.courses.some((c) => c.title === 'Legal Essentials for Human Resource Management'));
   assert.ok(course.learn.searches.length >= 3 && course.learn.searches.every((s) => s.url.startsWith('https://') && /Labour%20law%20basics/.test(s.url)));
-  const admin = await as('admin@demo.ngrm.in');
+  const admin = await as('admin@demo.grm.in');
   assert.equal((await admin('POST', '/api/admin/courses', { role: 'hr', skillIndex: 3, title: 'X', provider: 'Y', url: 'javascript:alert(1)' })).status, 400);
   assert.equal((await student('GET', '/api/admin/courses')).status, 403);
   const added = await admin('POST', '/api/admin/courses', { role: 'hr', skillIndex: 3, title: 'New labour codes', provider: 'Test', url: 'https://example.org/c', weeks: 4 });
@@ -653,7 +653,7 @@ test('live course feed: fetched once a day per skill, shown on the course step, 
     mode = 'down'; await assert.rejects(feeds.refresh('Labour law basics')); assert.equal(feeds.status().ok, 0);
     mode = 'odd'; await assert.rejects(feeds.refresh('Labour law basics'));
     assert.equal(feeds.forSkill('Labour law basics').courses.length, 1, 'a failure keeps the last good list');
-    const student = await as('ananya@demo.ngrm.in');
+    const student = await as('ananya@demo.grm.in');
     const step = (await student('GET', '/api/me/recommendations')).body.items.find((x) => x.id === 'course');
     assert.equal(step.learn.live[0].url, 'https://www.coursera.org/learn/employment-law');
     assert.equal(step.learn.demand.skill, 'Labour law basics');
@@ -662,7 +662,7 @@ test('live course feed: fetched once a day per skill, shown on the course step, 
 });
 
 test('live activity: exact for admins, rounded and college-only for placement cells, closed to everyone else', async () => {
-  const admin = await as('admin@demo.ngrm.in'), placement = await as('placement@demo.ngrm.in'), student = await as('ananya@demo.ngrm.in'), employer = await as('recruiter@demo.ngrm.in');
+  const admin = await as('admin@demo.grm.in'), placement = await as('placement@demo.grm.in'), student = await as('ananya@demo.grm.in'), employer = await as('recruiter@demo.grm.in');
   const before = (await admin('GET', '/api/admin/activity')).body;
   await student('PUT', '/api/me/profile', { clarity: 56 });
   assert.equal((await student('POST', '/api/me/score')).body.alreadyRecorded, undefined);
@@ -682,7 +682,7 @@ test('live activity: exact for admins, rounded and college-only for placement ce
 
 test('passwords: optional for every role, hashed, guess-limited, and reset by emailed code', async () => {
   const pw = 'river stones at dawn';
-  for (const email of ['ananya@demo.ngrm.in', 'kavya@demo.ngrm.in', 'placement@demo.ngrm.in', 'recruiter@demo.ngrm.in', 'research@demo.ngrm.in', 'admin@demo.ngrm.in']) {
+  for (const email of ['ananya@demo.grm.in', 'kavya@demo.grm.in', 'placement@demo.grm.in', 'recruiter@demo.grm.in', 'research@demo.grm.in', 'admin@demo.grm.in']) {
     const c = await as(email);
     assert.equal((await c('GET', '/api/me')).body.user.hasPassword, false);
     assert.equal((await c('POST', '/api/me/password', { password: pw })).status, 200, email);
@@ -690,33 +690,33 @@ test('passwords: optional for every role, hashed, guess-limited, and reset by em
     const r = await fresh('POST', '/api/auth/password', { email: email.toUpperCase(), password: pw });
     assert.equal(r.status, 200); assert.equal((await fresh('GET', '/api/me')).body.user.signedInWith, 'password');
   }
-  const stored = h.get("SELECT p.hash FROM passwords p JOIN users u ON u.id = p.user_id WHERE u.email = 'ananya@demo.ngrm.in'").hash;
+  const stored = h.get("SELECT p.hash FROM passwords p JOIN users u ON u.id = p.user_id WHERE u.email = 'ananya@demo.grm.in'").hash;
   assert.ok(stored.startsWith('scrypt$') && !stored.includes(pw), 'only a salted hash is stored');
   const c = client();
-  for (const bad of ['short', 'aaaaaaaaaaaa', 'ananya-ananya-1']) { const s = await as('ananya@demo.ngrm.in'); assert.equal((await s('POST', '/api/me/password', { password: bad })).status, 400, bad); }
+  for (const bad of ['short', 'aaaaaaaaaaaa', 'ananya-ananya-1']) { const s = await as('ananya@demo.grm.in'); assert.equal((await s('POST', '/api/me/password', { password: bad })).status, 400, bad); }
   // Unknown email, account without password, and wrong password all get the same answer.
-  const wrong = await c('POST', '/api/auth/password', { email: 'ananya@demo.ngrm.in', password: 'not the password' });
+  const wrong = await c('POST', '/api/auth/password', { email: 'ananya@demo.grm.in', password: 'not the password' });
   const ghost = await c('POST', '/api/auth/password', { email: 'ghost@example.com', password: 'not the password' });
   assert.equal(wrong.status, 400); assert.deepEqual(wrong.body, ghost.body);
   // Signed in by password: changing it needs the current one.
-  const viaPw = client(); await viaPw('POST', '/api/auth/password', { email: 'kavya@demo.ngrm.in', password: pw });
+  const viaPw = client(); await viaPw('POST', '/api/auth/password', { email: 'kavya@demo.grm.in', password: pw });
   assert.equal((await viaPw('POST', '/api/me/password', { password: 'a different long one', current: 'wrong' })).status, 400);
   assert.equal((await viaPw('POST', '/api/me/password', { password: 'a different long one', current: pw })).status, 200);
-  const old = client(); assert.equal((await old('POST', '/api/auth/password', { email: 'kavya@demo.ngrm.in', password: pw })).status, 400, 'old password stops working');
+  const old = client(); assert.equal((await old('POST', '/api/auth/password', { email: 'kavya@demo.grm.in', password: pw })).status, 400, 'old password stops working');
   // Forgot it: an emailed-code sign-in can set a new one without the old.
-  const viaCode = await as('kavya@demo.ngrm.in');
+  const viaCode = await as('kavya@demo.grm.in');
   assert.equal((await viaCode('POST', '/api/me/password', { password: 'reset after forgetting' })).status, 200);
   assert.equal((await viaPw('GET', '/api/me')).body.user, null, 'other devices are signed out when the password changes');
   // Five wrong tries lock password sign-in for that email; the right password is refused until the wait is over.
   const g = client(); let last;
-  for (let i = 0; i < 6; i++) last = await g('POST', '/api/auth/password', { email: 'research@demo.ngrm.in', password: 'guess number ' + i });
+  for (let i = 0; i < 6; i++) last = await g('POST', '/api/auth/password', { email: 'research@demo.grm.in', password: 'guess number ' + i });
   assert.equal(last.status, 429);
-  assert.equal((await g('POST', '/api/auth/password', { email: 'research@demo.ngrm.in', password: pw })).status, 429);
+  assert.equal((await g('POST', '/api/auth/password', { email: 'research@demo.grm.in', password: pw })).status, 429);
   h.run('DELETE FROM login_failures'); h.run('DELETE FROM passwords');
 });
 
 test('CGPA and career clarity can be corrected but not cleared, so a low value cannot be hidden', async () => {
-  const student = await as('ananya@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in');
   const r = await student('PUT', '/api/me/profile', { cgpa: '', clarity: '' });
   assert.equal(r.body.profile.cgpa, 7.6); assert.equal(r.body.profile.clarity, 55);
   assert.equal((await student('PUT', '/api/me/profile', { cgpa: 7.7 })).body.profile.cgpa, 7.7);
@@ -724,7 +724,7 @@ test('CGPA and career clarity can be corrected but not cleared, so a low value c
 });
 
 test('students cannot mark their own ratings as assessed; employer openings must be a real number', async () => {
-  const student = await as('ananya@demo.ngrm.in'), employer = await as('recruiter@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in'), employer = await as('recruiter@demo.grm.in');
   const before = (await student('GET', '/api/me/profile')).body;
   const r = await student('PUT', '/api/me/profile', { comm: 100, transversalVerified: [true, true, true, true, true], skillsVerified: [true, true, true, true] });
   assert.deepEqual(r.body.profile.transversalVerified, before.profile.transversalVerified); assert.deepEqual(r.body.profile.skillsVerified, before.profile.skillsVerified);
@@ -733,13 +733,13 @@ test('students cannot mark their own ratings as assessed; employer openings must
 });
 
 test('the research export gives scores in bands of 5, so a known CGPA cannot pick out one record', async () => {
-  const rows = (await (await as('research@demo.ngrm.in'))('GET', '/api/research/export')).body.rows;
+  const rows = (await (await as('research@demo.grm.in'))('GET', '/api/research/export')).body.rows;
   assert.ok(rows.length > 20);
   for (const r of rows) { assert.equal(r.index % 5, 0); for (const v of Object.values(r.factors)) assert.ok(v === null || v % 5 === 0); }
 });
 
 test('an employer cannot flood demand: 3 posts and 500 openings per role in 90 days, and posts can be withdrawn', async () => {
-  const employer = await as('recruiter@demo.ngrm.in'), student = await as('ananya@demo.ngrm.in');
+  const employer = await as('recruiter@demo.grm.in'), student = await as('ananya@demo.grm.in');
   h.run("DELETE FROM demand_posts WHERE employer_id = 1 AND role = 'marketing'");
   const post = (openings) => employer('POST', '/api/employer/demand', { role: 'marketing', skills: ['Market research'], openings });
   assert.equal((await post(300)).status, 201);
@@ -757,14 +757,14 @@ test('an employer cannot flood demand: 3 posts and 500 openings per role in 90 d
 });
 
 test('a student cannot flood their mentor: 10 items waiting at most', async () => {
-  h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('flood@demo.ngrm.in', 'Flood Tester', 'student', 1)");
-  const c = await as('flood@demo.ngrm.in'); await c('POST', '/api/me/consents', { purposes: { profile: true }, isAdult: true });
+  h.run("INSERT INTO users (email, name, role, institution_id) VALUES ('flood@demo.grm.in', 'Flood Tester', 'student', 1)");
+  const c = await as('flood@demo.grm.in'); await c('POST', '/api/me/consents', { purposes: { profile: true }, isAdult: true });
   const codes = []; for (let i = 0; i < 12; i++) codes.push((await c('POST', '/api/me/evidence', { type: 'certificate', title: 'Certificate ' + i })).status);
   assert.deepEqual(codes, [...Array(10).fill(201), 409, 409]);
 });
 
 test('weak passwords, out-of-range CGPA, unknown roles and missing pages are refused plainly', async () => {
-  const student = await as('ananya@demo.ngrm.in'), employer = await as('recruiter@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in'), employer = await as('recruiter@demo.grm.in');
   for (const pw of ['password123', 'Qwerty@2026!', '1234567890123', 'welcome-ngrm-1']) assert.equal((await student('POST', '/api/me/password', { password: pw })).status, 400, pw);
   for (const cgpa of [11, -1, 'abc']) assert.equal((await student('PUT', '/api/me/profile', { cgpa })).status, 400, String(cgpa));
   assert.equal((await student('GET', '/api/me/profile')).body.profile.cgpa, 7.6);
@@ -775,7 +775,7 @@ test('weak passwords, out-of-range CGPA, unknown roles and missing pages are ref
 });
 
 test('research export: no record stands alone on programme, year, role and rough CGPA', async () => {
-  const rows = (await (await as('research@demo.ngrm.in'))('GET', '/api/research/export')).body.rows;
+  const rows = (await (await as('research@demo.grm.in'))('GET', '/api/research/export')).body.rows;
   const count = (key) => { const m = {}; for (const r of rows) m[key(r)] = (m[key(r)] || 0) + 1; return m; };
   const q = (r) => [r.programme, r.year, r.targetRole].join('|');
   assert.ok(Object.values(count(q)).every((n) => n >= 5), 'every programme/year/role group has at least 5');
@@ -814,7 +814,7 @@ test('sign-up: a student confirms their email and gets an account with the passw
 });
 
 test('sign-up: staff and employers wait for an admin, and five wrong codes lock the request', async () => {
-  const c = client(), admin = await as('admin@demo.ngrm.in'), pw = 'seven green window kites';
+  const c = client(), admin = await as('admin@demo.grm.in'), pw = 'seven green window kites';
   const start = await c('POST', '/api/auth/sign-up', { role: 'employer', name: 'Ravi Menon', email: 'ravi@newfirm.example', orgName: 'Newfirm Analytics', password: pw });
   assert.equal(start.status, 200);
   const v = await c('POST', '/api/auth/sign-up/verify', { email: 'ravi@newfirm.example', code: start.body.devCode });
@@ -828,7 +828,7 @@ test('sign-up: staff and employers wait for an admin, and five wrong codes lock 
   h.run('DELETE FROM otp_requests');
   await client()('POST', '/api/auth/sign-up', { role: 'researcher', name: 'Impostor', email: 'ravi@newfirm.example', password: 'different long pass phrase' });
   assert.equal(h.get('SELECT name FROM signups WHERE email = ?', 'ravi@newfirm.example').name, 'Ravi Menon');
-  assert.equal((await (await as('ananya@demo.ngrm.in'))('GET', '/api/admin/signups')).status, 403);
+  assert.equal((await (await as('ananya@demo.grm.in'))('GET', '/api/admin/signups')).status, 403);
   const list = (await admin('GET', '/api/admin/signups')).body;
   assert.equal(list.length, 1); assert.equal(list[0].org, 'Newfirm Analytics'); assert.equal(list[0].pw_hash, undefined);
   assert.equal((await admin('POST', '/api/admin/signups/decide', { email: 'ravi@newfirm.example', approve: true })).status, 200);
@@ -868,8 +868,8 @@ test('default mode: email and password only, with no codes anywhere', async () =
   try {
     const c = mk(), inst = h2.get('SELECT id FROM institutions LIMIT 1').id, pw = 'four quiet mango trains';
     assert.equal((await c('GET', '/api/meta')).body.emailCodes, false);
-    assert.equal((await c('POST', '/api/auth/request-code', { email: 'ananya@demo.ngrm.in' })).status, 404);
-    assert.equal((await c('POST', '/api/auth/verify', { email: 'ananya@demo.ngrm.in', code: '123456' })).status, 404);
+    assert.equal((await c('POST', '/api/auth/request-code', { email: 'ananya@demo.grm.in' })).status, 404);
+    assert.equal((await c('POST', '/api/auth/verify', { email: 'ananya@demo.grm.in', code: '123456' })).status, 404);
     // A student signs up and is in at once.
     const up = await c('POST', '/api/auth/sign-up', { role: 'student', name: 'Meera Nair', email: 'meera@newcollege.edu', institutionId: inst, password: pw });
     assert.equal(up.status, 200); assert.equal(up.body.user.role, 'student'); assert.equal(up.body.devCode, undefined);
@@ -881,7 +881,7 @@ test('default mode: email and password only, with no codes anywhere', async () =
     assert.equal((await staff('GET', '/api/me')).body.user, null);
     assert.equal((await staff('POST', '/api/auth/password', { email: 'mentor@newcollege.edu', password: pw })).status, 403);
     assert.equal((await mk()('POST', '/api/auth/sign-up', { role: 'mentor', name: 'Impostor', email: 'mentor@newcollege.edu', institutionId: inst, password: 'another long pass phrase' })).status, 409);
-    const admin = mk(); await admin('POST', '/api/auth/demo', { email: 'admin@demo.ngrm.in' });
+    const admin = mk(); await admin('POST', '/api/auth/demo', { email: 'admin@demo.grm.in' });
     assert.equal((await admin('POST', '/api/admin/signups/decide', { email: 'mentor@newcollege.edu', approve: true })).status, 200);
     assert.equal((await staff('POST', '/api/auth/password', { email: 'mentor@newcollege.edu', password: pw })).status, 200);
     // People an admin adds get a temporary password, shown once, which they must change before doing anything else.
@@ -918,8 +918,8 @@ test('the first admin gets a password from ADMIN_PASSWORD and must change it', (
 });
 
 test('confirmation: a typed CGPA and self-rated skills count only once the mentor confirms them', async () => {
-  const mentor = await as('kavya@demo.ngrm.in'), ananya = await as('ananya@demo.ngrm.in');
-  const id = h.get("SELECT id FROM users WHERE email = 'ananya@demo.ngrm.in'").id;
+  const mentor = await as('kavya@demo.grm.in'), ananya = await as('ananya@demo.grm.in');
+  const id = h.get("SELECT id FROM users WHERE email = 'ananya@demo.grm.in'").id;
   // Start from a confirmed CGPA, as in the sample data.
   assert.equal((await mentor('POST', '/api/mentor/assessments', { studentId: id, what: 'cgpa', value: 7.6 })).status, 201);
   const before = (await ananya('GET', '/api/me/profile')).body;
@@ -953,7 +953,7 @@ test('typed roles and programmes: anything can be typed, and the plan follows th
   const who = async (email) => { let cookie = ''; const c = async (method, url, body) => { const r = await fetch(b2 + url, { method, headers: { 'content-type': 'application/json', cookie }, body: body ? JSON.stringify(body) : undefined });
     const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0]; let json = null; try { json = await r.json(); } catch {} return { status: r.status, body: json }; }; if (email) await c('POST', '/api/auth/demo', { email }); return c; };
   try {
-    const ananya = await who('ananya@demo.ngrm.in'), admin = await who('admin@demo.ngrm.in'), employer = await who('recruiter@demo.ngrm.in'), mentor = await who('kavya@demo.ngrm.in');
+    const ananya = await who('ananya@demo.grm.in'), admin = await who('admin@demo.grm.in'), employer = await who('recruiter@demo.grm.in'), mentor = await who('kavya@demo.grm.in');
     assert.equal((await (await who())('POST', '/api/library/role', { text: 'Data Scientist' })).status, 401);
     // A typed role is matched to its kind of work and gets that kind's four skills.
     const ds = await ananya('POST', '/api/library/role', { text: '  data   scientist ' });
@@ -985,7 +985,7 @@ test('typed roles and programmes: anything can be typed, and the plan follows th
     await ananya('PUT', '/api/me/profile', { prog: 'ba-jour' });
     assert.equal((await ananya('GET', '/api/me/profile')).body.path.fit, 'switch');
     // The mentor assesses the typed role's own skills.
-    const id = h2.get("SELECT id FROM users WHERE email = 'ananya@demo.ngrm.in'").id;
+    const id = h2.get("SELECT id FROM users WHERE email = 'ananya@demo.grm.in'").id;
     const a = await mentor('POST', '/api/mentor/assessments', { studentId: id, what: '2', value: 66 });
     assert.equal(a.status, 201); assert.equal(a.body.label, 'Machine learning basics');
     assert.equal((await mentor('GET', '/api/mentor/mentees')).body.find((m) => m.id === id).fit, 'Career switch');
@@ -997,7 +997,7 @@ test('typed roles and programmes: anything can be typed, and the plan follows th
     const se = await employer('POST', '/api/library/role', { text: 'Software Engineer' });
     const rel = (await employer('GET', '/api/employer/supply?role=' + se.body.key)).body.related;
     assert.ok(rel.some((r) => r.key === 'dev' && r.students >= 5), 'points to the nearby role students actually chose');
-    // Something NGRM cannot place starts with general skills and is flagged for the admin.
+    // Something GRM cannot place starts with general skills and is flagged for the admin.
     const odd = await ananya('POST', '/api/library/role', { text: 'Astronaut' });
     assert.equal(odd.body.role.needsReview, true); assert.equal(odd.body.role.family, 'general');
     // Admin tools: correct the skills, list it, and remove only when unused.
@@ -1015,7 +1015,7 @@ test('typed roles and programmes: anything can be typed, and the plan follows th
     assert.equal((await admin('DELETE', '/api/admin/library/programmes/' + prog.body.id)).status, 200);
     assert.equal((await admin('PUT', '/api/admin/library/roles/hr', { label: 'X role' })).status, 404, 'built-in roles cannot be edited here');
     // College view: a role with enough students can be picked and shows its skills; a small one is hidden.
-    const college = await who('placement@demo.ngrm.in');
+    const college = await who('placement@demo.grm.in');
     const all = (await college('GET', '/api/college/cohort')).body;
     assert.ok(all.groups.roles.length >= 3 && all.groups.programmes.length >= 3);
     const one = (await college('GET', '/api/college/cohort?role=' + all.groups.roles[0].id)).body;
@@ -1049,7 +1049,7 @@ test('typed everywhere: own words, own steps, typed college, typed employer skil
   const who = async (email) => { let cookie = ''; const c = async (method, url, body) => { const r = await fetch(b2 + url, { method, headers: { 'content-type': 'application/json', cookie }, body: body ? JSON.stringify(body) : undefined });
     const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0]; let json = null; try { json = await r.json(); } catch {} return { status: r.status, body: json }; }; if (email) await c('POST', '/api/auth/demo', { email }); return c; };
   try {
-    const ananya = await who('ananya@demo.ngrm.in'), mentor = await who('kavya@demo.ngrm.in'), employer = await who('recruiter@demo.ngrm.in'), admin = await who('admin@demo.ngrm.in');
+    const ananya = await who('ananya@demo.grm.in'), mentor = await who('kavya@demo.grm.in'), employer = await who('recruiter@demo.grm.in'), admin = await who('admin@demo.grm.in');
     const before = (await ananya('GET', '/api/me/profile')).body.score.index;
     // In her own words: kept, cleaned, and never part of the score.
     const saved = (await ananya('PUT', '/api/me/profile', { goal: '  I want to teach   children ', interests: 'writing, <b>cricket</b>', cities: 'Mysuru, Bengaluru',
@@ -1068,7 +1068,7 @@ test('typed everywhere: own words, own steps, typed college, typed employer skil
     assert.equal((await ananya('GET', '/api/me/recommendations')).body.own.length, 1);
     assert.equal((await ananya('GET', '/api/me/profile')).body.score.index, (await ananya('GET', '/api/me/profile')).body.score.index);
     // The mentor sees it all in the student's words.
-    const id = h2.get("SELECT id FROM users WHERE email = 'ananya@demo.ngrm.in'").id;
+    const id = h2.get("SELECT id FROM users WHERE email = 'ananya@demo.grm.in'").id;
     const w = (await mentor('GET', '/api/mentor/mentees')).body.find((m) => m.id === id).inWords;
     assert.equal(w.goal, 'I want to teach children'); assert.equal(w.steps[0].title, 'Finish my portfolio website'); assert.equal(w.ownSkills.length, 2);
     // An employer types what else they need; the student is told what matches her.
@@ -1097,7 +1097,7 @@ test('typed everywhere: own words, own steps, typed college, typed employer skil
     const a = await today(ananya); assert.equal(a.first, 'Ananya'); assert.match(a.lines.join(' '), /aiming for HR \/ People Analytics Associate/);
     const m = await today(mentor); assert.equal(m.first, 'Kavya'); assert.match(m.lines.join(' '), /You mentor \d+ students/);
     assert.match((await today(employer)).lines.join(' '), /requirement/); assert.match((await today(admin)).lines.join(' '), /Waiting for you|Nothing is waiting/);
-    assert.match((await today(await who('placement@demo.ngrm.in'))).lines.join(' '), /students on NGRM/); assert.match((await today(await who('research@demo.ngrm.in'))).lines.join(' '), /baseline/);
+    assert.match((await today(await who('placement@demo.grm.in'))).lines.join(' '), /students on GRM/); assert.match((await today(await who('research@demo.grm.in'))).lines.join(' '), /baseline/);
     assert.equal((await (await who())('GET', '/api/me/today')).status, 401);
   } finally { s.close(); }
 });
@@ -1111,7 +1111,7 @@ test('every student gets a mentor, and impossible dates are refused', async () =
   try {
     assert.equal(h2.get("SELECT COUNT(*) AS n FROM users u WHERE u.role = 'student' AND NOT EXISTS (SELECT 1 FROM mentor_links l WHERE l.student_id = u.id)").n, 0, 'no sample student is left without a mentor');
     // A new sign-up is given the mentor at their college with the fewest students.
-    const inst = h2.get("SELECT institution_id AS i FROM users WHERE email = 'kavya@demo.ngrm.in'").i;
+    const inst = h2.get("SELECT institution_id AS i FROM users WHERE email = 'kavya@demo.grm.in'").i;
     const meera = await who(); assert.equal((await meera('POST', '/api/auth/sign-up', { role: 'student', name: 'Meera Nair', email: 'meera@x.example', institutionId: inst, password: 'four quiet mango trains' })).status, 200);
     const id = h2.get("SELECT id FROM users WHERE email = 'meera@x.example'").id;
     const link = h2.get('SELECT mentor_id FROM mentor_links WHERE student_id = ?', id); assert.ok(link, 'given a mentor at sign-up');
@@ -1121,7 +1121,7 @@ test('every student gets a mentor, and impossible dates are refused', async () =
     for (const n of [1, 2, 3]) await (await who())('POST', '/api/auth/sign-up', { role: 'student', name: 'Student ' + 'abc'[n - 1], email: `s${n}@ml.example`, institutionId: col, password: 'four quiet mango trains' });
     h2.run("INSERT INTO users (email, name, role, institution_id, is_sample) VALUES ('cell@ml.example', 'Placement Cell', 'college_admin', ?, 0)", col);
     const cell = await who(); await cell('POST', '/api/auth/demo', { email: 'cell@ml.example' }).catch(() => {});
-    const admin = await who('admin@demo.ngrm.in');
+    const admin = await who('admin@demo.grm.in');
     // (the demo sign-in only covers the listed demo accounts, so sign the cell in with a password the admin hands over)
     const temp = (await admin('POST', '/api/admin/users/' + h2.get("SELECT id FROM users WHERE email = 'cell@ml.example'").id + '/reset-password')).body.password;
     await cell('POST', '/api/auth/password', { email: 'cell@ml.example', password: temp }); await cell('POST', '/api/me/password', { password: 'nine brave paper boats' });
@@ -1146,7 +1146,7 @@ test('recommendations are built from each student’s own data, so two students 
   const who = async (email) => { let cookie = ''; const c = async (method, url, body) => { const r = await fetch(b2 + url, { method, headers: { 'content-type': 'application/json', cookie }, body: body ? JSON.stringify(body) : undefined });
     const sc = r.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0]; let json = null; try { json = await r.json(); } catch {} return { status: r.status, body: json }; }; if (email) await c('POST', '/api/auth/demo', { email }); return c; };
   try {
-    const inst = h2.get("SELECT institution_id AS i FROM users WHERE email = 'ananya@demo.ngrm.in'").i;
+    const inst = h2.get("SELECT institution_id AS i FROM users WHERE email = 'ananya@demo.grm.in'").i;
     const make = async (email, name) => { const c = await who(); await c('POST', '/api/auth/sign-up', { role: 'student', name, email, institutionId: inst, password: 'four quiet mango trains' }); await c('POST', '/api/me/consents', { purposes: { profile: true }, isAdult: true }); return c; };
     // Two students, both aiming for Data Analyst.
     const asha = await make('asha@x.example', 'Asha Rao'), ravi = await make('ravi@x.example', 'Ravi Kumar');
@@ -1160,7 +1160,7 @@ test('recommendations are built from each student’s own data, so two students 
     const mentorId = h2.get("SELECT l.mentor_id AS m FROM mentor_links l JOIN users u ON u.id = l.student_id WHERE u.email = 'ravi@x.example'").m;
     h2.run("UPDATE evidence SET status = 'needs_proof' WHERE title = 'Summer analytics internship'");
     // An employer posts for Data Analyst in Mysuru, typing a skill of their own.
-    const employer = await who('recruiter@demo.ngrm.in');
+    const employer = await who('recruiter@demo.grm.in');
     assert.equal((await employer('POST', '/api/employer/demand', { role: 'data', skills: ['Statistics'], extraSkills: 'Power BI', openings: 6, city: 'Mysuru' })).status, 201);
     const A = (await asha('GET', '/api/me/recommendations')).body, R = (await ravi('GET', '/api/me/recommendations')).body;
     const step = (plan, id) => plan.items.find((x) => x.id === id);
@@ -1171,7 +1171,7 @@ test('recommendations are built from each student’s own data, so two students 
     assert.equal(A.context.yearsLeft, 0); assert.equal(step(A, 'internship').slot, 'now');
     assert.match(step(A, 'internship').title, /before you graduate/); assert.match(step(A, 'internship').what, /Sample Employer A[^(]*\(6 openings in Mysuru\) has openings for Data Analyst where you want to work/);
     assert.equal(step(R, 'internship').title, 'Find a short first internship or job-shadowing this summer'); assert.equal(step(R, 'internship').slot, 'summer');
-    assert.match(step(R, 'internship').what, /No openings for Data Analyst in Pune are on NGRM yet/);
+    assert.match(step(R, 'internship').what, /No openings for Data Analyst in Pune are on GRM yet/);
     // Ravi's mentor asked for proof: that comes first.
     assert.deepEqual(R.items.slice(0, 2).map((x) => x.id), ['confirm', 'proof']); assert.equal(R.items[1].title, 'Add proof for “Summer analytics internship”');
     assert.ok(R.items[1].gain > 0); assert.equal(R.items[1].factor, 'internships'); assert.match(R.items[1].crosses || 'none', /none|moves you from/);
@@ -1193,7 +1193,7 @@ test('recommendations are built from each student’s own data, so two students 
     // The two plans differ.
     assert.notDeepEqual(A.items.map((x) => x.title), R.items.map((x) => x.title));
     // Students at a college with 5 or more aiming for the same role see how their peers compare (rounded, never names).
-    const ananya = await who('ananya@demo.ngrm.in'), Y = (await ananya('GET', '/api/me/recommendations')).body;
+    const ananya = await who('ananya@demo.grm.in'), Y = (await ananya('GET', '/api/me/recommendations')).body;
     assert.ok(Y.context.peers && /students at your college aiming for HR/.test(Y.context.peers.label));
     const pl = Y.items.map((x) => x.why).join(' ');
     assert.ok(!/Ananya|@/.test(JSON.stringify(Y.context.peers)));
@@ -1206,7 +1206,7 @@ test('recommendations are built from each student’s own data, so two students 
 });
 
 test('the team adds openings from public sources: they count in live demand, credited and linked; only admins add them', async () => {
-  const admin = await as('admin@demo.ngrm.in'), student = await as('ananya@demo.ngrm.in'), employer = await as('recruiter@demo.ngrm.in');
+  const admin = await as('admin@demo.grm.in'), student = await as('ananya@demo.grm.in'), employer = await as('recruiter@demo.grm.in');
   const ok = { title: 'HR analyst', organisation: 'A real company', role: 'hr', city: 'Bengaluru', skills: 'Excel and data analysis, Workday', openings: 2, sourceName: 'Company careers page', sourceUrl: 'https://careers.example.org/hr-analyst' };
   assert.equal((await employer('POST', '/api/admin/openings', ok)).status, 403);
   assert.equal((await admin('POST', '/api/admin/openings', { ...ok, sourceUrl: 'http://careers.example.org' })).status, 400, 'a link students can check, over https');
@@ -1226,7 +1226,7 @@ test('the team adds openings from public sources: they count in live demand, cre
 });
 
 test('a student compares up to two more roles, can swap the main one, and prints a report with no personality data', async () => {
-  const student = await as('ananya@demo.ngrm.in');
+  const student = await as('ananya@demo.grm.in');
   let r = (await student('PUT', '/api/me/profile', { otherRoles: ['data'] })).body;
   assert.deepEqual(r.compare.map((x) => [x.key, x.main]), [['hr', true], ['data', false]]);
   assert.ok(r.compare[1].openings > 0); assert.equal(r.compare[1].fitLabel.length > 0, true);
@@ -1242,5 +1242,27 @@ test('a student compares up to two more roles, can swap the main one, and prints
   assert.ok(!/"[ocean]":\d|traits|ipip|answers/.test(JSON.stringify(rep)), 'no personality data at all');
   assert.ok(rep.evidence.every((e) => e.title) && rep.evidence.some((e) => /exam stress/.test(e.title)));
   assert.ok(rep.skills.some((s) => s.status === 'assessed') && rep.transversal.every((s) => ['assessed', 'self-rated', 'not rated'].includes(s.status)));
-  assert.equal((await (await as('kavya@demo.ngrm.in'))('GET', '/api/me/report')).status, 403);
+  assert.equal((await (await as('kavya@demo.grm.in'))('GET', '/api/me/report')).status, 403);
+});
+
+test('a first-year student with no CGPA yet can use Class 12 marks, at half until the mentor confirms them; a CGPA then takes over', async () => {
+  const student = await as('ananya@demo.grm.in'), mentor = await as('kavya@demo.grm.in');
+  const id = h.get("SELECT id FROM users WHERE email = 'ananya@demo.grm.in'").id;
+  h.run('UPDATE profiles SET cgpa = NULL, cgpa_confirmed = 0, class12 = NULL, class12_confirmed = 0 WHERE user_id = ?', id);
+  assert.equal((await student('PUT', '/api/me/profile', { class12: 101 })).status, 400);
+  let r = (await student('PUT', '/api/me/profile', { class12: 82 })).body;
+  assert.equal(r.score.factors.cgpa, 41); assert.equal(r.score.flags.marksFrom, 'class12'); assert.ok(r.score.flags.cgpaUnconfirmed);
+  const step = (await student('GET', '/api/me/recommendations')).body.items.find((x) => x.id === 'confirm');
+  assert.match(step.title, /Class 12 marks/); assert.match(step.what, /Class 12 marks of 82%/);
+  const row = (await mentor('GET', '/api/mentor/mentees')).body.find((m) => m.id === id);
+  assert.equal(row.class12, 82); assert.equal(row.class12Confirmed, false);
+  assert.equal((await mentor('POST', '/api/mentor/assessments', { studentId: id, what: 'class12', value: 140 })).status, 400);
+  assert.equal((await mentor('POST', '/api/mentor/assessments', { studentId: id, what: 'class12', value: 80 })).status, 201);
+  r = (await student('GET', '/api/me/profile')).body;
+  assert.equal(r.profile.class12, 80); assert.equal(r.score.factors.cgpa, 80); assert.ok(!r.score.flags.cgpaUnconfirmed);
+  assert.match((await student('GET', '/api/me/report')).body.class12 + '', /80/);
+  // Once a CGPA is entered it replaces the Class 12 marks, at half until confirmed.
+  r = (await student('PUT', '/api/me/profile', { cgpa: 7.6 })).body;
+  assert.equal(r.score.factors.cgpa, 38); assert.equal(r.score.flags.marksFrom, 'cgpa');
+  assert.equal((await mentor('POST', '/api/mentor/assessments', { studentId: id, what: 'cgpa', value: 7.6 })).status, 201);
 });

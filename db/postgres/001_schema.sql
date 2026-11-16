@@ -1,4 +1,4 @@
--- NGRM production schema for Supabase (Postgres 15+). Host the project in the Mumbai region (ap-south-1).
+-- GRM production schema for Supabase (Postgres 15+). Host the project in the Mumbai region (ap-south-1).
 -- Mirrors server/schema.sql. Apply 001 then 002. Review with your developer before going live.
 
 create extension if not exists pgcrypto;

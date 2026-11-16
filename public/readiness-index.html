@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>My score · NGRM</title>
+<title>My score · GRM</title>
 <link rel="stylesheet" href="assets/site.css">
 <style>
   .form-card { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 84px); max-height: calc(100vh - 100px); overflow: auto; }
@@ -33,7 +33,7 @@
 <div class="container" id="gate"></div>
 <div class="container" id="setup" hidden style="max-width:620px">
   <form class="card" id="setupForm" novalidate aria-labelledby="setupTitle">
-    <header><h1 id="setupTitle" style="font-size:1.5rem">Tell NGRM what you study and what you are aiming for</h1></header>
+    <header><h1 id="setupTitle" style="font-size:1.5rem">Tell GRM what you study and what you are aiming for</h1></header>
     <p>Nothing is filled in for you. Your score, your plan and everything your mentor sees are built from what you type here. You can change any of it later.</p>
     <div style="display:grid;gap:0.85rem">
       <div class="field"><label for="s-prog">Your programme</label><input type="text" id="s-prog" maxlength="80" placeholder="Type it as on your marks card, for example B.Com" aria-describedby="s-progNote"><span class="hint" id="s-progNote" role="status"></span></div>
@@ -54,6 +54,7 @@
         <div class="field"><label for="f-cgpa">CGPA (out of 10)</label><input type="number" id="f-cgpa" min="0" max="10" step="0.01" inputmode="decimal" aria-describedby="cgpaState"></div>
       </div>
       <p class="hint" id="cgpaState" style="margin:-0.3rem 0 0.2rem"></p>
+      <div class="field" id="c12Field"><label for="f-c12">Class 12 marks (%), if you have no CGPA yet</label><input type="number" id="f-c12" min="0" max="100" step="0.1" inputmode="decimal" aria-describedby="c12State"><span class="hint" id="c12State"></span></div>
       <div class="field"><label for="f-roleText">Aspired role</label><input type="text" id="f-roleText" maxlength="60" placeholder="Type the job you want, for example Data Analyst" aria-describedby="roleNote roleHint"><input type="hidden" id="f-role"><span class="hint" id="roleNote" role="status"></span>
         <div id="roleIdeas" class="small" style="display:flex;gap:0.35rem;flex-wrap:wrap;align-items:center;margin-top:0.35rem"></div>
         <span class="hint" id="roleHint">The job you want to do. Your plan is built around it. Changing it starts a fresh plan: steps you accepted and mentor notes are cleared.</span></div>
@@ -73,7 +74,7 @@
       <div class="field"><label for="f-clarity">How sure are you about your career direction?</label><input type="number" id="f-clarity" min="0" max="100" step="1" inputmode="numeric" placeholder="Type a number from 0 to 100"></div>
     </fieldset></div>
     <div class="form-group"><fieldset><legend>In your own words</legend>
-      <p class="small muted" style="margin:0 0 0.6rem">Type as much or as little as you like. NGRM uses it to suggest roles, show openings in your cities and tell your mentor what you want. None of it changes your score.</p>
+      <p class="small muted" style="margin:0 0 0.6rem">Type as much or as little as you like. GRM uses it to suggest roles, show openings in your cities and tell your mentor what you want. None of it changes your score.</p>
       <div class="field"><label for="w-goal">What do you want to be doing after you graduate?</label><input type="text" id="w-goal" maxlength="200" placeholder="For example: working with children who struggle at school"></div>
       <div class="field"><label for="w-interests">What are you interested in or good at?</label><input type="text" id="w-interests" maxlength="200" placeholder="Separate with commas: writing, cricket analytics, teaching"></div>
       <div id="wordIdeas" class="small" style="display:flex;gap:0.35rem;flex-wrap:wrap;align-items:center"></div>
@@ -158,7 +159,10 @@
     sel($('#f-year'), list, Math.min(year, n));
   }
   function cgpaState(p, flags) {
-    $('#cgpaState').innerHTML = p.cgpa == null ? 'Enter it. It counts at half straight away, and in full once your mentor confirms it against college records.' : p.cgpaConfirmed ? '<span class="chip success">Confirmed by your mentor · counts in full</span> Changing it sends it for confirmation again.' : '<span class="chip warning">Counting at half</span> In full once your mentor confirms it.';
+    // Class 12 marks are asked for only while there is no CGPA; once a CGPA is entered it takes over.
+    $('#c12Field').hidden = p.cgpa != null;
+    $('#c12State').innerHTML = p.class12 == null ? 'First year with no CGPA yet? Enter your Class 12 percentage. It stands in for the CGPA until you have one.' : p.class12Confirmed ? '<span class="chip success">Confirmed by your mentor · counts in full</span> Used until your first CGPA.' : '<span class="chip warning">Counting at half</span> Used until your first CGPA; in full once your mentor confirms it.';
+    $('#cgpaState').innerHTML = p.cgpa == null ? (p.class12 != null ? 'Enter it once you have one. It then replaces your Class 12 marks.' : 'Enter it. It counts at half straight away, and in full once your mentor confirms it against college records.') : p.cgpaConfirmed ? '<span class="chip success">Confirmed by your mentor · counts in full</span> Changing it sends it for confirmation again.' : '<span class="chip warning">Counting at half</span> In full once your mentor confirms it.';
   }
   // Typed or picked: both boxes accept anything. A new role or programme is added and the page follows it.
   var progBox, roleBox;
@@ -177,7 +181,7 @@
   function fill(p) {
     var m = data.mine || {}; $('#w-goal').value = m.goal || ''; $('#w-interests').value = m.interests || ''; $('#w-cities').value = m.cities || ''; own = (m.ownSkills || []).slice(); ownList();
     $('#f-prog').value = p.prog; progBox.set(p.prog); ideas(p.prog);
-    years(p.prog, p.year); $('#f-cgpa').value = p.cgpa == null ? '' : p.cgpa;
+    years(p.prog, p.year); $('#f-cgpa').value = p.cgpa == null ? '' : p.cgpa; $('#f-c12').value = p.class12 == null ? '' : p.class12;
     $('#f-role').value = p.role; roleBox.set(p.role);
     otherBoxes.forEach(function (b, i) { b.set(p.otherRoles[i] || ''); });
     skills(p); tvRows(p); ipipForm();
@@ -197,7 +201,7 @@
   }
   function read() {
     var role = $('#f-role').value;
-    return { goal: $('#w-goal').value, interests: $('#w-interests').value, cities: $('#w-cities').value, ownSkills: own, prog: $('#f-prog').value, year: +$('#f-year').value, cgpa: $('#f-cgpa').value, role: role,
+    return { goal: $('#w-goal').value, interests: $('#w-interests').value, cities: $('#w-cities').value, ownSkills: own, prog: $('#f-prog').value, year: +$('#f-year').value, cgpa: $('#f-cgpa').value, class12: $('#f-c12').value, role: role,
       skills: [0, 1, 2, 3].map(function (i) { var el = $('#sk-' + i); return el ? el.value : ''; }),
       transversal: meta.transversal.map(function (_, i) { var el = $('#tv-' + i); return el && !el.disabled ? el.value : ''; }),
       ipip: consents.psychometric ? ipipAnswers() : undefined, otherRoles: others(),
@@ -214,7 +218,7 @@
     compare(data.compare || []); ipipState();
     words(data);
     $('#sPath').innerHTML = data.path ? '<span class="chip">' + esc(data.path.label) + '</span> ' + esc(data.path.text) : '';
-    $('#sBand').innerHTML = '<span class="chip ' + N.bandCls[data.band.k] + '">' + data.band.label + '</span>' + (s.flags.cgpaMissing ? ' <span class="chip warning">CGPA missing</span>' : s.flags.cgpaUnconfirmed ? ' <span class="chip warning">CGPA counting at half</span>' : '') + (s.flags.skillsUnassessed ? ' <span class="chip">' + s.skillsAssessed + ' of ' + (s.skillsAssessed + s.flags.skillsUnassessed) + ' role skills assessed</span>' : '') +
+    $('#sBand').innerHTML = '<span class="chip ' + N.bandCls[data.band.k] + '">' + data.band.label + '</span>' + (s.flags.cgpaMissing ? ' <span class="chip warning">CGPA missing</span>' : s.flags.cgpaUnconfirmed ? ' <span class="chip warning">' + (s.flags.marksFrom === 'class12' ? 'Class 12 marks' : 'CGPA') + ' counting at half</span>' : '') + (s.flags.skillsUnassessed ? ' <span class="chip">' + s.skillsAssessed + ' of ' + (s.skillsAssessed + s.flags.skillsUnassessed) + ' role skills assessed</span>' : '') +
       (s.completeness < 100 ? '<p class="small muted" style="margin:0.4rem 0 0">Based on ' + s.completeness + '% of the formula, scaled to 100. Not yet rated: ' + s.notRated.map(function (k) { return meta.factors.filter(function (F) { return F.k === k; })[0].label; }).join(', ') + '.</p>' : '');
     cgpaState(p, s.flags);
     $('#lastRec').textContent = data.lastRecorded ? 'Last recorded ' + N.f1(data.lastRecorded.index_value) + ' on ' + new Date(data.lastRecorded.created_at.replace(' ', 'T') + 'Z').toLocaleDateString('en-IN') : 'Not recorded yet';
@@ -249,7 +253,7 @@
   // Show the values the server actually stored (for example a CGPA of 11 becomes 10), except in the field being typed in.
   function sync(p) {
     var set = function (el, v) { if (el && el !== document.activeElement && String(el.value) !== String(v == null ? '' : v)) el.value = v == null ? '' : v; };
-    set($('#f-cgpa'), p.cgpa); set($('#f-year'), String(p.year));
+    set($('#f-cgpa'), p.cgpa); set($('#f-c12'), p.class12); set($('#f-year'), String(p.year));
     (p.transversal || []).forEach(function (v, i) { set($('#tv-' + i), p.transversalVerified[i] ? v : p.transversalOwn ? p.transversalOwn[i] : v); });
     // A skill not rated yet stays blank: the 0 the server uses for it in the score is never shown as a rating.
     p.skills.forEach(function (v, i) { set($('#sk-' + i), p.skillsRated && !p.skillsRated[i] && (p.verifiedSkills || []).indexOf(i) < 0 ? null : v); });

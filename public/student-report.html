@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>My one-page report · NGRM</title>
+<title>My one-page report · GRM</title>
 <link rel="stylesheet" href="assets/site.css">
 <style>
   .sheet { max-width: 820px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem 1.6rem; display: grid; gap: 1rem; }
@@ -58,12 +58,12 @@
         '<p class="small muted" style="margin:0">Self-reported items count at half until a mentor confirms them. Formula ' + esc(r.version) + (r.completeness < 100 ? '; based on ' + r.completeness + '% of the formula, as some parts are not answered yet' : '') + '. Bands: Building below 50, Progressing 50–74, Ready 75 and above.</p>' +
         '<div class="two"><section><h2>How the score is made up</h2><table><thead><tr><th>Part</th><th class="n">Weight</th><th class="n">Score /100</th></tr></thead><tbody>' +
           r.factors.map(function (f) { return '<tr><td>' + esc(f.label) + '</td><td class="n">' + f.w + '%</td><td class="n">' + (f.value == null ? '—' : Math.round(f.value)) + '</td></tr>'; }).join('') + '</tbody></table>' +
-          '<p class="small muted" style="margin:0.3rem 0 0">CGPA ' + (r.cgpa == null ? 'not entered' : r.cgpa + (r.cgpaConfirmed ? ', confirmed by the college' : ', self-reported')) + '. Social-emotional (10%) is part of the score but is private, so it is not shown.</p></section>' +
+          '<p class="small muted" style="margin:0.3rem 0 0">' + (r.cgpa == null && r.class12 != null ? 'No CGPA yet; Class 12 marks ' + r.class12 + '%' + (r.class12Confirmed ? ', confirmed by the college' : ', self-reported') : 'CGPA ' + (r.cgpa == null ? 'not entered' : r.cgpa + (r.cgpaConfirmed ? ', confirmed by the college' : ', self-reported'))) + '. Social-emotional (10%) is part of the score but is private, so it is not shown.</p></section>' +
         '<section><h2>Skills for ' + esc(r.role) + '</h2><table><thead><tr><th>Skill</th><th class="n">Level</th><th>Status</th></tr></thead><tbody>' + rows(r.skills) + '</tbody></table>' +
           '<h2 style="margin-top:0.8rem">Transversal skills</h2><table><thead><tr><th>Skill</th><th class="n">Level</th><th>Status</th></tr></thead><tbody>' + rows(r.transversal) + '</tbody></table></section></div>' +
         '<section><h2>Verified evidence</h2>' + (r.evidence.length ? Object.keys(ev).map(function (t) { return '<p style="margin:0.3rem 0 0"><b>' + esc(t) + ':</b> ' + ev[t].map(function (e) { return esc(e.title) + (e.on ? ' (' + esc(e.on.slice(0, 7)) + ')' : ''); }).join('; ') + '</p>'; }).join('') : '<p class="muted" style="margin:0">Nothing verified yet.</p>') +
           (r.waiting ? '<p class="small muted" style="margin:0.3rem 0 0">' + r.waiting + ' more item' + (r.waiting === 1 ? ' is' : 's are') + ' waiting for a mentor to check.</p>' : '') + '</section>' +
-        '<p class="small muted" style="margin:0;border-top:1px solid var(--border);padding-top:0.6rem">Generated on ' + d + ' by NGRM, an independent student-founded platform, not a government service. Shared by the student. To check it, ask the student’s placement cell.</p>';
+        '<p class="small muted" style="margin:0;border-top:1px solid var(--border);padding-top:0.6rem">Generated on ' + d + ' by GRM, an independent student-founded platform, not a government service. Shared by the student. To check it, ask the student’s placement cell.</p>';
     }).catch(function (e) { N.showError($('#sheet'), e); });
   });
   $('#printBtn').addEventListener('click', function () { window.print(); });

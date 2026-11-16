@@ -1,4 +1,4 @@
-// NGRM API and static frontend.
+// GRM API and static frontend.
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
@@ -74,7 +74,7 @@ function createApp(db, opts = {}) {
     // A skill the student has not rated is stored as null: shown blank, never filled in for them.
     const raw = [0, 1, 2, 3].map((i) => parse(row.skills_json, [])[i] ?? null);
     const tvA = verifiedTransversal(row.user_id), tvSelf = D.TRANSVERSAL.map((_, i) => parse(row.transversal_json, [])[i] ?? null);
-    return { prog: row.programme, year: row.year, cgpa: row.cgpa, cgpaConfirmed: !!row.cgpa_confirmed, role: row.target_role, skills: raw.map((x) => x ?? 0), skillsRated: raw.map((x) => x != null), skillsVerified: [0, 1, 2, 3].map((i) => i in vs),
+    return { prog: row.programme, year: row.year, cgpa: row.cgpa, cgpaConfirmed: !!row.cgpa_confirmed, class12: row.class12 ?? null, class12Confirmed: !!row.class12_confirmed, role: row.target_role, skills: raw.map((x) => x ?? 0), skillsRated: raw.map((x) => x != null), skillsVerified: [0, 1, 2, 3].map((i) => i in vs),
       transversal: tvSelf.map((v, i) => (i in tvA ? tvA[i] : v)), transversalOwn: tvSelf, transversalVerified: D.TRANSVERSAL.map((_, i) => i in tvA),
       ocean: oceanOf(row.ocean_json), clarity: row.clarity, otherRoles: parse(row.other_roles_json, []).filter((k) => has(D.ROLES, k) && k !== row.target_role).slice(0, 2) };
   }
@@ -165,7 +165,7 @@ function createApp(db, opts = {}) {
     const live = feeds.forSkill(skill);
     return { skill, courses, searches, live: live.courses, liveCheckedAt: live.checkedAt, demand: ruleId === 'course' ? demandFor(p.role)[idx] : null };
   }
-  // Openings for a role in the last 90 days: what employers posted on NGRM, and what the team added from public sources (named and linked).
+  // Openings for a role in the last 90 days: what employers posted on GRM, and what the team added from public sources (named and linked).
   function postsFor(role) {
     const own = h.all("SELECT d.skills_json, d.extra_json, d.openings, d.city, d.created_at, e.name AS employer FROM demand_posts d JOIN employers e ON e.id = d.employer_id WHERE d.role = ? AND d.created_at > datetime('now', '-90 days') ORDER BY d.id DESC", role)
       .map((d) => ({ employer: d.employer, city: d.city, openings: d.openings, postedAt: d.created_at, skills: parse(d.skills_json, []).concat(parse(d.extra_json, [])), source: null, url: null }));
@@ -211,7 +211,7 @@ function createApp(db, opts = {}) {
   const mentoring = (instId) => ({ mentors: h.all("SELECT u.name, (SELECT COUNT(*) FROM mentor_links l WHERE l.mentor_id = u.id) AS students FROM users u WHERE u.role = 'mentor' AND u.institution_id = ? ORDER BY u.name", instId), withoutMentor: unmentored(instId).length });
   app.get('/api/college/mentoring', need('college_admin'), (req, res) => res.json(mentoring(req.user.institution_id)));
   app.post('/api/college/mentoring/share', need('college_admin'), (req, res) => {
-    if (!h.get("SELECT 1 FROM users WHERE role = 'mentor' AND institution_id = ?", req.user.institution_id)) return fail(res, 409, 'No mentor at your college has an NGRM account yet. Ask your faculty mentors to create one; the NGRM admin approves it.');
+    if (!h.get("SELECT 1 FROM users WHERE role = 'mentor' AND institution_id = ?", req.user.institution_id)) return fail(res, 409, 'No mentor at your college has an GRM account yet. Ask your faculty mentors to create one; the GRM admin approves it.');
     const shared = shareOut(req.user.institution_id);
     audit(req.user.id, 'college.mentors_shared', shared);
     res.json({ shared, ...mentoring(req.user.institution_id) });
@@ -347,7 +347,7 @@ function createApp(db, opts = {}) {
   app.get('/api/auth/sign-up-options', (req, res) => res.json({ open: signUpOpen, domains: signUpDomains,
     institutions: signUpOpen ? h.all('SELECT id, name, city FROM institutions WHERE pending = 0 ORDER BY name') : [] }));
   app.post('/api/auth/sign-up', (req, res) => {
-    if (!signUpOpen) return fail(res, 403, 'Sign-up is closed. Ask your college or the NGRM team for an account.');
+    if (!signUpOpen) return fail(res, 403, 'Sign-up is closed. Ask your college or the GRM team for an account.');
     const b = req.body || {}, name = String(b.name || '').trim().replace(/\s+/g, ' ').slice(0, 120), email = String(b.email || '').trim().toLowerCase(), role = String(b.role || '');
     if (name.length < 2) return fail(res, 400, 'Enter your full name.');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return fail(res, 400, 'Enter a valid email address.');
@@ -410,7 +410,7 @@ function createApp(db, opts = {}) {
   app.post('/api/auth/password', (req, res) => {
     const r = auth.signInWithPassword(req.body?.email, req.body?.password);
     // Said only to someone who knows the password they chose, so it gives nothing away to anyone else.
-    if (r.error && r.status === 400 && auth.waitingWith(req.body?.email, req.body?.password)) return fail(res, 403, 'Your email is confirmed and your account is waiting for approval by the NGRM admin. You will be able to sign in once it is approved.');
+    if (r.error && r.status === 400 && auth.waitingWith(req.body?.email, req.body?.password)) return fail(res, 403, 'Your email is confirmed and your account is waiting for approval by the GRM admin. You will be able to sign in once it is approved.');
     if (r.error) return fail(res, r.status, r.error);
     setCookie(res, r.token); res.json({ user: { id: r.user.id, name: r.user.name, role: r.user.role }, mustChange: auth.mustChange(r.user.id) });
   });
@@ -425,11 +425,11 @@ function createApp(db, opts = {}) {
   });
   app.get('/api/auth/demo-users', (req, res) => {
     if (!demoMode) return fail(res, 404, 'Not available.');
-    res.json(h.all("SELECT u.email, u.name, u.role FROM users u WHERE u.email LIKE '%@demo.ngrm.in' ORDER BY CASE u.role WHEN 'student' THEN 1 WHEN 'mentor' THEN 2 WHEN 'college_admin' THEN 3 WHEN 'employer' THEN 4 WHEN 'researcher' THEN 5 ELSE 6 END"));
+    res.json(h.all("SELECT u.email, u.name, u.role FROM users u WHERE u.email LIKE '%@demo.grm.in' ORDER BY CASE u.role WHEN 'student' THEN 1 WHEN 'mentor' THEN 2 WHEN 'college_admin' THEN 3 WHEN 'employer' THEN 4 WHEN 'researcher' THEN 5 ELSE 6 END"));
   });
   app.post('/api/auth/demo', (req, res) => {
     if (!demoMode) return fail(res, 404, 'Not available.');
-    const u = h.get("SELECT * FROM users WHERE email = ? AND email LIKE '%@demo.ngrm.in'", String(req.body?.email || ''));
+    const u = h.get("SELECT * FROM users WHERE email = ? AND email LIKE '%@demo.grm.in'", String(req.body?.email || ''));
     if (!u) return fail(res, 400, 'Unknown demo account.');
     setCookie(res, auth.startSession(u.id)); res.json({ user: { id: u.id, name: u.name, role: u.role } });
   });
@@ -500,17 +500,17 @@ function createApp(db, opts = {}) {
     const first = u.name.replace(/^(dr|prof|mr|mrs|ms|shri|smt)\.?\s+/i, '').split(/[\s,]+/)[0] || u.name;
     if (u.role === 'student') {
       const c = hasConsent(u.id, 'profile') ? computeFor(u.id) : null;
-      if (!c) lines.push(hasConsent(u.id, 'profile') ? 'Type your programme, year and aspired role on My score to begin. Nothing is filled in for you.' : 'Start by choosing what NGRM may store.');
+      if (!c) lines.push(hasConsent(u.id, 'profile') ? 'Type your programme, year and aspired role on My score to begin. Nothing is filled in for you.' : 'Start by choosing what GRM may store.');
       else {
         lines.push(`${D.programme(c.p.prog).label}, aiming for ${D.ROLES[c.p.role].label} · ${D.pathNote(c.p).label.toLowerCase()} · score ${c.result.index.toFixed(1)}`);
-        const half = []; if (c.result.flags.cgpaUnconfirmed) half.push('your CGPA'); const rated = c.p.skills.filter((_, i) => c.p.skillsRated[i] && !c.p.skillsVerified[i]).length; if (rated) half.push(plural(rated, 'role skill', 'role skills'));
+        const half = []; if (c.result.flags.cgpaUnconfirmed) half.push(c.result.flags.marksFrom === 'class12' ? 'your Class 12 marks' : 'your CGPA'); const rated = c.p.skills.filter((_, i) => c.p.skillsRated[i] && !c.p.skillsVerified[i]).length; if (rated) half.push(plural(rated, 'role skill', 'role skills'));
         if (c.result.flags.transversalUnassessed) half.push(plural(c.result.flags.transversalUnassessed, 'transversal skill', 'transversal skills'));
         const pend = n("SELECT COUNT(*) AS n FROM evidence WHERE user_id = ? AND status = 'pending'", u.id); if (pend) half.push(plural(pend, 'evidence item', 'evidence items'));
         if (half.length) lines.push('Counting at half until your mentor confirms them: ' + half.join(', ') + '. You do not need to wait; keep going with your plan.');
         if (c.result.flags.psychometricMissing && hasConsent(u.id, 'psychometric')) lines.push('The 20-question personality questionnaire on My score is still to do.');
         const proof = n("SELECT COUNT(*) AS n FROM evidence WHERE user_id = ? AND status = 'needs_proof'", u.id); if (proof) lines.push(`Your mentor asked for proof on ${plural(proof, 'item', 'items')}.`);
         const todo = ownSteps(u.id).filter((s) => !s.done).length; if (todo) lines.push(`${plural(todo, 'step', 'steps')} of your own still to do.`);
-        if (!c.row.goal) lines.push('Tell NGRM your goal in your own words on My score, and your plan will follow it.');
+        if (!c.row.goal) lines.push('Tell GRM your goal in your own words on My score, and your plan will follow it.');
       }
     } else if (u.role === 'mentor') {
       const ids = h.all('SELECT student_id AS id FROM mentor_links WHERE mentor_id = ?', u.id).map((x) => x.id).filter((id) => hasConsent(id, 'profile'));
@@ -519,12 +519,12 @@ function createApp(db, opts = {}) {
       lines.push(`You mentor ${plural(ids.length, 'student', 'students')}.`);
       const idle = ids.filter((id) => !profileRow(id)).length + h.all('SELECT student_id AS id FROM mentor_links WHERE mentor_id = ?', u.id).filter((x) => !hasConsent(x.id, 'profile')).length;
       if (idle) lines.push(`${plural(idle, 'has', 'have')} not started a profile yet.`);
-      const wait = []; if (ev) wait.push(plural(ev, 'evidence item', 'evidence items') + ' to verify'); if (cg) wait.push(plural(cg, 'CGPA', 'CGPAs') + ' to confirm'); if (sk) wait.push(plural(sk, 'student', 'students') + ' with ratings to assess');
+      const wait = []; if (ev) wait.push(plural(ev, 'evidence item', 'evidence items') + ' to verify'); if (cg) wait.push(plural(cg, 'CGPA or Class 12 mark', 'CGPAs or Class 12 marks') + ' to confirm'); if (sk) wait.push(plural(sk, 'student', 'students') + ' with ratings to assess');
       lines.push(wait.length ? 'When you have time: ' + wait.join(', ') + '. Students are not blocked meanwhile; these count at half until you confirm them.' : 'Nothing is waiting for you.');
     } else if (u.role === 'college_admin') {
       const inst = h.get('SELECT name FROM institutions WHERE id = ?', u.institution_id) || { name: 'your college' };
       const st = n("SELECT COUNT(*) AS n FROM users WHERE role = 'student' AND institution_id = ?", u.institution_id), noMentor = n("SELECT COUNT(*) AS n FROM users u WHERE u.role = 'student' AND u.institution_id = ? AND NOT EXISTS (SELECT 1 FROM mentor_links l WHERE l.student_id = u.id)", u.institution_id);
-      lines.push(`${inst.name}: ${plural(st, 'student', 'students')} on NGRM.`);
+      lines.push(`${inst.name}: ${plural(st, 'student', 'students')} on GRM.`);
       if (noMentor) lines.push(`${plural(noMentor, 'student has', 'students have')} no mentor yet, so nothing they enter can be confirmed. Share them among your mentors below.`);
       const intro = n("SELECT COUNT(*) AS n FROM intro_requests WHERE created_at > datetime('now', '-30 days')"); if (intro) lines.push(`${plural(intro, 'introduction request', 'introduction requests')} from employers in the last 30 days.`);
     } else if (u.role === 'employer') {
@@ -587,12 +587,13 @@ function createApp(db, opts = {}) {
     const role = has(D.ROLES, b.role) ? b.role : has(D.ROLES, cur.target_role) ? cur.target_role : 'hr';
     const num = (v, lo, hi) => (v === '' || v === null || v === undefined || Number.isNaN(+v) ? null : D.clamp(+v, lo, hi));
     if (b.cgpa !== undefined && b.cgpa !== '' && b.cgpa !== null && !(Number(b.cgpa) >= 0 && Number(b.cgpa) <= 10)) return fail(res, 400, 'CGPA must be a number from 0 to 10.');
+    if (b.class12 !== undefined && b.class12 !== '' && b.class12 !== null && !(Number(b.class12) >= 0 && Number(b.class12) <= 100)) return fail(res, 400, 'Class 12 marks must be a percentage from 0 to 100.');
     // A field left out of the request keeps its stored value; an empty value clears it.
     const keep = (field, col, hi) => (b[field] === undefined ? cur[col] ?? null : num(b[field], 0, hi));
     // CGPA and career clarity can be corrected but not cleared once given: a blank is left out of the score,
     // so clearing a low value would otherwise raise it.
     const sticky = (field, col, hi) => { const v = keep(field, col, hi); return v === null ? cur[col] ?? null : v; };
-    const newCgpa = sticky('cgpa', 'cgpa', 10);
+    const newCgpa = sticky('cgpa', 'cgpa', 10), newC12 = sticky('class12', 'class12', 100);
     // The student's own ratings. A blank stays blank; a new role starts with all four unrated.
     const sameRole = role === cur.target_role, prevSkills = [0, 1, 2, 3].map((i) => (sameRole ? parse(cur.skills_json, [])[i] ?? null : null));
     // Ratings sent with a role change belong to the old role's boxes, so they are ignored.
@@ -630,6 +631,8 @@ function createApp(db, opts = {}) {
     h.run('UPDATE profiles SET goal = ?, interests = ?, cities = ?, own_skills_json = ?, transversal_json = ?, other_roles_json = ? WHERE user_id = ?', words('goal', 'goal', 200), words('interests', 'interests', 200), words('cities', 'cities', 120), JSON.stringify(own), JSON.stringify(tv), JSON.stringify(others), req.user.id);
     // A changed CGPA has to be confirmed again by the mentor before it counts.
     if (newCgpa !== (cur.cgpa ?? null)) h.run('UPDATE profiles SET cgpa_confirmed = 0 WHERE user_id = ?', req.user.id);
+    // Class 12 marks: used only until a first CGPA exists, and confirmed again by the mentor when changed.
+    if (newC12 !== (cur.class12 ?? null)) h.run('UPDATE profiles SET class12 = ?, class12_confirmed = 0 WHERE user_id = ?', newC12, req.user.id);
     // A new aspired role means a different plan: earlier accepted steps and mentor reviews no longer apply.
     if (cur.target_role && cur.target_role !== role) {
       h.run('DELETE FROM recommendation_states WHERE user_id = ?', req.user.id);
@@ -817,7 +820,7 @@ function createApp(db, opts = {}) {
     audit(req.user.id, 'report.viewed');
     res.json({ name: req.user.name, college: u.college || null, programme: D.programme(c.p.prog).label, year: c.p.year, role: R.label, otherRoles: c.p.otherRoles.map((k) => D.ROLES[k].label),
       index: c.result.index, confirmedIndex: c.result.confirmedIndex, band: D.band(c.result.index), version: c.result.version, completeness: c.result.completeness,
-      cgpa: c.p.cgpa, cgpaConfirmed: c.p.cgpaConfirmed,
+      cgpa: c.p.cgpa, cgpaConfirmed: c.p.cgpaConfirmed, class12: c.p.cgpa == null ? c.p.class12 : null, class12Confirmed: c.p.class12Confirmed,
       factors: D.FACTORS.filter((F) => F.k !== 'socioemotional').map((F) => ({ label: F.label, w: F.w, value: c.result.factors[F.k] })),
       skills: R.skills.map((name, i) => ({ name, value: c.p.skillsRated[i] || c.p.skillsVerified[i] ? c.p.skills[i] : null, status: status(c.p.skills[i], c.p.skillsVerified[i], c.p.skillsRated[i]) })),
       transversal: D.TRANSVERSAL.map((name, i) => ({ name, value: c.p.transversal[i], status: status(c.p.transversal[i], c.p.transversalVerified[i], c.p.transversal[i] != null) })),
@@ -879,7 +882,7 @@ function createApp(db, opts = {}) {
     const out = rows.filter((r) => hasConsent(r.id, 'profile')).map((r) => {
       const c = computeFor(r.id); if (!c) return null;
       return { id: r.id, name: r.name, programme: c.p.prog, year: c.p.year, role: c.p.role, index: c.result.index, band: D.band(c.result.index),
-        fit: D.pathNote(c.p).label, inWords: { ...inWords(c.row), steps: ownSteps(r.id) }, cgpa: c.p.cgpa, cgpaConfirmed: c.p.cgpaConfirmed, skills: c.p.skills, skillsRated: c.p.skillsRated, skillsVerified: c.p.skillsVerified, transversal: c.p.transversal, transversalVerified: c.p.transversalVerified, otherRoles: c.p.otherRoles.map((k) => D.ROLES[k].label), confirmedIndex: c.result.confirmedIndex };
+        fit: D.pathNote(c.p).label, inWords: { ...inWords(c.row), steps: ownSteps(r.id) }, cgpa: c.p.cgpa, cgpaConfirmed: c.p.cgpaConfirmed, class12: c.p.class12, class12Confirmed: c.p.class12Confirmed, skills: c.p.skills, skillsRated: c.p.skillsRated, skillsVerified: c.p.skillsVerified, transversal: c.p.transversal, transversalVerified: c.p.transversalVerified, otherRoles: c.p.otherRoles.map((k) => D.ROLES[k].label), confirmedIndex: c.result.confirmedIndex };
     }).filter(Boolean);
     audit(req.user.id, 'mentor.viewed_mentees');
     res.json(out);
@@ -939,6 +942,18 @@ function createApp(db, opts = {}) {
       });
       audit(req.user.id, 'mentor.cgpa_confirmed', sid);
       return res.status(201).json({ ok: true, label: 'CGPA', score: cgpa, cgpa: true });
+    }
+    if (what === 'class12') {
+      // Confirming Class 12 marks for a student with no CGPA yet: the mentor enters the percentage from the marks card.
+      if (req.body?.value === '' || req.body?.value == null || !Number.isFinite(value) || value < 0 || value > 100) return fail(res, 400, 'Enter the Class 12 percentage from the marks card, from 0 to 100.');
+      const pct = Math.round(value * 10) / 10;
+      h.tx(() => {
+        h.run("DELETE FROM evidence WHERE user_id = ? AND type = 'assessment' AND skill_role = 'class12'", sid);
+        h.run("INSERT INTO evidence (user_id, type, title, completed_on, status, verified_by, verified_at, skill_index, skill_role, skill_value) VALUES (?, 'assessment', ?, date('now'), 'verified', ?, datetime('now'), NULL, 'class12', ?)", sid, `Class 12 marks confirmed: ${pct}%`, req.user.name, Math.round(pct));
+        h.run('UPDATE profiles SET class12 = ?, class12_confirmed = 1 WHERE user_id = ?', pct, sid);
+      });
+      audit(req.user.id, 'mentor.class12_confirmed', sid);
+      return res.status(201).json({ ok: true, label: 'Class 12 marks', score: pct, class12: true });
     }
     // A role skill is "0"–"3"; a transversal skill is "t0"–"t4" (communication, leadership, creativity, problem solving, teamwork).
     // "communication" is accepted as the first transversal skill, as in earlier versions.
@@ -1182,7 +1197,7 @@ function createApp(db, opts = {}) {
     // A newly approved mentor takes on students at the college who have nobody yet.
     if (user.role === 'mentor') shareOut(user.institution_id);
     audit(req.user.id, 'admin.signup_approved', user.id);
-    mailNotice(user.email, 'Your NGRM account is approved', `Hello ${user.name},\n\nYour NGRM account has been approved. You can now sign in with your email and the password you chose.`);
+    mailNotice(user.email, 'Your GRM account is approved', `Hello ${user.name},\n\nYour GRM account has been approved. You can now sign in with your email and the password you chose.`);
     res.json({ ok: true, approved: true });
   });
 

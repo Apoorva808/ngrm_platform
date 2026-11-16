@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Mentor and college · NGRM</title>
+<title>Mentor and college · GRM</title>
 <link rel="stylesheet" href="assets/site.css">
 <style>
   .queue { display: grid; gap: 0.75rem; }
@@ -62,7 +62,7 @@
     <div class="field" style="max-width:420px;margin-bottom:0.75rem"><label for="menteeFind">Find a mentee</label><input type="text" id="menteeFind" autocomplete="off" placeholder="Type a name, programme, role, skill, interest or city"></div>
     <div class="table-wrap"><table><thead><tr><th>Student</th><th>Programme</th><th>Year</th><th>Aspired role</th><th class="n">Score</th><th>Band</th><th>Waiting for you</th></tr></thead><tbody id="mentees"></tbody></table></div>
     <form id="assessForm" novalidate style="display:grid;gap:0.75rem;margin-top:1.25rem;border-top:1px solid var(--border);padding-top:1rem">
-      <h3>Confirm a CGPA or record an assessment</h3>
+      <h3>Confirm marks or record an assessment</h3>
       <p class="small muted" style="margin:0">Students are never kept waiting for you: what they report counts at half until you confirm it here, then in full. Enter the figure from college records, the assessment result, or your own judgement of a transversal skill. It replaces what the student typed, and they cannot change an assessed skill.</p>
       <div class="row-2"><div class="field"><label for="as-student">Student</label><select id="as-student"></select></div><div class="field"><label for="as-what">What was assessed</label><select id="as-what"></select></div></div>
       <div class="row-2"><div class="field"><label for="as-score" id="as-scoreLbl">Score (0–100)</label><input type="number" id="as-score" min="0" max="100" step="any" inputmode="decimal"></div><div class="field" style="align-self:end"><button class="btn btn-primary" type="submit">Record result</button></div></div>
@@ -149,7 +149,7 @@
       // Mentor load, and one button to share out students who have nobody. New sign-ups get a mentor by themselves.
       var showMentoring = function (m) {
         $('#mentoring').innerHTML = (m.mentors.length ? '<div class="table-wrap"><table><thead><tr><th>Mentor</th><th class="n">Students</th></tr></thead><tbody>' + m.mentors.map(function (x) { return '<tr><td>' + esc(x.name) + '</td><td class="n">' + x.students + '</td></tr>'; }).join('') + '</tbody></table></div>'
-          : '<p class="note warning">No faculty mentor at your college has an NGRM account yet. Ask your mentors to create an account; the NGRM admin approves it, and waiting students are then shared among them.</p>') +
+          : '<p class="note warning">No faculty mentor at your college has an GRM account yet. Ask your mentors to create an account; the GRM admin approves it, and waiting students are then shared among them.</p>') +
           '<p style="margin-top:0.75rem">' + (m.withoutMentor ? '<b>' + m.withoutMentor + '</b> ' + (m.withoutMentor === 1 ? 'student has' : 'students have') + ' no mentor yet. ' + (m.mentors.length ? '<button class="btn btn-primary btn-sm" type="button" id="shareBtn">Share them among these mentors</button>' : '') : 'Every student at your college has a mentor. New students who sign up are given the mentor with the fewest students.') + '</p>';
       };
       N.api('GET', '/api/college/mentoring').then(showMentoring).catch(function (e) { N.showError($('#mentoring'), e); });
@@ -173,7 +173,7 @@
   var mentees = [];
   function waiting(s) {
     var w = [], n = s.skillsVerified.filter(function (v, i) { return !v && s.skillsRated[i]; }).length, t = s.transversal.filter(function (v, i) { return v != null && !s.transversalVerified[i]; }).length;
-    if (s.cgpa != null && !s.cgpaConfirmed) w.push('CGPA ' + s.cgpa + ' to confirm'); else if (s.cgpa == null) w.push('CGPA not entered');
+    if (s.cgpa != null && !s.cgpaConfirmed) w.push('CGPA ' + s.cgpa + ' to confirm'); else if (s.cgpa == null && s.class12 != null && !s.class12Confirmed) w.push('Class 12 marks ' + s.class12 + '% to confirm'); else if (s.cgpa == null && s.class12 == null) w.push('CGPA not entered');
     if (n) w.push(n + (n === 1 ? ' role skill' : ' role skills') + ' to assess');
     if (t) w.push(t + (t === 1 ? ' transversal skill' : ' transversal skills') + ' to assess');
     return w.length ? esc(w.join(' · ')) + '<br><span class="muted">Counting at half meanwhile</span>' : '<span class="muted">Nothing</span>';
@@ -190,21 +190,22 @@
   function whatOptions(keep) {
     var s = current(); if (!s) return; var was = keep === true ? $('#as-what').value : null;
     $('#as-what').innerHTML = '<option value="cgpa">CGPA' + (s.cgpaConfirmed ? ' (confirmed: ' + s.cgpa + ')' : s.cgpa != null ? ' (student entered ' + s.cgpa + ')' : '') + '</option>' +
+      (s.cgpa == null ? '<option value="class12">Class 12 marks, until a first CGPA' + (s.class12Confirmed ? ' (confirmed: ' + s.class12 + '%)' : s.class12 != null ? ' (student entered ' + s.class12 + '%)' : '') + '</option>' : '') +
       meta.roles[s.role].skills.map(function (k, i) { return '<option value="' + i + '">' + esc(k) + (s.skillsVerified[i] ? ' (assessed: ' + s.skills[i] + ')' : s.skillsRated[i] ? ' (student rated ' + s.skills[i] + ')' : ' (not rated)') + '</option>'; }).join('') +
       meta.transversal.map(function (k, i) { return '<option value="t' + i + '">' + esc(k) + (s.transversalVerified[i] ? ' (assessed: ' + s.transversal[i] + ')' : s.transversal[i] != null ? ' (student rated ' + s.transversal[i] + ')' : ' (not rated)') + '</option>'; }).join('');
     if (was != null) $('#as-what').value = was;
     whatShape();
   }
   function whatShape() {
-    var cg = $('#as-what').value === 'cgpa', sc = $('#as-score');
-    $('#as-scoreLbl').textContent = cg ? 'CGPA from college records (0–10)' : 'Score (0–100)'; sc.max = cg ? 10 : 100;
+    var cg = $('#as-what').value === 'cgpa', c12 = $('#as-what').value === 'class12', sc = $('#as-score');
+    $('#as-scoreLbl').textContent = cg ? 'CGPA from college records (0–10)' : c12 ? 'Class 12 percentage from the marks card (0–100)' : 'Score (0–100)'; sc.max = cg ? 10 : 100;
   }
   $('#as-student').addEventListener('change', whatOptions);
   $('#as-what').addEventListener('change', whatShape);
   $('#assessForm').addEventListener('submit', function (e) {
     e.preventDefault(); var err = $('#as-err');
     N.api('POST', '/api/mentor/assessments', { studentId: +$('#as-student').value, what: $('#as-what').value, value: $('#as-score').value })
-      .then(function (r) { err.hidden = true; $('#as-score').value = ''; N.toast(r.cgpa ? 'CGPA confirmed: ' + r.score + '.' : 'Recorded: ' + r.label + ' ' + r.score + '/100.'); return N.api('GET', '/api/mentor/mentees'); })
+      .then(function (r) { err.hidden = true; $('#as-score').value = ''; N.toast(r.cgpa ? 'CGPA confirmed: ' + r.score + '.' : r.class12 ? 'Class 12 marks confirmed: ' + r.score + '%.' : 'Recorded: ' + r.label + ' ' + r.score + '/100.'); return N.api('GET', '/api/mentor/mentees'); })
       .then(function (list) { mentees = list; menteeRows(list); whatOptions(true); })
       .catch(function (x) { err.hidden = false; err.textContent = x.message; });
   });

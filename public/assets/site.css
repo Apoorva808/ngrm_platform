@@ -1,4 +1,4 @@
-/* NGRM platform — shared styles.
+/* GRM platform — shared styles.
    Layout: utility bar + sticky header, then a page banner and a 1240px content column.
    Tokens keep the original platform's navy/emerald/amber system, with a dark theme and high-contrast mode added. */
 :root {

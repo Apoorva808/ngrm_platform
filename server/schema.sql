@@ -1,4 +1,4 @@
--- NGRM pilot database (SQLite for local development).
+-- GRM pilot database (SQLite for local development).
 -- The production equivalent for Supabase/Postgres, with row-level security, is in db/postgres/.
 
 PRAGMA foreign_keys = ON;
@@ -136,6 +136,8 @@ CREATE TABLE IF NOT EXISTS profiles (
   year           INTEGER NOT NULL DEFAULT 1,
   cgpa           REAL,
   cgpa_confirmed INTEGER NOT NULL DEFAULT 0,   -- 1 once a mentor has confirmed the CGPA against college records
+  class12        REAL,                         -- Class 12 percentage, used only until a first CGPA exists
+  class12_confirmed INTEGER NOT NULL DEFAULT 0,
   target_role    TEXT NOT NULL DEFAULT 'hr',
   skills_json    TEXT NOT NULL DEFAULT '[null,null,null,null]',  -- the student's own ratings; null = not rated yet
   ocean_json     TEXT,
@@ -215,7 +217,7 @@ CREATE TABLE IF NOT EXISTS demand_posts (
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Openings the NGRM team found in public sources (company career pages, government recruitment notices, Employment News),
+-- Openings the GRM team found in public sources (company career pages, government recruitment notices, Employment News),
 -- added by an admin with the source named and linked. They count towards live demand alongside employers' own posts.
 CREATE TABLE IF NOT EXISTS public_openings (
   id            INTEGER PRIMARY KEY,

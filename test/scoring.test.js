@@ -133,3 +133,12 @@ test('the transversal step works on the weakest of the five skills; the question
   assert.ok(!D.recommend(p, [], RULES_ON, { psyConsent: false }).some((x) => x.id === 'questionnaire'));
   assert.ok(!D.recommend({ ...p, ocean: { o: 50, c: 50, e: 50, a: 50, n: 50 } }, [], RULES_ON).some((x) => x.id === 'questionnaire'));
 });
+
+test('Class 12 marks stand in for a missing CGPA on the same terms, and never once a CGPA exists', () => {
+  const base = { skills: [50, 50, 50, 50], skillsVerified: ALL, ocean: null, clarity: null };
+  assert.equal(D.score({ ...base, cgpa: null, class12: 82 }, []).factors.cgpa, 41);
+  assert.equal(D.score({ ...base, cgpa: null, class12: 82, class12Confirmed: true }, []).factors.cgpa, 82);
+  const both = D.score({ ...base, cgpa: 6, cgpaConfirmed: true, class12: 95, class12Confirmed: true }, []);
+  assert.equal(both.factors.cgpa, 60); assert.equal(both.flags.marksFrom, 'cgpa');
+  assert.ok(D.score({ ...base, cgpa: null, class12: null }, []).flags.cgpaMissing);
+});

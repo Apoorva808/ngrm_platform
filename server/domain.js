@@ -10,7 +10,7 @@ const HALF = 0.5; // what a self-reported item counts for until it is confirmed
 // Formula v0.4 (from the advisers' review, November 2026). Academic excellence is the largest part, because employers judge
 // entry-level graduates on their discipline: CGPA, internships and projects together carry 35%.
 const FACTORS = [
-  { k: 'cgpa', group: 'academic', label: 'CGPA', w: 15, how: 'CGPA × 10. It counts in full once your mentor confirms it against college records, and at half until then. Not rated until you enter it.' },
+  { k: 'cgpa', group: 'academic', label: 'CGPA', w: 15, how: 'CGPA × 10. It counts in full once your mentor confirms it against college records, and at half until then. A first-year student with no CGPA yet can enter their Class 12 percentage instead, which is used until the first CGPA. Not rated until you enter one of them.' },
   { k: 'internships', group: 'academic', label: 'Internships', w: 10, how: '50 for each internship your mentor has verified, capped at 100. One waiting for your mentor counts at half (25), and items waiting can add at most 50 in all. One your mentor asked proof for counts 0 until you add it.' },
   { k: 'projects', group: 'academic', label: 'Projects and dissertation', w: 10, how: '35 for each project or dissertation your mentor has verified, capped at 100. One waiting for your mentor counts at half, and items waiting can add at most 50 in all.' },
   { k: 'technical', label: 'Technical skills for your aspired role', w: 20, how: 'Average of the four skills your aspired role needs. A skill your college has assessed counts in full, your own rating counts at half, and a skill you have not rated counts 0. Plus 3 per verified certificate and 1.5 per verified NPTEL or SWAYAM course (half while waiting). Capped at 100.' },
@@ -85,7 +85,7 @@ function pathNote(p) {
     direct: `${P.label} leads naturally to ${R.label}. Your coursework covers the base, so what sets you apart is proof: assessed skills, a finished project and an internship.`,
     related: `${P.label} is a workable base for ${R.label}. Some of what the role needs comes from your programme; plan to build ${two} outside class.`,
     switch: `${R.label} is a change of direction from ${d ? d.name : P.label}. That is common and doable, but your degree alone will not be read as evidence for this role, so courses with proctored exams, a finished project and an internship matter more for you than for most.`,
-    open: `Your plan is built around ${R.label} and ${P.label} as you typed them. ${R.needsReview ? 'This role is new to NGRM, so it starts with general workplace skills until the NGRM admin sets the specific ones.' : 'Ask your mentor how others have made this move.'}`,
+    open: `Your plan is built around ${R.label} and ${P.label} as you typed them. ${R.needsReview ? 'This role is new to GRM, so it starts with general workplace skills until the GRM admin sets the specific ones.' : 'Ask your mentor how others have made this move.'}`,
   }[f];
   return { fit: f, label: L.FIT_LABEL[f], text };
 }
@@ -101,7 +101,7 @@ const SLOTS = [
 ];
 
 const CONSENT_PURPOSES = {
-  profile: 'Store my profile, evidence and score so I can use NGRM',
+  profile: 'Store my profile, evidence and score so I can use GRM',
   psychometric: 'Store my answers to the personality questionnaire',
   ai_wording: 'Let an AI model reword the reasons for my recommendations (it never sees my name or contact details)',
   introductions: 'Let employers request an introduction through my placement cell',
@@ -137,7 +137,8 @@ const skillValue = (v, rated, assessed, half) => (assessed ? +v || 0 : rated ? (
 function compute(p, evidence, half) {
   const c = counts(evidence), w = waitingCounts(evidence);
   const f = {};
-  f.cgpa = given(p.cgpa) ? clamp(+p.cgpa * 10) * (p.cgpaConfirmed ? 1 : half) : null;
+  // Until a first CGPA exists, Class 12 marks (a percentage) stand in for it, on the same terms.
+  f.cgpa = given(p.cgpa) ? clamp(+p.cgpa * 10) * (p.cgpaConfirmed ? 1 : half) : given(p.class12) ? clamp(+p.class12) * (p.class12Confirmed ? 1 : half) : null;
   // Items waiting for the mentor can add at most half of a factor, so a list of unchecked claims can never fill it.
   const capped = (per, verified, waiting) => Math.min(100, per * verified + Math.min(50, per * waiting * half));
   f.internships = capped(50, c.internship, w.internship);
@@ -167,7 +168,7 @@ function score(p, evidence) {
   return { version: FORMULA_VERSION, factors: r.f, groups, index: r.index, confirmedIndex: sure.index, counts: r.c, waiting: r.w, ratedWeight: r.weight, completeness: r.weight,
     notRated: FACTORS.filter((F) => r.f[F.k] === null).map((F) => F.k),
     skillsAssessed: assessed,
-    flags: { cgpaMissing: !given(p.cgpa), cgpaUnconfirmed: given(p.cgpa) && !p.cgpaConfirmed, skillsUnassessed: sk.length - assessed,
+    flags: { cgpaMissing: !given(p.cgpa) && !given(p.class12), cgpaUnconfirmed: given(p.cgpa) ? !p.cgpaConfirmed : given(p.class12) && !p.class12Confirmed, marksFrom: given(p.cgpa) ? 'cgpa' : given(p.class12) ? 'class12' : null, skillsUnassessed: sk.length - assessed,
       transversalMissing: r.f.transversal === null, transversalUnassessed: TRANSVERSAL.filter((_, i) => given(tv[i]) && !tvA[i]).length,
       waitingEvidence: Object.values(r.w).reduce((a, b) => a + b, 0), psychometricMissing: r.f.socioemotional === null, clarityMissing: !given(p.clarity) } };
 }
@@ -249,6 +250,9 @@ function weakTransversal(p) {
   TRANSVERSAL.forEach((_, i) => { const v = given(tv[i]) ? +tv[i] : 0; const eff = tvA[i] ? v : v * HALF; if (eff < low) { low = eff; best = i; } });
   return best;
 }
+// What stands for the CGPA: the CGPA itself, or Class 12 marks until the first CGPA.
+const marksName = (p) => (given(p.cgpa) ? 'CGPA' : 'Class 12 marks');
+const marksText = (p, cap) => (given(p.cgpa) ? `${cap ? 'CGPA' : 'CGPA of'} ${p.cgpa}` : `${cap ? 'Class 12 marks' : 'Class 12 marks of'} ${p.class12}%`);
 const tvState = (p, i) => { const tv = p.transversal || [], tvA = p.transversalVerified || []; return tvA[i] ? `assessed at ${tv[i]}` : given(tv[i]) ? `your own rating ${tv[i]}, counting at half until assessed` : 'not rated yet'; };
 
 const RULES = {
@@ -259,13 +263,13 @@ const RULES = {
     sim: (p, ev) => [p, ev],
     assume: 'Not projected. These already count at half; once confirmed they count in full at whatever your college finds.',
     always: true, first: true,
-    title: (p, r) => (r.flags.cgpaUnconfirmed ? 'When you next meet your mentor, get your CGPA and ratings confirmed' : 'When you next meet your mentor, get your ratings assessed'),
+    title: (p, r) => (r.flags.cgpaUnconfirmed ? `When you next meet your mentor, get your ${marksName(p)} and ratings confirmed` : 'When you next meet your mentor, get your ratings assessed'),
     what: (p, r) => {
       const sk = ROLES[p.role].skills.map((s, i) => ((p.skillsRated || [])[i] && !(p.skillsVerified && p.skillsVerified[i]) ? skillWord(s) : null)).filter(Boolean);
       const tv = TRANSVERSAL.map((s, i) => (given((p.transversal || [])[i]) && !(p.transversalVerified || [])[i] ? lower(s) : null)).filter(Boolean);
-      return [r.flags.cgpaUnconfirmed ? `Show your marks card so your mentor can confirm your CGPA of ${p.cgpa}.` : '', sk.length ? `Ask when the college assessment runs for ${listOf(sk)}.` : '', tv.length ? `Your mentor can assess your ${listOf(tv)} from what they have seen of you.` : '', 'You do not need to wait for this: keep working on the rest of your plan.'].filter(Boolean).join(' '); },
-    why: (p, r) => `What you report about yourself counts at half until your college confirms it, then in full. ${r.flags.cgpaUnconfirmed ? 'Your CGPA is counting at half for now. ' : ''}Confirmed figures are also what employers and your placement cell can trust.`,
-    because: (p, r) => [r.flags.cgpaUnconfirmed ? `CGPA ${p.cgpa}, counting at half until confirmed` : null]
+      return [r.flags.cgpaUnconfirmed ? `Show your marks card so your mentor can confirm your ${marksText(p)}.` : '', sk.length ? `Ask when the college assessment runs for ${listOf(sk)}.` : '', tv.length ? `Your mentor can assess your ${listOf(tv)} from what they have seen of you.` : '', 'You do not need to wait for this: keep working on the rest of your plan.'].filter(Boolean).join(' '); },
+    why: (p, r) => `What you report about yourself counts at half until your college confirms it, then in full. ${r.flags.cgpaUnconfirmed ? `Your ${marksName(p)} ${given(p.cgpa) ? 'is' : 'are'} counting at half for now. ` : ''}Confirmed figures are also what employers and your placement cell can trust.`,
+    because: (p, r) => [r.flags.cgpaUnconfirmed ? `${marksText(p, true)}, counting at half until confirmed` : null]
       .concat(ROLES[p.role].skills.map((k, i) => ((p.skillsRated || [])[i] && !(p.skillsVerified && p.skillsVerified[i]) ? `${k}: ${skillState(p, i)}` : null)))
       .concat(TRANSVERSAL.map((k, i) => (given((p.transversal || [])[i]) && !(p.transversalVerified || [])[i] ? `${k}: ${tvState(p, i)}` : null))).filter(Boolean),
   },
@@ -303,7 +307,7 @@ const RULES = {
     // A skill employers asked for in their own words for this role. It is not one of the four scored skills, so it never changes the score.
     applies: (p, r, t, ctx) => !!(ctx && ctx.demand && ctx.demand.extra && ctx.demand.extra.length),
     sim: (p, ev) => [p, ev], noScore: true,
-    assume: 'Does not change your score: it is not one of the four skills NGRM scores for this role.',
+    assume: 'Does not change your score: it is not one of the four skills GRM scores for this role.',
     pick: (ctx) => ctx.demand.extra.find((k) => !k.have) || ctx.demand.extra[0],
     skillName: (p, ctx) => RULES.demand.pick(ctx).name,
     title: (p, r, ctx) => { const k = RULES.demand.pick(ctx); return k.have ? `Show employers your ${k.name}` : `Learn ${k.name}: employers are asking for it`; },
@@ -330,7 +334,7 @@ const RULES = {
     title: (p, r, ctx) => (ctx && ctx.yearsLeft === 0 ? 'Line up an internship or placement before you graduate' : ctx && ctx.yearsLeft >= 2 && p.year === 1 ? 'Find a short first internship or job-shadowing this summer' : 'Line up a summer internship'),
     what: (p, r, ctx) => { const posts = (ctx && ctx.demand && ctx.demand.cityPosts) || [], cities = ctx && ctx.words && ctx.words.cities;
       return `Aim for ${ROLES[p.role].internship}. Start with your placement cell; the AICTE internship portal also lists openings for students.`
-        + (posts.length ? ` ${listOf(posts.slice(0, 3).map((x) => `${x.employer} (${plural(x.openings, 'opening')} in ${x.city}${x.source ? `, from ${x.source}` : ''})`))} ${posts.length === 1 ? 'has' : 'have'} openings for ${ROLES[p.role].label} where you want to work.` : cities ? ` No openings for ${ROLES[p.role].label} in ${cities} are on NGRM yet, so look more widely or ask your placement cell.` : '')
+        + (posts.length ? ` ${listOf(posts.slice(0, 3).map((x) => `${x.employer} (${plural(x.openings, 'opening')} in ${x.city}${x.source ? `, from ${x.source}` : ''})`))} ${posts.length === 1 ? 'has' : 'have'} openings for ${ROLES[p.role].label} where you want to work.` : cities ? ` No openings for ${ROLES[p.role].label} in ${cities} are on GRM yet, so look more widely or ask your placement cell.` : '')
         + (fitOf(p) === 'switch' ? ` Coming from ${programme(p.prog).label}, say plainly in your application why you want ${ROLES[p.role].label} and point to your project or course.` : ''); },
     why: (p, r, t, ctx) => `Internships are part of academic excellence and carry 10% of your score. ${r.counts.internship === 0 ? 'You have no verified internships yet.' : `You are at ${Math.round(r.factors.internships)}/100.`}${ctx && ctx.yearsLeft === 0 ? ' You are in your final year, so this is the last chance to do one while still a student.' : ''}${peerLine(ctx, 'internship') ? ' ' + peerLine(ctx, 'internship') : ''}`,
     because: (p, r, ctx) => [plural(r.counts.internship, 'verified internship'), ctx && ctx.yearsLeft != null ? (ctx.yearsLeft === 0 ? 'Final year' : `${plural(ctx.yearsLeft, 'year')} left after this one`) : null, ctx && ctx.words && ctx.words.cities ? `Where you want to work: ${ctx.words.cities}` : null, peerChip(ctx, 'internship')].filter(Boolean),

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Sign in · NGRM</title>
+<title>Sign in · GRM</title>
 <link rel="stylesheet" href="assets/site.css">
 <style>
   .wrap { max-width: 980px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
@@ -57,7 +57,7 @@
     if (!codes) {
       // Email and password only: one form, no codes.
       $('#codeBtns').hidden = true; $('#useCode').hidden = true; $('#pwForm').hidden = false;
-      $('#forgot').textContent = 'Forgot it? Ask your NGRM admin for a temporary password' + (ctx.meta.operator && ctx.meta.operator.contact ? ' (' + ctx.meta.operator.contact + ')' : '') + '. You will choose a new one when you sign in.';
+      $('#forgot').textContent = 'Forgot it? Ask your GRM admin for a temporary password' + (ctx.meta.operator && ctx.meta.operator.contact ? ' (' + ctx.meta.operator.contact + ')' : '') + '. You will choose a new one when you sign in.';
       $('#how').textContent = 'Sign in with your email and password. This works the same for students, mentors, placement cells, employers, researchers and admins.';
     }
     if (ctx.meta.demoMode) N.api('GET', '/api/auth/demo-users').then(function (list) {
@@ -73,7 +73,7 @@
     var email = $('#email').value.trim();
     N.api('POST', '/api/auth/request-code', { email: email }).then(function (r) {
       $('#emailForm').hidden = true; $('#pwForm').hidden = true; $('#codeForm').hidden = false;
-      $('#sentTo').textContent = 'If ' + email + ' has an NGRM account, a code is on its way. It expires in 10 minutes.' + (r.devCode ? ' (Development code: ' + r.devCode + ')' : '') + (r.devNote ? ' (Development note: ' + r.devNote + ')' : '');
+      $('#sentTo').textContent = 'If ' + email + ' has an GRM account, a code is on its way. It expires in 10 minutes.' + (r.devCode ? ' (Development code: ' + r.devCode + ')' : '') + (r.devNote ? ' (Development note: ' + r.devNote + ')' : '');
       $('#code').focus();
     }).catch(function (x) { err(x.message); });
   });

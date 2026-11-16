@@ -1,4 +1,4 @@
--- Row-level security for NGRM on Supabase.
+-- Row-level security for GRM on Supabase.
 -- Principle: students can read their own rows; mentors read only their mentees; colleges and employers never
 -- read student rows directly and get aggregates through a function that hides small groups.
 -- Anything that changes a score, a locked value, a review or a verification goes through the API server

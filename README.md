@@ -1,6 +1,6 @@
-# NGRM Platform: pilot build
+# GRM Platform: pilot build
 
-Working frontend and backend for the National Graduate Readiness Mission pilot. It covers an explainable readiness score,
+Working frontend and backend for the Graduate Readiness Mission pilot. It covers an explainable readiness score,
 a plan the student controls, mentor review, college cohort views, and aggregated employer insight.
 
 The goal is a pilot that a university can run with real students once the items under "Before real students" are done.
@@ -21,7 +21,7 @@ The first start creates `data/ngrm.sqlite` and loads sample data. All names, col
 
 ## Demo accounts
 
-With `DEMO_MODE=true` the sign-in page shows one-click accounts. All end in `@demo.ngrm.in`.
+With `DEMO_MODE=true` the sign-in page shows one-click accounts. All end in `@demo.grm.in`.
 
 | Account | Role | What to try |
 |---|---|---|
@@ -32,7 +32,7 @@ With `DEMO_MODE=true` the sign-in page shows one-click accounts. All end in `@de
 | research@ | Researcher | Pseudonymous export of students who agreed to the study |
 | admin@ | Admin | Add colleges, employers and people; switch rules on or off, adjust thresholds; audit log |
 
-The other sample students (`student1@sample.ngrm.in` onwards) fill the totals; they have no passwords. An admin can give any of them one with "Reset password".
+The other sample students (`student1@sample.grm.in` onwards) fill the totals; they have no passwords. An admin can give any of them one with "Reset password".
 
 **Sign-up and sign-in use an email and a password. No codes are sent.**
 
@@ -79,7 +79,7 @@ AI is optional. When switched on (`GEMINI_API_KEY` and the student's AI consent)
 
 Aspired roles and programmes are not limited to a list. Anyone can pick a suggestion or type their own, on every kind of account.
 
-- **A typed role** ("Data Scientist", "Chartered Accountant", "IAS officer") is matched by keywords to one of 28 kinds of work in `server/library.js` and takes that kind's four skills, target levels, project idea and internship wording. No AI model is involved, so the same text always gives the same result. A role NGRM cannot place starts with four general workplace skills and is flagged for the admin.
+- **A typed role** ("Data Scientist", "Chartered Accountant", "IAS officer") is matched by keywords to one of 28 kinds of work in `server/library.js` and takes that kind's four skills, target levels, project idea and internship wording. No AI model is involved, so the same text always gives the same result. A role GRM cannot place starts with four general workplace skills and is flagged for the admin.
 - **A typed programme** ("B.E. Mechanical Engineering") is matched to a discipline and a usual length in years.
 - **Personalised by both.** The programme's discipline and the role's kind of work decide whether the student is on a direct path, a related path or a career switch. The score page and the plan say which, and the course, project, internship and clarity steps are worded for that role and that programme. This changes wording and suggestions only, never the score.
 - **Students** also see roles commonly chosen after their programme, as one-tap suggestions.
@@ -92,12 +92,12 @@ Aspired roles and programmes are not limited to a list. Anyone can pick a sugges
 
 ## How the plan is personalised
 
-The plan is what makes NGRM different, so every step is built from the student's own data rather than a template with the role name swapped in. Two students aiming for the same role get different plans.
+The plan is what makes GRM different, so every step is built from the student's own data rather than a template with the role name swapped in. Two students aiming for the same role get different plans.
 
-- **Which skill to work on.** Not simply the lowest number: the biggest gap to the role's target level, weighted up by how many openings employers posted for that skill. The card says so ("Employers on NGRM asked for it in 4 openings…"), and claims a skill is the most asked-for only when it is.
+- **Which skill to work on.** Not simply the lowest number: the biggest gap to the role's target level, weighted up by how many openings employers posted for that skill. The card says so ("Employers on GRM asked for it in 4 openings…"), and claims a skill is the most asked-for only when it is.
 - **Proof first.** Evidence the mentor asked proof for comes straight after confirmation ("Add proof for “Summer internship”"), with the points it is worth once verified. Evidence still waiting is a step of its own, ranked by what it adds.
 - **Time left.** A final-year student is told to line up an internship or placement before graduating, this semester; first-years are pointed to a short first internship or job-shadowing; CGPA advice changes in the final year.
-- **Where they want to work.** The internship step names organisations with openings for the role in the student's typed cities, crediting the source, or says plainly that there are none on NGRM yet.
+- **Where they want to work.** The internship step names organisations with openings for the role in the student's typed cities, crediting the source, or says plainly that there are none on GRM yet.
 - **What they wrote.** The project, co-curricular and transversal-skill steps are built around the student's typed interests and goal. If the goal points to a different kind of work from the aspired role ("I want to teach…" with Data Analyst), a step suggests adding it as another role to compare.
 - **Other roles.** A student can add up to two more roles they are considering. My score shows each side by side: path from their programme, which of the role's skills they already show (matched by name), and openings in the last 90 days. One tap makes another role the main one; the two swap.
 - **What employers typed.** A skill an employer typed in their own words becomes a step: learn it, or, if the student already listed it, add proof of it. These never change the score and say so.
@@ -107,15 +107,15 @@ The plan is what makes NGRM different, so every step is built from the student's
 - **Built from.** Every step lists the facts it was built from, on the student's plan and in the mentor's review queue, so both can see why it is there.
 - **Ranking.** Confirmation and requested proof first; then up to five steps that raise the score, largest gain first (the role-skill course is always kept); then the personal steps that do not change the score; then the human counsellor.
 - **Assumptions are stated.** A course is assumed to lift a rated skill by 15, or to bring an unrated skill to 50; the card says which.
-- **Limits.** Keyword matching decides what a typed goal "sounds like", so it can misread unusual wording. Peer shares describe what others have done, not what caused their scores. Demand counts only openings on NGRM: those employers posted and those the team added from public sources.
+- **Limits.** Keyword matching decides what a typed goal "sounds like", so it can misread unusual wording. Peer shares describe what others have done, not what caused their scores. Demand counts only openings on GRM: those employers posted and those the team added from public sources.
 
 ## Typed and personal, everywhere
 
 - **Nothing is filled in for anyone.** A new student has no profile until they type their programme, their year and the job they are aiming for; there is no default programme, role or year. Skill ratings, CGPA, personality, career clarity and every own-words box start empty, and a blank rating stays blank ("Not rated yet"). Every other typed box on the site starts empty too (kind of evidence, account type at sign-up, the mentor's student and skill boxes, the employer's role, openings and city, the admin's choices), and a form cannot be sent while one of its typed boxes is empty, so nothing is ever assumed.
 - **Every student has a mentor.** A student who signs up, or is added without a named mentor, is given the mentor at their college with the fewest students. When a mentor account is approved or added, students at that college who have nobody are shared among the mentors. The placement cell sees each mentor's load (counts only, no student names) and can share out anyone still waiting with one button. If a college has no mentor yet, its students wait and the placement cell is told so.
-- **Nothing drops down.** There are no dropdowns, suggestion lists, sliders or date pickers anywhere. The one exception is the personality questionnaire, which keeps its published five-point answer scale as a row of choices. Every answer is typed into a plain box, and the words the box understands are shown as ordinary text beside it ("Type one of: 1st year · 2nd year · 3rd year"). A few letters are enough when they fit only one answer, and "2" or "second" both mean 2nd year. Where the answers are fixed because the score or access depends on them (year, kind of evidence, kind of account), typing must match one of them and the box says so if it does not. Dates are typed as 5 Oct 2026, 05-10-2026 or Oct 2026. For roles and programmes the box says, as text, which wording NGRM already has, so the same job is not added twice.
+- **Nothing drops down.** There are no dropdowns, suggestion lists, sliders or date pickers anywhere. The one exception is the personality questionnaire, which keeps its published five-point answer scale as a row of choices. Every answer is typed into a plain box, and the words the box understands are shown as ordinary text beside it ("Type one of: 1st year · 2nd year · 3rd year"). A few letters are enough when they fit only one answer, and "2" or "second" both mean 2nd year. Where the answers are fixed because the score or access depends on them (year, kind of evidence, kind of account), typing must match one of them and the box says so if it does not. Dates are typed as 5 Oct 2026, 05-10-2026 or Oct 2026. For roles and programmes the box says, as text, which wording GRM already has, so the same job is not added twice.
 - **College at sign-up** is typed. A few words that fit one known college are enough; words that fit several ask for the full name. A college not in the list is added as "typed at sign-up" and the student gets in; it is offered to others only after the admin confirms it.
-- **In the student's own words.** On the score page a student can type their goal, interests, where they want to work, and up to eight other skills with their own rating. NGRM uses these to suggest roles ("From what you wrote"), to show how many openings are in their cities, and to tell them when an employer has asked for a skill they listed. The mentor sees all of it and can search mentees by any of it. None of it changes the score.
+- **In the student's own words.** On the score page a student can type their goal, interests, where they want to work, and up to eight other skills with their own rating. GRM uses these to suggest roles ("From what you wrote"), to show how many openings are in their cities, and to tell them when an employer has asked for a skill they listed. The mentor sees all of it and can search mentees by any of it. None of it changes the score.
 - **Steps of their own.** A student can type any step into their plan, give it a time, and tick it off. It appears on the roadmap and to the mentor, and does not change the score.
 - **Employers** can type further skills they need, in their own words, on each requirement.
 - **A personal line on every page** greets the signed-in person by name and says what is theirs and what is waiting: for a student their programme, role, path and score and what the mentor still has to confirm; for a mentor what is waiting to verify, confirm and assess; for a placement cell, employer, researcher and admin their own counts.
@@ -152,7 +152,7 @@ Set from the advisers' review in November 2026. Eight parts, weights out of 100:
 - **Live search.** Each course step also links to a live search for that exact skill on SWAYAM, Class Central and Coursera, so students always see what is running now. Admins can change the sites.
 - **Live screens.** The plan, evidence, mentor queue and employer pages refresh on their own every 30 seconds (paused while someone is typing or the tab is hidden).
 - **Live course feed.** Each course step also lists courses fetched from Coursera's catalogue for that exact skill, refreshed once a day per skill. Only the skill name is sent. The Admin page shows whether the feed is working and has a test box. If the feed is down or changes, students still see the checked courses and search links. Set `COURSE_FEED=off` to switch it off. This feed was built and tested against a stand-in; confirm it on the hosted site with the test box, and check Coursera's terms before relying on it.
-- **Skills in demand.** The plan page ranks the skills partner employers are asking for (openings in the last 90 days) against the student's own level, and the course step says when its skill is in demand. This is demand posted on NGRM, not a national job count.
+- **Skills in demand.** The plan page ranks the skills partner employers are asking for (openings in the last 90 days) against the student's own level, and the course step says when its skill is in demand. This is demand posted on GRM, not a national job count.
 - **Live activity.** Admins see people active today, sign-ins, student actions, evidence waiting, and a 14-day chart, exact and without names. Placement cells see their own college's last 7 days, hidden under 5 and rounded to 5.
 - **Not included.** There is no feed from SWAYAM (no public feed we could rely on) and no outside job-market data: the open jobs feed we looked at (Adzuna) restricts republishing its data in aggregated form without written consent. Demand shown to students is what employers post on this platform.
 

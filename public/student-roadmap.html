@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>My plan · NGRM</title>
+<title>My plan · GRM</title>
 <link rel="stylesheet" href="assets/site.css">
 <style>
   .banner-stats { display: flex; flex-wrap: wrap; gap: 1.5rem; }
@@ -73,12 +73,12 @@
     var vetted = L.courses.length ? '<ul class="small" style="margin:0.2rem 0 0.4rem;padding-left:1.1rem">' + L.courses.map(function (c) { return '<li>' + link(c.url, c.title) + ' · ' + esc(c.provider) + (c.weeks ? ' · ' + c.weeks + ' weeks' : '') + (c.free ? ' · free to learn' : '') + '</li>'; }).join('') + '</ul>' : '';
     var search = L.searches.length ? '<p class="small" style="margin:0">' + (L.courses.length ? 'More' : 'Find') + ' current courses in ' + esc(/^(Excel|SQL|Python|Git|Figma|Adobe|CAD|CRM|GST|Linux|English|Kannada|Hindi|Tally|Power|SEO|UI|UX|AI|ML)\b|^[A-Z]{2,}/.test(L.skill) ? L.skill : L.skill.charAt(0).toLowerCase() + L.skill.slice(1)) + ': ' + L.searches.map(function (s) { return link(s.url, s.name); }).join(' · ') + ' <span class="muted">(opens the site’s live results)</span></p>' : '';
     var live = L.live && L.live.length ? '<b class="small">Live from Coursera' + (L.liveCheckedAt ? ' · checked ' + new Date(L.liveCheckedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '') + '</b><ul class="small" style="margin:0.2rem 0 0.4rem;padding-left:1.1rem">' + L.live.map(function (c) { return '<li>' + link(c.url, c.title) + ' · ' + esc(c.provider) + '</li>'; }).join('') + '</ul>' : '';
-    var asked = L.demand && L.demand.openings ? '<p class="small" style="margin:0 0 0.4rem"><span class="chip success">In demand</span> ' + L.demand.openings + ' opening' + (L.demand.openings === 1 ? '' : 's') + ' on NGRM in the last 90 days asked for ' + esc(L.skill) + '.</p>' : '';
+    var asked = L.demand && L.demand.openings ? '<p class="small" style="margin:0 0 0.4rem"><span class="chip success">In demand</span> ' + L.demand.openings + ' opening' + (L.demand.openings === 1 ? '' : 's') + ' on GRM in the last 90 days asked for ' + esc(L.skill) + '.</p>' : '';
     return vetted || search || live ? '<div class="learn" style="border-left:3px solid var(--accent);padding-left:0.75rem;margin:0.5rem 0">' + asked + (vetted ? '<b class="small">Checked courses for this skill</b>' + vetted : '') + live + search + '</div>' : '';
   }
   function loadDemand(role) {
     return N.api('GET', '/api/demand/summary?role=' + encodeURIComponent(role)).then(function (d) {
-      if (!d.openings) { $('#demand').innerHTML = '<p class="muted">No openings for ' + esc(meta.roles[d.role].label) + ' are on NGRM for the last 90 days. This updates by itself when an employer posts one or the NGRM team adds one from a public source.</p>'; return; }
+      if (!d.openings) { $('#demand').innerHTML = '<p class="muted">No openings for ' + esc(meta.roles[d.role].label) + ' are on GRM for the last 90 days. This updates by itself when an employer posts one or the GRM team adds one from a public source.</p>'; return; }
       $('#demand').innerHTML = '<div class="grid-3"><div class="kpi"><b>' + d.openings + '</b><span>Openings for ' + esc(meta.roles[d.role].label) + ' (last 90 days)</span></div><div class="kpi"><b>' + d.employers + '</b><span>Organisations hiring</span></div><div class="kpi"><b>' + esc(d.skills[0] ? d.skills[0].name : '—') + '</b><span>Skill asked for most</span></div></div>' +
         '<h3 style="margin-top:1rem;font-size:1rem">Skills these openings ask for, against your level</h3><div class="demand-rows">' + d.skills.map(function (k) {
           var i = meta.roles[d.role].skills.indexOf(k.name), mine = profile && i >= 0 ? profile.skills[i] : null, max = d.skills[0].openings || 1;
@@ -87,8 +87,8 @@
         }).join('') + '</div>' +
         (d.personal && d.personal.openingsInMyCities != null ? '<p class="small" style="margin-top:0.6rem"><b>' + d.personal.openingsInMyCities + '</b> of these openings are in the places you said you want to work (' + esc(d.personal.cities) + ').</p>' : d.personal ? '<p class="small muted" style="margin-top:0.6rem">Type where you would like to work on My score, and this will show the openings there.</p>' : '') +
         (d.personal && d.personal.alsoAsked.length ? '<p class="small">They also ask for: ' + d.personal.alsoAsked.map(function (k) { return esc(k.name) + ' (' + k.openings + ' open' + (k.have ? ', <b>you listed this</b>' : '') + ')'; }).join(' · ') + '.</p>' : '') +
-        '<p class="small" style="margin-bottom:0.3rem"><b>Latest</b></p><ul class="small" style="margin:0 0 0.5rem;padding-left:1.1rem">' + d.latest.map(function (p) { return '<li>' + (p.title ? esc(p.title) + ', ' : '') + esc(p.employer) + (p.city ? ', ' + esc(p.city) : '') + ' · ' + p.openings + ' open · ' + (p.source ? 'found on ' + (p.url ? '<a href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer">' + esc(p.source) + '</a>' : esc(p.source)) : 'posted on NGRM by the employer') + '</li>'; }).join('') + '</ul>' +
-        '<p class="small muted">Openings come from employers posting on NGRM and from public sources the NGRM team checks (company career pages, government recruitment notices, Employment News), each credited to its source. This is not a national job count.</p>';
+        '<p class="small" style="margin-bottom:0.3rem"><b>Latest</b></p><ul class="small" style="margin:0 0 0.5rem;padding-left:1.1rem">' + d.latest.map(function (p) { return '<li>' + (p.title ? esc(p.title) + ', ' : '') + esc(p.employer) + (p.city ? ', ' + esc(p.city) : '') + ' · ' + p.openings + ' open · ' + (p.source ? 'found on ' + (p.url ? '<a href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer">' + esc(p.source) + '</a>' : esc(p.source)) : 'posted on GRM by the employer') + '</li>'; }).join('') + '</ul>' +
+        '<p class="small muted">Openings come from employers posting on GRM and from public sources the GRM team checks (company career pages, government recruitment notices, Employment News), each credited to its source. This is not a national job count.</p>';
     }).catch(function (e) { N.showError($('#demand'), e); });
   }
   function load() {

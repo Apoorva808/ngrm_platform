@@ -1,4 +1,4 @@
-/* NGRM frontend — shared client: API calls, page chrome by role, consent panel, small helpers. */
+/* GRM frontend — shared client: API calls, page chrome by role, consent panel, small helpers. */
 (function () {
   'use strict';
   var $ = function (s, el) { return (el || document).querySelector(s); };
@@ -66,7 +66,7 @@
       '<button class="a11y-btn" type="button" data-size="normal" aria-label="Normal text size">A</button><button class="a11y-btn" type="button" data-size="large" aria-label="Text size plus 15 percent">A+</button>' +
       '<button class="a11y-btn" type="button" data-size="xlarge" aria-label="Text size plus 30 percent">A++</button><button class="a11y-btn" type="button" id="contrastBtn">High contrast</button></div></div></div>' +
       '<header class="site-header"><div class="container header-inner">' +
-      '<a class="brand" href="index.html" aria-label="NGRM home"><span class="brand-mark">' + EYE + '</span><span><b>NGRM</b><small>National Graduate Readiness Mission</small></span></a>' +
+      '<a class="brand" href="index.html" aria-label="GRM home"><span class="brand-mark">' + EYE + '</span><span><b>GRM</b><small>Graduate Readiness Mission</small></span></a>' +
       '<button class="menu-btn" type="button" id="menuBtn" aria-expanded="false" aria-controls="mainNav">Menu</button>' +
       '<nav class="main-nav" id="mainNav" aria-label="Main">' +
       links.map(function (n) { return '<a class="nav-link" href="' + n[0] + '"' + (n[2] === page ? ' aria-current="page"' : '') + '>' + n[1] + '</a>'; }).join('') +
@@ -77,7 +77,7 @@
     var banner = $('.page-banner'), main = $('#main');
     if (banner && main && banner.parentNode !== main) main.insertBefore(banner, main.firstChild);
     var foot = document.createElement('footer'); foot.className = 'site-footer';
-    foot.innerHTML = '<div class="container"><div><p><b>NGRM · National Graduate Readiness Mission</b></p><p class="muted">Built by Team NAVDRISHTI. An independent, student-founded project. Not a government service.</p></div>' +
+    foot.innerHTML = '<div class="container"><div><p><b>GRM · Graduate Readiness Mission</b></p><p class="muted">Built by Team NAVDRISHTI. An independent, student-founded project. Not a government service.</p></div>' +
       '<div><p class="muted">' + (demo ? 'Pilot. All people, colleges, employers and figures are sample data. ' : 'Pilot. ') + 'Scoring formula ' + esc(meta ? meta.formulaVersion : 'v0.1') + '. Designed for the Digital Personal Data Protection Act, 2023. <a href="privacy.html">Privacy notice</a></p></div></div>';
     document.body.appendChild(foot);
     var t = document.createElement('div'); t.id = 'toasts'; t.setAttribute('role', 'status'); t.setAttribute('aria-live', 'polite'); document.body.appendChild(t);
@@ -133,7 +133,7 @@
     var keys = opts.keys || Object.keys(meta.consentPurposes);
     el.innerHTML = '<form class="card" id="consentForm" novalidate style="display:grid;gap:0.85rem">' +
       '<header><h2>' + esc(opts.title || 'Before you start: your consent') + '</h2><span class="small muted">You can change any of these later</span></header>' +
-      '<p class="muted">' + esc(opts.intro || 'NGRM only stores what you agree to here. The first box is needed to use NGRM; the others are optional.') + '</p>' +
+      '<p class="muted">' + esc(opts.intro || 'GRM only stores what you agree to here. The first box is needed to use GRM; the others are optional.') + '</p>' +
       '<fieldset><legend class="small">Are you 18 or older?</legend><div style="display:flex;gap:1.25rem;flex-wrap:wrap"><label class="check"><input type="radio" name="adult" id="adult-y" value="y" checked> Yes</label><label class="check"><input type="radio" name="adult" id="adult-n" value="n"> No</label></div></fieldset>' +
       '<div class="field" id="guardianBox" hidden><label for="g-name">Parent or guardian’s name</label><input type="text" id="g-name"><label class="check" style="margin-top:0.4rem"><input type="checkbox" id="g-ok"> <span>My parent or guardian has read this and agrees (needed under the DPDP Act for anyone under 18)</span></label></div>' +
       keys.map(function (k) { return '<label class="check"><input type="checkbox" id="c-' + k + '"' + (current && current[k] ? ' checked' : '') + '> <span>' + esc(meta.consentPurposes[k]) + (k === 'profile' ? ' <b>(needed)</b>' : '') + '</span></label>'; }).join('') +
@@ -145,7 +145,7 @@
       e.preventDefault();
       var purposes = {}; keys.forEach(function (k) { purposes[k] = $('#c-' + k, el).checked; });
       var adult = $('#adult-y', el).checked, err = $('#consentErr', el);
-      if (opts.requireProfile && !purposes.profile) { err.hidden = false; err.textContent = 'Tick the first box to use NGRM. Everything else is optional.'; return; }
+      if (opts.requireProfile && !purposes.profile) { err.hidden = false; err.textContent = 'Tick the first box to use GRM. Everything else is optional.'; return; }
       if (!adult && !$('#g-ok', el).checked) { err.hidden = false; err.textContent = 'Under 18: your parent or guardian needs to agree. Add their name and tick the box.'; return; }
       api('POST', '/api/me/consents', { purposes: purposes, isAdult: adult, guardianName: $('#g-name', el).value })
         .then(function (c) { err.hidden = true; toast('Your choices are saved.'); if (opts.onDone) opts.onDone(c); })
@@ -182,7 +182,7 @@
     return choices.filter(function (x) { return x.t.toLowerCase().indexOf(t) >= 0; }).slice(0, max || 5);
   }
 
-  // Aspired roles and programmes: type anything. Wording that is already on NGRM is reused; anything new is added
+  // Aspired roles and programmes: type anything. Wording that is already on GRM is reused; anything new is added
   // (the server matches it to a kind of work or a discipline).
   //   typeable(input, { kind: 'role' | 'programme', meta, onPick(key, created), note: element for a status line })
   function typeable(input, o) {
@@ -202,14 +202,14 @@
         var key = o.kind === 'role' ? r.key : r.id;
         if (o.kind === 'role') o.meta.roles[key] = r.role; else if (!o.meta.programmes.some(function (p) { return p.id === key; })) o.meta.programmes.push(r.programme);
         var changed = key !== input.dataset.key; set(key);
-        say(!r.created ? '' : o.kind === 'role' ? (r.role.needsReview ? 'Added “' + r.role.label + '”. NGRM does not know this role yet, so it starts with general workplace skills until the NGRM admin sets the specific ones.' : 'Added “' + r.role.label + '” with the skills this kind of role usually needs. The NGRM admin can adjust them.') : 'Added “' + r.programme.label + '” as a ' + r.programme.years + '-year programme.');
+        say(!r.created ? '' : o.kind === 'role' ? (r.role.needsReview ? 'Added “' + r.role.label + '”. GRM does not know this role yet, so it starts with general workplace skills until the GRM admin sets the specific ones.' : 'Added “' + r.role.label + '” with the skills this kind of role usually needs. The GRM admin can adjust them.') : 'Added “' + r.programme.label + '” as a ' + r.programme.years + '-year programme.');
         if (changed) o.onPick(key, r.created);
       }).catch(function (e) { input.value = label(input.dataset.key); say(e.message); }).then(function () { input.disabled = false; });
     }
-    // While typing, say in plain text which wording NGRM already has, so the same job is not added twice.
+    // While typing, say in plain text which wording GRM already has, so the same job is not added twice.
     input.addEventListener('input', function () {
       var t = input.value.trim(), m = near(t, options().filter(function (x) { return x[2] || x[0] === input.dataset.key; }).map(function (x) { return { v: x[0], t: x[1] }; }), 4);
-      say(!t || t.toLowerCase() === label(input.dataset.key).toLowerCase() ? '' : m.length ? 'Already on NGRM: ' + m.map(function (x) { return x.t; }).join(' · ') + '. Type one of these in full to use it, or keep your own wording.' : 'New to NGRM. It will be added when you leave this box.');
+      say(!t || t.toLowerCase() === label(input.dataset.key).toLowerCase() ? '' : m.length ? 'Already on GRM: ' + m.map(function (x) { return x.t; }).join(' · ') + '. Type one of these in full to use it, or keep your own wording.' : 'New to GRM. It will be added when you leave this box.');
     });
     // Leaving the box settles the answer a moment later, not at once: the text under the box changes when it does, and
     // if that moved the page while a button was being pressed, the press would miss the button.

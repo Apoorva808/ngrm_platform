@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Your account · NGRM</title>
+<title>Your account · GRM</title>
 <link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
@@ -12,7 +12,7 @@
 </div></div>
 <main id="main" tabindex="-1">
 <div class="container stack" style="max-width:40rem">
-  <section class="card" id="tempNote" hidden style="border-color:var(--warning)"><h2 style="font-size:1.1rem">Choose your own password to continue</h2><p>You signed in with a temporary password. Set your own below; the rest of NGRM opens once you have.</p></section>
+  <section class="card" id="tempNote" hidden style="border-color:var(--warning)"><h2 style="font-size:1.1rem">Choose your own password to continue</h2><p>You signed in with a temporary password. Set your own below; the rest of GRM opens once you have.</p></section>
   <section class="card" aria-labelledby="whoTitle"><h2 id="whoTitle">Signed in as</h2><p id="who"></p></section>
   <section class="card" aria-labelledby="pwTitle">
     <h2 id="pwTitle">Password</h2>
@@ -40,7 +40,7 @@
     $('#curBox').hidden = !needCurrent; $('#tempNote').hidden = !temp;
     $('#lead').textContent = codes ? 'How you sign in. An emailed code always works; a password is optional.' : 'How you sign in: your email and your password.';
     $('#pwState').textContent = temp ? 'You are on a temporary password.' : !me.hasPassword ? 'You have no password yet. Set one below.' : codes ? 'You have a password. You can sign in with it or with an emailed code.' : 'You have a password.';
-    $('#pwNote').textContent = 'Saving a password signs you out on your other devices. ' + (codes ? 'If you forget it, sign in with an emailed code and set a new one here.' : 'If you forget it, ask your NGRM admin for a temporary one.');
+    $('#pwNote').textContent = 'Saving a password signs you out on your other devices. ' + (codes ? 'If you forget it, sign in with an emailed code and set a new one here.' : 'If you forget it, ask your GRM admin for a temporary one.');
     $('#pwBtn').textContent = me.hasPassword && !temp ? 'Change password' : 'Save password';
   }
   var codes = false, wasTemp = false;
