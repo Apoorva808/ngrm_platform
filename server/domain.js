@@ -104,9 +104,17 @@ const CONSENT_PURPOSES = {
   profile: 'Store my profile, evidence and score so I can use GRM',
   psychometric: 'Store my answers to the personality questionnaire',
   ai_wording: 'Let an AI model reword the reasons for my recommendations (it never sees my name or contact details)',
+  ai_proof_check: 'Let an AI model take a first look at proof files I upload, to help my mentor check them (it reads the file, which may show my name; my mentor still decides)',
   introductions: 'Let employers request an introduction through my placement cell',
   study: 'Include my de-identified data in the outcome study, with follow-ups after graduation',
 };
+
+// Volunteer mentors (advisers' review, November 2026): where they work or worked.
+const SECTORS = { industry: 'Industry', government: 'Government', education: 'Education', other: 'Other' };
+// Kinds of mentoring time a mentor can log towards a certificate of hours.
+const SESSION_KINDS = { one_to_one: 'One-to-one session', group: 'Group session', review: 'Reviewing work or proof' };
+// Where an opening added by the GRM team was found. Students see the source named and linked.
+const SOURCE_KINDS = { company: 'Company careers page', government: 'Government recruitment notice', employment_news: 'Employment News', agency: 'Recruitment agency, with its client’s agreement', partner: 'Partner organisation', portal: 'Job portal listing' };
 
 const clamp = (v, lo = 0, hi = 100) => Math.min(hi, Math.max(lo, v));
 const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
@@ -471,5 +479,5 @@ function projectIndex(p, evidence, ruleIds, ctx) {
   return score(q, ev).index;
 }
 
-module.exports = { pathNote, fitOf, programme, BUILT_IN_ROLES, BUILT_IN_PROGRAMMES, projectIndex, FORMULA_VERSION, MIN_GROUP, HALF, FACTORS, GROUPS, TRANSVERSAL, IPIP, IPIP_SCALE, TRAIT_NAMES, ipipTraits, ROLES, PROGRAMMES, EVIDENCE_TYPES, SLOTS, CONSENT_PURPOSES,
+module.exports = { SECTORS, SESSION_KINDS, SOURCE_KINDS, pathNote, fitOf, programme, BUILT_IN_ROLES, BUILT_IN_PROGRAMMES, projectIndex, FORMULA_VERSION, MIN_GROUP, HALF, FACTORS, GROUPS, TRANSVERSAL, IPIP, IPIP_SCALE, TRAIT_NAMES, ipipTraits, ROLES, PROGRAMMES, EVIDENCE_TYPES, SLOTS, CONSENT_PURPOSES,
   DEFAULT_RULE_SETTINGS, RETIRED_RULES, THRESHOLD_RANGE, weakest, weakTransversal, focusSkill, score, band, recommend, counts, avg, round1, clamp };

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Certificate of mentoring hours · GRM</title>
+<link rel="stylesheet" href="assets/site.css">
+<style>
+  .cert { border: 2px solid var(--accent-border); border-radius: var(--radius-md); padding: clamp(1.25rem, 4vw, 2.5rem); display: grid; gap: 0.9rem; text-align: center; background: var(--surface); }
+  .cert h2 { font-size: clamp(1.4rem, 3.5vw, 2rem); margin: 0; }
+  .cert .who { font-size: clamp(1.25rem, 3vw, 1.7rem); font-weight: 700; }
+  .cert .figures { display: flex; justify-content: center; gap: 1.5rem 2.5rem; flex-wrap: wrap; }
+  .cert .figures div { display: grid; }
+  .cert .figures b { font-size: 1.6rem; }
+  .cert .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.06em; }
+  @media print { .utility-bar, .site-header, .site-footer, .no-print, .skip-link { display: none !important; } .cert { border-color: #333; } }
+</style>
+</head>
+<body>
+<main id="main" tabindex="-1">
+<div class="container stack" style="max-width:46rem;padding-block:1.5rem">
+  <h1 class="no-print" style="font-size:1.4rem;margin:0">Mentoring certificates</h1>
+  <form class="card no-print" id="findForm" novalidate style="display:flex;gap:0.6rem;flex-wrap:wrap;align-items:end">
+    <div class="field" style="flex:1 1 14rem"><label for="code">Check a certificate by its code</label><input type="text" id="code" maxlength="20" autocomplete="off" placeholder="GRM-…" spellcheck="false"></div>
+    <button class="btn btn-primary" type="submit">Check</button>
+  </form>
+  <p class="small" id="err" role="alert" style="color:var(--danger)" hidden></p>
+  <section class="cert" id="cert" hidden aria-labelledby="cTitle">
+    <span class="eyebrow">Graduate Readiness Mission</span>
+    <h2 id="cTitle">Certificate of mentoring hours</h2>
+    <p style="margin:0">This is to record that</p>
+    <div class="who" id="cName"></div>
+    <p style="margin:0" id="cDesc"></p>
+    <p style="margin:0">gave their time to mentor students on GRM between <b id="cFrom"></b> and <b id="cTo"></b>:</p>
+    <div class="figures"><div><b id="cHours"></b><span class="small muted">hours</span></div><div><b id="cSessions"></b><span class="small muted">sessions logged</span></div><div><b id="cStudents"></b><span class="small muted">students mentored one-to-one</span></div></div>
+    <p class="small muted" style="margin:0">Hours are as logged by the mentor on GRM. Issued <span id="cIssued"></span>. Check it at this page with the code <span class="code" id="cCode"></span>.</p>
+  </section>
+  <div class="no-print" id="printRow" hidden><button class="btn btn-secondary" type="button" id="printBtn">Print or save as PDF</button></div>
+</div>
+</main>
+<script src="assets/app.js"></script>
+<script>
+(function () {
+  var N = NGRM, $ = N.$;
+  var day = function (d) { return new Date(d.slice(0, 10) + 'T00:00:00Z').toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }); };
+  function show(code) {
+    var err = $('#err'); err.hidden = true;
+    code = String(code || '').trim().toUpperCase(); if (!code) return;
+    N.api('GET', '/api/certificates/' + encodeURIComponent(code)).then(function (c) {
+      $('#cName').textContent = c.name; $('#cDesc').textContent = c.description;
+      $('#cFrom').textContent = day(c.from_date); $('#cTo').textContent = day(c.to_date);
+      $('#cHours').textContent = N.f1(c.minutes / 60); $('#cSessions').textContent = c.sessions; $('#cStudents').textContent = c.students;
+      $('#cIssued').textContent = day(c.issued_at); $('#cCode').textContent = c.code;
+      $('#cert').hidden = false; $('#printRow').hidden = false; $('#code').value = c.code;
+      document.title = 'Certificate ' + c.code + ' · GRM';
+    }).catch(function (x) { $('#cert').hidden = true; $('#printRow').hidden = true; err.hidden = false; err.textContent = x.message; });
+  }
+  N.boot('certificate').then(function () {
+    var m = /[?&]code=([^&]+)/.exec(location.search); if (m) show(decodeURIComponent(m[1]));
+  });
+  $('#findForm').addEventListener('submit', function (e) { e.preventDefault(); show($('#code').value); });
+  $('#printBtn').addEventListener('click', function () { window.print(); });
+})();
+</script>
+</body>
+</html>

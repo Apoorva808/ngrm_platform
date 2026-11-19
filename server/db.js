@@ -36,6 +36,20 @@ function migrate(db) {
   // Class 12 marks stand in for the CGPA until a first-year student has one (advisers' review, November 2026).
   addCol('profiles', 'class12', 'REAL');
   addCol('profiles', 'class12_confirmed', 'INTEGER NOT NULL DEFAULT 0');
+  // Advisers' review, November 2026: volunteer mentor details at sign-up, where each opening was found, and an optional AI first look at proof files.
+  addCol('signups', 'extra_json', 'TEXT');
+  addCol('public_openings', 'source_kind', "TEXT NOT NULL DEFAULT 'company'");
+  addCol('evidence', 'ai_check_json', 'TEXT');
+  // The consent list gained a purpose; SQLite cannot change a CHECK, so older databases get the table rebuilt with the same rows.
+  const cons = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'consents'").get();
+  if (cons && !cons.sql.includes('ai_proof_check')) {
+    db.exec('BEGIN');
+    try {
+      db.exec("ALTER TABLE consents RENAME TO consents_old; " + cons.sql.replace(/CREATE TABLE ("?)consents\1/, 'CREATE TABLE consents').replace("'ai_wording',", "'ai_wording','ai_proof_check',") +
+        "; INSERT INTO consents SELECT * FROM consents_old; DROP TABLE consents_old; CREATE INDEX IF NOT EXISTS consents_user ON consents(user_id, purpose, id);");
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+  }
   for (const id of ['communication', 'leadership']) { db.prepare('DELETE FROM recommendation_states WHERE rule_id = ?').run(id); db.prepare('DELETE FROM rules WHERE id = ?').run(id); }
 }
 

@@ -62,7 +62,7 @@
     }
     if (ctx.meta.demoMode) N.api('GET', '/api/auth/demo-users').then(function (list) {
       $('#demoCard').hidden = false;
-      $('#demoList').innerHTML = list.map(function (u) { return '<button class="btn btn-secondary" type="button" data-email="' + esc(u.email) + '"><span>' + esc(u.name) + '</span><small>' + esc(ROLE[u.role]) + '</small></button>'; }).join('');
+      $('#demoList').innerHTML = list.map(function (u) { return '<button class="btn btn-secondary" type="button" data-email="' + esc(u.email) + '"><span>' + esc(u.name) + '</span><small>' + esc(u.volunteer ? 'Volunteer mentor' : ROLE[u.role]) + '</small></button>'; }).join('');
     });
   });
   var codes = true;

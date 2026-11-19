@@ -36,6 +36,10 @@
     <header><h2 id="suTitle">Sign-up requests</h2><span class="small muted">Staff, employers and researchers who signed up and confirmed their email</span></header>
     <div id="signups"></div>
   </section>
+  <section class="card" aria-labelledby="volTitle">
+    <header><h2 id="volTitle">Volunteer mentors</h2><span class="small muted">From industry, government and education; students ask for one</span></header>
+    <div id="volunteers"></div>
+  </section>
   <div class="grid-2">
     <section class="card" aria-labelledby="pTitle">
       <header><h2 id="pTitle">Add people</h2><span class="small muted">One person per line</span></header>
@@ -100,16 +104,28 @@
   </section>
   <section class="card" aria-labelledby="opTitle">
     <header><h2 id="opTitle">Openings from public sources</h2><span class="small muted">Count towards live demand, credited to their source</span></header>
-    <p class="small">Most employers will not post here, so add openings you find on company career pages, government recruitment notices or Employment News. Students see the source named and linked, so check it is real and current. Openings older than 90 days stop counting.</p>
+    <p class="small">Most employers will not post here, so add openings you find on company career pages, government recruitment notices, Employment News, partner organisations, job portal listings, or recruitment agencies whose clients agree. Students see the source named and linked, so check it is real and current. Openings older than 90 days stop counting.</p>
     <form id="opForm" novalidate style="display:grid;gap:0.75rem">
       <div class="row-2"><div class="field"><label for="op-title">Job title, as the source gives it</label><input type="text" id="op-title" maxlength="120" placeholder="For example: Junior Data Analyst"></div><div class="field"><label for="op-org">Organisation hiring</label><input type="text" id="op-org" maxlength="120"></div></div>
       <div class="row-2"><div class="field"><label for="op-role">Counts towards which aspired role</label><input type="text" id="op-role" maxlength="60" placeholder="Type a role, for example Data Analyst" aria-describedby="op-roleNote"><span class="hint" id="op-roleNote" role="status"></span></div><div class="field"><label for="op-city">City</label><input type="text" id="op-city" maxlength="60" placeholder="For example: Bengaluru"></div></div>
       <div class="row-2"><div class="field"><label for="op-skills">Skills it asks for</label><input type="text" id="op-skills" maxlength="300" placeholder="Separate with commas: SQL, Power BI"></div><div class="field"><label for="op-n">Number of openings</label><input type="number" id="op-n" min="1" max="500" placeholder="1"></div></div>
-      <div class="row-2"><div class="field"><label for="op-src">Source</label><input type="text" id="op-src" maxlength="80" placeholder="For example: company careers page, Employment News"></div><div class="field"><label for="op-url">Link to the source</label><input type="url" id="op-url" placeholder="https://"></div></div>
+      <fieldset class="field"><legend>Where you found it</legend><div style="display:flex;gap:0.4rem 1.1rem;flex-wrap:wrap" id="op-kinds"></div>
+        <label class="check" id="op-agreedRow" hidden style="margin-top:0.4rem"><input type="checkbox" id="op-agreed"> <span>The agency’s client agreed to this opening being listed on GRM</span></label>
+        <span class="hint">Job portals: add only openings the portal’s terms let you list, and link to the listing itself.</span></fieldset>
+      <div class="row-2"><div class="field"><label for="op-src">Name of the source (optional)</label><input type="text" id="op-src" maxlength="80" placeholder="For example: Employment News, 8–14 Nov 2026"></div><div class="field"><label for="op-url">Link to the source</label><input type="url" id="op-url" placeholder="https://"></div></div>
       <div class="field" style="max-width:20rem"><label for="op-date">Date posted (optional)</label><input type="text" id="op-date" maxlength="30" placeholder="For example: 12 Nov 2026"></div>
       <p class="small" id="op-err" style="color:var(--danger)" hidden></p>
       <div><button class="btn btn-primary" type="submit">Add opening</button></div>
     </form>
+    <details style="margin-top:1rem"><summary><b>Add many at once</b></summary>
+      <form id="opImport" novalidate style="display:grid;gap:0.75rem;margin-top:0.75rem">
+        <div class="field"><label for="op-rows">One opening per line, fields separated by commas</label>
+          <textarea id="op-rows" rows="6" spellcheck="false" placeholder="Junior Data Analyst, State Bank, Data Analyst, Mumbai, SQL; Excel, 3, government, , https://example.gov.in/notice, 2026-11-10"></textarea>
+          <span class="hint">Title, organisation, role, city, skills (separated by ;), number of openings, where found (company, government, employment news, agency, partner or portal), name of the source, link, date posted (YYYY-MM-DD), and for an agency “yes” if its client agreed. Put a field in double quotes if it has a comma. Nothing is saved if any line has a mistake.</span></div>
+        <p class="small" id="op-ierr" style="color:var(--danger)" hidden></p>
+        <div><button class="btn btn-primary" type="submit">Add these openings</button></div>
+      </form>
+    </details>
     <div class="table-wrap" style="margin-top:1rem"><table><thead><tr><th>Opening</th><th>Role</th><th class="n">Openings</th><th>Source</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="openings"></tbody></table></div>
   </section>
   <section class="card" aria-labelledby="rTitle"><header><h2 id="rTitle">Recommendation rules</h2><span class="small muted">Changes apply on the student’s next page load</span></header>
@@ -182,7 +198,8 @@
   function loadSignups() {
     return N.api('GET', '/api/admin/signups').then(function (list) {
       $('#signups').innerHTML = list.length ? '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>College or company</th><th>Asked</th><th></th></tr></thead><tbody>' + list.map(function (s) {
-        return '<tr><td>' + esc(s.name) + '</td><td>' + esc(s.email) + '</td><td>' + esc(s.role) + '</td><td>' + esc(s.org || '—') + '</td><td>' + esc(String(s.created_at).slice(0, 10)) + '</td><td style="white-space:nowrap"><button class="btn btn-primary btn-sm" type="button" data-approve="' + esc(s.email) + '">Approve</button> <button class="btn btn-secondary btn-sm" type="button" data-decline="' + esc(s.email) + '">Decline</button></td></tr>'; }).join('') + '</tbody></table></div><p class="small muted" style="margin-top:0.5rem">Check that the person really works at the college or company before approving. Students do not need approval.</p>'
+        var v = s.volunteer;
+        return '<tr><td>' + esc(s.name) + '</td><td>' + esc(s.email) + '</td><td>' + (v ? 'volunteer mentor' : esc(s.role)) + '</td><td>' + esc(s.org || '—') + (v ? '<br><span class="small muted">' + esc(v.sectorLabel) + ' · can guide in ' + esc(v.expertise.join(', ')) + ' · up to ' + v.capacity + ' students</span>' : '') + '</td><td>' + esc(String(s.created_at).slice(0, 10)) + '</td><td style="white-space:nowrap"><button class="btn btn-primary btn-sm" type="button" data-approve="' + esc(s.email) + '">Approve</button> <button class="btn btn-secondary btn-sm" type="button" data-decline="' + esc(s.email) + '">Decline</button></td></tr>'; }).join('') + '</tbody></table></div><p class="small muted" style="margin-top:0.5rem">Check that the person really works at the college or company before approving. For a volunteer mentor, check who they are and where they work, for example on the organisation’s own site. Students do not need approval.</p>'
         : '<p class="small muted">No requests are waiting. Students who sign up get their account straight away; other roles appear here for approval.</p>';
     });
   }
@@ -227,7 +244,7 @@
   function fail(e) { N.toast(e.message); }
   function loadOpenings() {
     return N.api('GET', '/api/admin/openings').then(function (list) {
-      $('#openings').innerHTML = list.map(function (o) { return '<tr><td>' + esc(o.title) + ', ' + esc(o.organisation) + (o.city ? ', ' + esc(o.city) : '') + (o.skills.length ? '<br><span class="small muted">' + esc(o.skills.join(', ')) + '</span>' : '') + '</td><td>' + esc(o.roleLabel) + '</td><td class="n">' + o.openings + '</td><td><a href="' + esc(o.source_url) + '" target="_blank" rel="noopener noreferrer">' + esc(o.source_name) + '</a><br><span class="small muted">' + esc(o.posted_on || o.created_at.slice(0, 10)) + '</span></td><td><button class="btn-link" type="button" data-opening="' + o.id + '">Remove</button></td></tr>'; }).join('') || '<tr><td colspan="5" class="muted">None added yet.</td></tr>';
+      $('#openings').innerHTML = list.map(function (o) { return '<tr><td>' + esc(o.title) + ', ' + esc(o.organisation) + (o.city ? ', ' + esc(o.city) : '') + (o.skills.length ? '<br><span class="small muted">' + esc(o.skills.join(', ')) + '</span>' : '') + '</td><td>' + esc(o.roleLabel) + '</td><td class="n">' + o.openings + '</td><td><a href="' + esc(o.source_url) + '" target="_blank" rel="noopener noreferrer">' + esc(o.source_name) + '</a>' + (o.kindLabel && o.kindLabel.indexOf(o.source_name) !== 0 ? '<br><span class="small muted">' + esc(o.kindLabel) + '</span>' : '') + '<br><span class="small muted">' + esc(o.posted_on || o.created_at.slice(0, 10)) + '</span></td><td><button class="btn-link" type="button" data-opening="' + o.id + '">Remove</button></td></tr>'; }).join('') || '<tr><td colspan="5" class="muted">None added yet.</td></tr>';
     });
   }
   var opRole = null;
@@ -236,6 +253,9 @@
   N.boot('admin', ['admin']).then(function (ctx) { me = ctx.me; meta = ctx.meta;
     $('#c-role').innerHTML = Object.keys(meta.roles).map(function (k) { return '<option value="' + k + '">' + esc(meta.roles[k].label) + '</option>'; }).join('') + '<option value="transversal">Transversal skills (every role)</option>';
     skillOptions(); loadCourses().catch(fail); loadFeed().catch(fail); loadOpenings().catch(fail);
+    $('#op-kinds').innerHTML = Object.keys(meta.sourceKinds).map(function (k) { return '<label class="check"><input type="radio" name="opkind" value="' + k + '"> ' + esc(meta.sourceKinds[k].split(',')[0]) + '</label>'; }).join('');
+    N.$$('input[name=opkind]').forEach(function (r) { r.addEventListener('change', function () { $('#op-agreedRow').hidden = !$('input[name=opkind][value=agency]').checked; }); });
+    loadVolunteers().catch(fail);
     opRole = N.typeable($('#op-role'), { kind: 'role', meta: meta, note: $('#op-roleNote'), onPick: function () {} });
     loadActivity().catch(fail); N.live(loadActivity, 30); loadPeople().catch(fail); loadSignups().catch(fail); N.live(loadSignups, 30); loadLibrary().catch(fail); loadRules().catch(fail); loadAudit().catch(fail); });
 
@@ -268,10 +288,37 @@
     e.preventDefault(); var err = $('#op-err'), when = N.typedDate($('#op-date').value);
     Promise.resolve(opRole.choose($('#op-role').value)).then(function () {
       if ($('#op-date').value.trim() && !when) throw new Error('Type the date like 12 Nov 2026, or leave it blank.');
-      return N.api('POST', '/api/admin/openings', { title: $('#op-title').value, organisation: $('#op-org').value, role: opRole.key(), city: $('#op-city').value, skills: $('#op-skills').value, openings: $('#op-n').value, sourceName: $('#op-src').value, sourceUrl: $('#op-url').value, postedOn: when || null });
-    }).then(function () { err.hidden = true; ['#op-title', '#op-skills', '#op-n', '#op-url', '#op-date'].forEach(function (i) { $(i).value = ''; }); N.toast('Opening added. Students see it in live demand straight away.'); loadOpenings(); loadAudit(); })
+      return N.api('POST', '/api/admin/openings', { title: $('#op-title').value, organisation: $('#op-org').value, role: opRole.key(), city: $('#op-city').value, skills: $('#op-skills').value, openings: $('#op-n').value, sourceKind: ($('input[name=opkind]:checked') || {}).value, clientAgreed: $('#op-agreed').checked, sourceName: $('#op-src').value, sourceUrl: $('#op-url').value, postedOn: when || null });
+    }).then(function () { err.hidden = true; $('#op-agreed').checked = false; ['#op-title', '#op-skills', '#op-n', '#op-url', '#op-date'].forEach(function (i) { $(i).value = ''; }); N.toast('Opening added. Students see it in live demand straight away.'); loadOpenings(); loadAudit(); })
       .catch(function (x) { err.hidden = false; err.textContent = x.message; });
   });
+  // One line of the openings upload. Fields may be in double quotes when they contain a comma.
+  function csvLine(line) {
+    var out = [], cur = '', q = false;
+    for (var i = 0; i < line.length; i++) { var ch = line[i];
+      if (q) { if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; } else if (ch === '"') q = false; else cur += ch; }
+      else if (ch === '"') q = true; else if (ch === ',') { out.push(cur.trim()); cur = ''; } else cur += ch; }
+    out.push(cur.trim()); return out;
+  }
+  function kindOf(t) {
+    t = String(t || '').toLowerCase();
+    return /employment news/.test(t) ? 'employment_news' : /agenc/.test(t) ? 'agency' : /govern|notice|psc|ssc|recruitment board/.test(t) ? 'government' : /partner/.test(t) ? 'partner' : /portal|naukri|linkedin|indeed/.test(t) ? 'portal' : /compan|career/.test(t) ? 'company' : t;
+  }
+  $('#opImport').addEventListener('submit', function (e) {
+    e.preventDefault(); var err = $('#op-ierr');
+    var rows = $('#op-rows').value.split('\n').map(function (l) { return l.trim(); }).filter(Boolean).map(function (l) { var f = csvLine(l);
+      return { title: f[0], organisation: f[1], role: f[2], city: f[3], skills: (f[4] || '').split(';').join(','), openings: f[5], sourceKind: kindOf(f[6]), sourceName: f[7], sourceUrl: f[8], postedOn: f[9] || null, clientAgreed: /^(yes|y|agreed)$/i.test(f[10] || '') }; });
+    if (!rows.length) { err.hidden = false; err.textContent = 'Add at least one line.'; return; }
+    N.api('POST', '/api/admin/openings/import', { rows: rows }).then(function (r) { err.hidden = true; $('#op-rows').value = ''; N.toast('Added ' + r.added + (r.added === 1 ? ' opening.' : ' openings.')); loadOpenings(); loadAudit(); })
+      .catch(function (x) { err.hidden = false; err.textContent = x.message; });
+  });
+  function loadVolunteers() {
+    return N.api('GET', '/api/admin/volunteers').then(function (list) {
+      $('#volunteers').innerHTML = list.length ? '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Where</th><th>Can guide in</th><th class="n">Students</th><th class="n">Hours logged</th></tr></thead><tbody>' + list.map(function (v) {
+        return '<tr><td>' + esc(v.name) + '<br><span class="small muted">' + esc(v.email) + '</span></td><td>' + esc(v.sectorLabel) + ', ' + esc(v.organisation || '') + '</td><td class="small">' + esc(v.expertise.join(', ')) + '</td><td class="n">' + v.students + ' / ' + v.capacity + '</td><td class="n">' + N.f1(v.minutes / 60) + '</td></tr>'; }).join('') + '</tbody></table></div>'
+        : '<p class="small muted">No volunteer mentors yet. Share the sign-up page with “Volunteer mentor” chosen: signup.html?role=volunteer</p>';
+    });
+  }
   $('#openings').addEventListener('click', function (e) { var b = e.target.closest('[data-opening]'); if (b) N.api('DELETE', '/api/admin/openings/' + b.dataset.opening).then(function () { N.toast('Removed.'); loadOpenings(); }).catch(fail); });
   $('#courseForm').addEventListener('submit', function (e) {
     e.preventDefault(); var err = $('#c-err');

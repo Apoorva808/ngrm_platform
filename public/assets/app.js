@@ -273,6 +273,7 @@
   var MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
   function typedDate(text) {
     var t = String(text || '').trim().toLowerCase().replace(/(\d)(st|nd|rd|th)\b/g, '$1').replace(/,/g, ' ').replace(/\s+/g, ' '); if (!t) return '';
+    if (t === 'today' || t === 'yesterday') { var n = new Date(Date.now() - (t === 'today' ? 0 : 864e5)); return n.getFullYear() + '-' + ('0' + (n.getMonth() + 1)).slice(-2) + '-' + ('0' + n.getDate()).slice(-2); }
     var y, m, d, x;
     if ((x = t.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/))) { y = +x[1]; m = +x[2]; d = +x[3]; }
     else if ((x = t.match(/^(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{2}|\d{4})$/))) { d = +x[1]; m = +x[2]; y = +x[3]; }

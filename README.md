@@ -27,7 +27,8 @@ With `DEMO_MODE=true` the sign-in page shows one-click accounts. All end in `@de
 |---|---|---|
 | ananya@ | Student (BA Psychology, year 2, aiming for HR) | Score, plan, accept or decline steps, add evidence, export or delete data |
 | kavya@ | Mentor | Review queue, approve or comment on plans, verify evidence, record college assessment results, cohort view |
-| placement@ | College placement cell | Cohort readiness by programme (groups under 5 hidden), students interested in introduction requests |
+| volunteer@ | Volunteer mentor (industry, no college) | Mentees who asked for a volunteer, review queue, skill assessments (no marks), mentoring hours and a certificate |
+| placement@ | College placement cell | Cohort readiness by programme (groups under 5 hidden), which roles each programme leads to, students interested in introduction requests |
 | recruiter@ | Employer | Skill supply by college, post demand, request introductions, see how many replied |
 | research@ | Researcher | Pseudonymous export of students who agreed to the study |
 | admin@ | Admin | Add colleges, employers and people; switch rules on or off, adjust thresholds; audit log |
@@ -142,7 +143,15 @@ Set from the advisers' review in November 2026. Eight parts, weights out of 100:
 - **Research export.** Pseudonyms, month-only dates, scores rounded to 5, CGPA-based score in wide bands. Where fewer than 5 participants share a programme, year and aspired role, the role, then year, then programme is withheld; rare CGPA bands are withheld too.
 - **CGPA and career clarity** can be corrected but not cleared once entered, so a low value cannot be hidden.
 - **Class 12 marks for first-years.** A student with no CGPA yet can enter their Class 12 percentage. It stands in for the CGPA on the same terms (half until the mentor confirms it from the marks card, full after) and is replaced by the first CGPA.
-- **Openings from public sources.** Most employers will not post on a new platform, so an admin can add openings found on company career pages, government recruitment notices or Employment News, each with the source named and linked. They count in live demand for 90 days alongside employers' own posts, and students see where each came from.
+- **Openings from public sources.** Most employers will not post on a new platform, so an admin can add openings found on company career pages, government recruitment notices, Employment News, partner organisations, job portal listings (where the portal's terms allow) or recruitment agencies (only with the agency's client's agreement, which the admin must confirm). Each has its kind and source named and linked. Many can be added at once, one per line; nothing is saved if any line has a mistake. They count in live demand for 90 days alongside employers' own posts, and students see where each came from.
+
+## Added after the advisers' review (November 2026)
+
+- **Volunteer mentors.** People from industry, government and education can sign up as volunteer mentors (sector, organisation, up to 5 areas, how many students they can take). The admin approves them like any mentor. A volunteer is never assigned automatically: a student asks for one on the My plan page and is matched by their aspired role, its skills and their goal. One volunteer per student, on top of the college mentor; the student can end it at any time. Volunteers review plans, check proof and assess skills, but only a mentor at the student's college can confirm CGPA or Class 12 marks, and the college views are closed to them.
+- **Mentoring hours and certificate.** Every mentor can log time (one-to-one, group, or reviewing work), and after an hour or more get a certificate with a code. Anyone can check the certificate at `certificate.html?code=…` without signing in. It shows hours, sessions and the number of students, never their names. It is a snapshot: later changes to the log do not alter it.
+- **Programme-to-role map.** The placement cell types, for each programme, up to 5 roles its students usually go into. Students of that programme at that college see them beside "Other roles you are considering" and can add one to compare with a click. They are ideas only and never touch the score.
+- **AI first look at proof files.** A separate consent, off by default. With it and `GEMINI_API_KEY` set, an uploaded proof file is sent to Gemini, which answers whether the name and title seem to match, the issuer and date, and a one-line summary. The mentor sees this as a hint beside the item. It never verifies anything. Links are stripped from the answer; withdrawing the consent deletes every such note. Not yet tried against the live Gemini service.
+- **Not changed.** The skill check stays as it is (self-rating at half until a mentor assesses it). One-on-one paid talks were dropped. Automated search of job portals remains for later; openings from portals are added by the team, with the link.
 - **One-page report.** A student can print or save a one-page summary for employers: score and band, confirmed-only score, each part, skills marked assessed or self-rated, and verified evidence. Personality data is never included.
 - **Known limits.** The weights are a starting point, not yet validated against outcomes. Skill matching between roles is by exact skill name. Because unanswered parts are left out, a student who never answers the questionnaire is scored without it; completeness is shown beside every score.
 - Every recorded score stores its inputs and formula version. Scores recorded under v0.1 to v0.3 keep that label.
@@ -159,9 +168,9 @@ Set from the advisers' review in November 2026. Eight parts, weights out of 100:
 
 ## Quality checks done
 
-- 79 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
+- 89 automated tests (`npm test`) covering scoring, sign-in limits, access between roles, consent, small-group protection, introductions, assessments, admin tools, data rights, and the AI wording path (with a stand-in for Google's service).
 - The tests pass on Node 22.13, 22.23 and 24. Node 22.12 and older cannot run the built-in database, and the server says so.
-- A browser walk-through of every page for all six roles (133 checks), at desktop and phone widths, with no server errors.
+- A browser walk-through of every page for all six roles, including volunteer mentors (270 checks), at desktop and phone widths, with no server errors.
 - An automated accessibility scan (axe-core, WCAG 2.1 AA) of every page in normal and high-contrast mode: no violations. Keyboard-only use works.
 - Speed with 20,000 extra students: every page answers in under 0.2 seconds.
 - The Postgres scripts were applied to Postgres 16 and their access rules tested role by role.
@@ -176,13 +185,14 @@ Not yet tested, because they need real services: email delivery, the live Gemini
 |---|---|
 | Sign-in | `POST /api/auth/sign-up`, `POST /api/auth/sign-up/verify`, `POST /api/auth/request-code`, `POST /api/auth/verify`, `POST /api/auth/password`, `POST /api/me/password`, `POST /api/admin/users/:id/reset-password`, `POST /api/auth/sign-out`, `GET /api/me` |
 | Student | `GET/PUT /api/me/profile`, `POST /api/me/score`, `GET /api/me/score-history`, `GET/POST/PATCH/DELETE /api/me/evidence`, `GET/POST /api/me/intro-requests`, `GET /api/me/recommendations`, `PATCH /api/me/recommendations/:ruleId`, `GET/POST /api/me/consents`, `PATCH /api/me/intro-opt-in`, `POST /api/me/baseline`, `GET /api/me/export`, `DELETE /api/me` |
-| Mentor | `GET /api/mentor/mentees`, `GET /api/mentor/queue`, `POST /api/mentor/assessments`, `PATCH /api/mentor/reviews/:studentId/:ruleId`, `POST /api/mentor/evidence/:id` |
-| College | `GET /api/college/cohort?programme=`, `GET /api/college/intro-requests` |
+| Mentor | `GET /api/mentor/mentees`, `GET /api/mentor/queue`, `POST /api/mentor/assessments`, `PATCH /api/mentor/reviews/:studentId/:ruleId`, `POST /api/mentor/evidence/:id`, `GET/POST /api/mentor/sessions`, `DELETE /api/mentor/sessions/:id`, `POST /api/mentor/certificate`, `GET /api/certificates/:code` (public) |
+| Volunteer mentors | `GET /api/me/mentors`, `POST` and `DELETE /api/me/volunteer-mentor`, `GET /api/admin/volunteers` |
+| College | `GET /api/college/cohort?programme=`, `GET /api/college/intro-requests`, `GET/PUT /api/college/programme-roles` |
 | Employer | `GET /api/employer/supply?role=`, `POST /api/employer/demand`, `DELETE /api/employer/demand/:id`, `GET/POST /api/employer/intros`, `GET /api/demand` |
 | Research | `GET /api/research/export` |
 | Typed details | `POST`, `PATCH`, `DELETE /api/me/steps`, `GET /api/me/today`, `POST /api/admin/orgs/:id/confirm` |
 | Typed roles and programmes | `POST /api/library/role`, `POST /api/library/programme`, `GET /api/library/suggest?programme=`, `GET /api/admin/library`, `PUT` and `DELETE /api/admin/library/roles/:key`, `PUT` and `DELETE /api/admin/library/programmes/:id` |
-| Admin | `GET /api/admin/people?q=`, `POST /api/admin/orgs`, `POST /api/admin/users`, `DELETE /api/admin/users/:id`, `GET /api/admin/audit`, `GET /api/admin/rules`, `PATCH /api/admin/rules/:id` |
+| Admin | `GET /api/admin/people?q=`, `POST /api/admin/orgs`, `POST /api/admin/users`, `DELETE /api/admin/users/:id`, `GET /api/admin/audit`, `GET /api/admin/rules`, `PATCH /api/admin/rules/:id`, `GET/POST /api/admin/openings`, `POST /api/admin/openings/import`, `DELETE /api/admin/openings/:id` |
 
 ## Settings (.env)
 
@@ -209,7 +219,7 @@ Not yet tested, because they need real services: email delivery, the live Gemini
 
 ## Moving to production (Supabase)
 
-`db/postgres/001_schema.sql` and `002_rls.sql` are the production version of the database for Supabase.
+`db/postgres/001_schema.sql` and `002_rls.sql` are the production version of the database for Supabase. They do not yet include the tables added since (sign-up requests, openings from public sources, volunteer mentors, mentoring hours, certificates, the programme-to-role map); add those before moving.
 Students can only add consent rows (never edit or delete the history), and profile changes, scores, reviews and verifications go through the API. Helper checks sit in a `private` schema that Supabase does not publish. They have been applied to Postgres 16 and tested: a student sees only their own rows, a mentor sees only their mentees,
 an employer and a placement cell see no student rows, students cannot mark their own evidence as verified or reply on
 someone else's behalf, a placement cell sees introduction replies only from its own college, and the employer supply

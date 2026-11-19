@@ -127,9 +127,21 @@ function seed(db) {
     // Openings the team found in public sources. In this sample data they are fictional and say so.
     for (const [title, org, role, city, skills, n] of [['People analytics trainee', 'Sample organisation D', 'hr', 'Bengaluru', ['Excel and data analysis', 'Power BI'], 3], ['Junior data analyst', 'Sample organisation E', 'data', 'Bengaluru', ['SQL', 'Python', 'Power BI'], 5], ['Counselling assistant', 'Sample organisation F', 'wellbeing', 'Mysuru', ['Active listening', 'Kannada'], 2]])
       h.run("INSERT INTO public_openings (title, organisation, role, city, skills_json, openings, source_name, source_url, posted_on) VALUES (?, ?, ?, ?, ?, ?, 'Sample listing (not a real opening)', 'https://example.com/sample-listing', date('now', '-10 days'))", title, org, role, city, JSON.stringify(skills), n);
+    h.run("UPDATE public_openings SET source_kind = CASE role WHEN 'hr' THEN 'company' WHEN 'data' THEN 'portal' ELSE 'government' END");
     // One earlier introduction request, with replies from some students who opted in.
     const intro = h.run("INSERT INTO intro_requests (employer_id, role, created_at) VALUES (?, 'data', datetime('now', '-5 days'))", emps[1]).lastInsertRowid;
     for (const u of h.all("SELECT p.user_id FROM profiles p WHERE p.target_role = 'data' AND p.opt_in_intros = 1")) if (R() < 0.6) h.run('INSERT INTO intro_replies (request_id, user_id) VALUES (?, ?)', intro, u.user_id);
+
+    // A volunteer mentor from industry (no college), with two sample students who asked for one, and some logged hours.
+    const vol = user('volunteer@demo.grm.in', 'Meena Krishnan', 'mentor');
+    h.run('INSERT INTO volunteers (user_id, sector, organisation, expertise_json, capacity) VALUES (?, ?, ?, ?, ?)', vol, 'industry', 'Sample analytics firm', JSON.stringify(['Data analysis', 'SQL', 'Interview practice']), 8);
+    const asked = h.all("SELECT p.user_id FROM profiles p JOIN users u ON u.id = p.user_id WHERE p.target_role = 'data' AND u.email LIKE '%@sample.grm.in' ORDER BY u.id LIMIT 2");
+    for (const a of asked) h.run('INSERT INTO mentor_links (mentor_id, student_id) VALUES (?, ?)', vol, a.user_id);
+    if (asked[0]) h.run("INSERT INTO mentor_sessions (mentor_id, student_id, held_on, minutes, kind, note) VALUES (?, ?, date('now', '-12 days'), 45, 'one_to_one', 'Mock interview')", vol, asked[0].user_id);
+    h.run("INSERT INTO mentor_sessions (mentor_id, student_id, held_on, minutes, kind, note) VALUES (?, NULL, date('now', '-5 days'), 60, 'group', 'SQL practice session')", vol);
+    h.run("INSERT INTO mentor_sessions (mentor_id, student_id, held_on, minutes, kind, note) VALUES (?, ?, date('now', '-3 days'), 30, 'one_to_one', 'Plan review')", kavya, ananya);
+    // The placement cell's note on where its programmes usually lead.
+    for (const [prog, roles] of [['ba-psy', ['hr', 'wellbeing', 'ux']], ['bcom', ['marketing', 'data']]]) roles.forEach((r, i) => h.run('INSERT INTO programme_roles (institution_id, programme, role_key, position) VALUES (?, ?, ?, ?)', insts[0], prog, r, i));
   });
   return true;
 }

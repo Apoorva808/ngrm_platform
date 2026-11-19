@@ -34,7 +34,7 @@
   var N = NGRM, $ = N.$;
   var ROLE = { student: 'Student', mentor: 'Faculty mentor', college_admin: 'College placement cell', employer: 'Employer', researcher: 'Researcher', admin: 'Admin' };
   function show(me) {
-    $('#who').textContent = me.name + ' · ' + me.email + ' · ' + ROLE[me.role];
+    $('#who').textContent = me.name + ' · ' + me.email + ' · ' + (me.volunteer ? 'Volunteer mentor' : ROLE[me.role]);
     // Changing a password needs the current one, unless you signed in with an emailed code (the reset route).
     var temp = !!me.mustChangePassword, needCurrent = me.hasPassword && me.signedInWith !== 'code' && !temp;
     $('#curBox').hidden = !needCurrent; $('#tempNote').hidden = !temp;

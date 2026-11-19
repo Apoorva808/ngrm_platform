@@ -28,6 +28,8 @@ function createApp(db, opts = {}) {
   const dropFile = (p) => { if (p) fs.rm(path.join(uploadDir, path.basename(p)), { force: true }, () => {}); };
   const auth = makeAuth(h, { audit, sendCode });
   const feeds = opts.feeds || makeFeeds(h);
+  // The AI first look at proof files. Tests pass their own; in the browser demo it is switched off.
+  const proofChecker = opts.proofChecker || ai.checkProof;
   const app = express();
 
   // ---------- Basics ----------
@@ -94,6 +96,7 @@ function createApp(db, opts = {}) {
     }
     return out;
   }
+  const aiCheckOf = (evId) => parse((h.get('SELECT ai_check_json FROM evidence WHERE id = ?', evId) || {}).ai_check_json, null);
   const evidenceOf = (userId) => h.all('SELECT id, type, title, completed_on, file_name, status, verified_by, verified_at, skill_index, skill_role, skill_value, file_path IS NOT NULL AS has_file FROM evidence WHERE user_id = ? ORDER BY id', userId);
   // Skills set by a verified college assessment, for a given target role: { index: value }.
   function verifiedSkills(userId, role) {
@@ -169,8 +172,8 @@ function createApp(db, opts = {}) {
   function postsFor(role) {
     const own = h.all("SELECT d.skills_json, d.extra_json, d.openings, d.city, d.created_at, e.name AS employer FROM demand_posts d JOIN employers e ON e.id = d.employer_id WHERE d.role = ? AND d.created_at > datetime('now', '-90 days') ORDER BY d.id DESC", role)
       .map((d) => ({ employer: d.employer, city: d.city, openings: d.openings, postedAt: d.created_at, skills: parse(d.skills_json, []).concat(parse(d.extra_json, [])), source: null, url: null }));
-    const found = h.all("SELECT title, organisation, skills_json, openings, city, source_name, source_url, COALESCE(posted_on, date(created_at)) AS posted FROM public_openings WHERE role = ? AND COALESCE(posted_on, date(created_at)) > date('now', '-90 days') ORDER BY id DESC", role)
-      .map((d) => ({ employer: d.organisation, title: d.title, city: d.city, openings: d.openings, postedAt: d.posted, skills: parse(d.skills_json, []), source: d.source_name, url: httpsUrl(d.source_url) }));
+    const found = h.all("SELECT title, organisation, skills_json, openings, city, source_name, source_url, source_kind, COALESCE(posted_on, date(created_at)) AS posted FROM public_openings WHERE role = ? AND COALESCE(posted_on, date(created_at)) > date('now', '-90 days') ORDER BY id DESC", role)
+      .map((d) => ({ employer: d.organisation, title: d.title, city: d.city, openings: d.openings, postedAt: d.posted, skills: parse(d.skills_json, []), source: d.source_name, sourceKind: D.SOURCE_KINDS[d.source_kind] || null, url: httpsUrl(d.source_url) }));
     return own.concat(found);
   }
   // What employers are asking for, per skill of a role, from openings in the last 90 days.
@@ -198,17 +201,124 @@ function createApp(db, opts = {}) {
   // ---------- Mentors for every student ----------
   // A student with no mentor cannot have anything confirmed, so nobody is left without one when their college has mentors:
   // each new student goes to the mentor at their college with the fewest students.
+  // A college mentor is a mentor at the student's own college. Volunteer mentors (no college) come on top, only when a student asks.
+  const hasCollegeMentor = (st) => !!h.get('SELECT 1 FROM mentor_links l JOIN users m ON m.id = l.mentor_id WHERE l.student_id = ? AND m.institution_id = ?', st.id, st.institution_id);
   function giveMentor(studentId) {
     const st = h.get("SELECT id, institution_id FROM users WHERE id = ? AND role = 'student'", studentId);
-    if (!st || !st.institution_id || h.get('SELECT 1 FROM mentor_links WHERE student_id = ?', st.id)) return false;
+    if (!st || !st.institution_id || hasCollegeMentor(st)) return false;
     const m = h.get("SELECT u.id FROM users u WHERE u.role = 'mentor' AND u.institution_id = ? ORDER BY (SELECT COUNT(*) FROM mentor_links l WHERE l.mentor_id = u.id), u.id LIMIT 1", st.institution_id);
     if (!m) return false;
     h.run('INSERT INTO mentor_links (mentor_id, student_id) VALUES (?, ?)', m.id, st.id); return true;
   }
-  const unmentored = (instId) => h.all("SELECT u.id FROM users u WHERE u.role = 'student' AND u.institution_id = ? AND NOT EXISTS (SELECT 1 FROM mentor_links l WHERE l.student_id = u.id) ORDER BY u.id", instId);
+  const unmentored = (instId) => h.all("SELECT u.id FROM users u WHERE u.role = 'student' AND u.institution_id = ? AND NOT EXISTS (SELECT 1 FROM mentor_links l JOIN users m ON m.id = l.mentor_id WHERE l.student_id = u.id AND m.institution_id = u.institution_id) ORDER BY u.id", instId);
   const shareOut = (instId) => h.tx(() => unmentored(instId).filter((s) => giveMentor(s.id)).length);
   // The placement cell sees how its mentors are loaded and can share out students who have none. No student is named.
-  const mentoring = (instId) => ({ mentors: h.all("SELECT u.name, (SELECT COUNT(*) FROM mentor_links l WHERE l.mentor_id = u.id) AS students FROM users u WHERE u.role = 'mentor' AND u.institution_id = ? ORDER BY u.name", instId), withoutMentor: unmentored(instId).length });
+  const mentoring = (instId) => ({ mentors: h.all("SELECT u.name, (SELECT COUNT(*) FROM mentor_links l WHERE l.mentor_id = u.id) AS students FROM users u WHERE u.role = 'mentor' AND u.institution_id = ? ORDER BY u.name", instId), withoutMentor: unmentored(instId).length,
+    withVolunteer: h.get("SELECT COUNT(DISTINCT l.student_id) AS n FROM mentor_links l JOIN volunteers v ON v.user_id = l.mentor_id JOIN users u ON u.id = l.student_id WHERE u.institution_id = ?", instId).n });
+
+  // ---------- Volunteer mentors ----------
+  // People from industry, government and education who give their time free. They can review plans, check proof and assess
+  // skills, but only a mentor at the student's college can confirm marks against college records.
+  // Volunteer mentors have no college, so the college views are not for them.
+  const atCollege = (req, res, next) => (req.user.institution_id ? next() : fail(res, 403, 'This view is for mentors and placement cells at a college.'));
+  const isVolunteer = (userId) => !!h.get('SELECT 1 FROM volunteers WHERE user_id = ?', userId);
+  function volunteerDetails(b) {
+    const sector = String(b.sector || '');
+    if (!has(D.SECTORS, sector)) return { error: 'Choose the sector you work in: industry, government, education or other.' };
+    const organisation = L.clean(b.volOrg ?? b.organisation, 120);
+    if (!organisation || organisation.length < 2) return { error: 'Type where you work, or worked last.' };
+    const expertise = [];
+    for (const x of String(Array.isArray(b.expertise) ? b.expertise.join(',') : b.expertise || '').split(/[,;\n]/)) { const t = L.clean(x, 40); if (t && !expertise.some((k) => L.norm(k) === L.norm(t))) expertise.push(t); }
+    if (!expertise.length) return { error: 'Type at least one area you can guide students in, for example data analysis or civil services.' };
+    if (expertise.length > 5) return { error: 'Type up to 5 areas you can guide students in.' };
+    const capacity = b.capacity === undefined || b.capacity === null || b.capacity === '' ? 10 : Number(b.capacity);
+    if (!Number.isInteger(capacity) || capacity < 1 || capacity > 30) return { error: 'Say how many students you can take on, from 1 to 30.' };
+    return { sector, organisation, expertise, capacity };
+  }
+  const saveVolunteer = (userId, v) => h.run('INSERT OR REPLACE INTO volunteers (user_id, sector, organisation, expertise_json, capacity) VALUES (?, ?, ?, ?, ?)', userId, v.sector, v.organisation, JSON.stringify(v.expertise), v.capacity);
+  const volunteerOf = (userId) => { const v = h.get('SELECT * FROM volunteers WHERE user_id = ?', userId); return v ? { sector: v.sector, sectorLabel: D.SECTORS[v.sector], organisation: v.organisation, expertise: parse(v.expertise_json, []), capacity: v.capacity } : null; };
+  // The volunteer with room whose areas best match what the student is aiming for (role, its skills, their goal and interests).
+  function pickVolunteer(studentId) {
+    const row = profileRow(studentId) || {}, R = D.ROLES[row.target_role];
+    // Words of the role's name count three times as much as words from its skills or the student's goal and interests.
+    const words = (t) => L.norm(t).split(' ').filter((w) => w.length > 1 && !['and', 'the', 'for', 'with'].includes(w));
+    const wanted = new Map(); for (const w of words([R ? R.skills.join(' ') : '', row.goal || '', row.interests || ''].join(' '))) wanted.set(w, 1);
+    for (const w of words(R ? R.label : '')) wanted.set(w, 3);
+    const list = h.all("SELECT v.user_id AS id, v.capacity, v.expertise_json, (SELECT COUNT(*) FROM mentor_links l WHERE l.mentor_id = v.user_id) AS n FROM volunteers v JOIN users u ON u.id = v.user_id WHERE u.role = 'mentor'")
+      .filter((v) => v.n < v.capacity)
+      .map((v) => ({ ...v, match: parse(v.expertise_json, []).reduce((t, x) => t + words(x).reduce((u, w) => u + (wanted.get(w) || 0), 0), 0) }))
+      .sort((a, b) => b.match - a.match || a.n / a.capacity - b.n / b.capacity || a.id - b.id);
+    return list[0] || null;
+  }
+  const myVolunteer = (studentId) => h.get('SELECT l.mentor_id AS id FROM mentor_links l JOIN volunteers v ON v.user_id = l.mentor_id WHERE l.student_id = ?', studentId);
+  app.get('/api/me/mentors', need('student'), (req, res) => {
+    const list = h.all('SELECT u.id, u.name, u.institution_id FROM mentor_links l JOIN users u ON u.id = l.mentor_id WHERE l.student_id = ? ORDER BY u.institution_id IS NULL, u.name', req.user.id)
+      .map((m) => { const v = volunteerOf(m.id); return v ? { name: m.name, kind: 'volunteer', sector: v.sectorLabel, organisation: v.organisation, expertise: v.expertise } : { name: m.name, kind: 'college' }; });
+    res.json({ mentors: list, volunteerRoom: !myVolunteer(req.user.id) && !!pickVolunteer(req.user.id) });
+  });
+  app.post('/api/me/volunteer-mentor', need('student'), (req, res) => {
+    if (!hasConsent(req.user.id, 'profile')) return fail(res, 403, 'consent_required:profile');
+    if (myVolunteer(req.user.id)) return fail(res, 409, 'You already have a volunteer mentor. End that first if you want someone else.');
+    const v = pickVolunteer(req.user.id);
+    if (!v) return fail(res, 409, 'No volunteer mentor has room right now. Try again in a few days.');
+    h.run('INSERT INTO mentor_links (mentor_id, student_id) VALUES (?, ?)', v.id, req.user.id);
+    audit(req.user.id, 'student.volunteer_asked', v.id);
+    const u = h.get('SELECT name FROM users WHERE id = ?', v.id), d = volunteerOf(v.id);
+    res.status(201).json({ name: u.name, sector: d.sectorLabel, organisation: d.organisation, expertise: d.expertise });
+  });
+  app.delete('/api/me/volunteer-mentor', need('student'), (req, res) => {
+    const v = myVolunteer(req.user.id); if (!v) return fail(res, 404, 'You do not have a volunteer mentor.');
+    h.run('DELETE FROM mentor_links WHERE mentor_id = ? AND student_id = ?', v.id, req.user.id);
+    audit(req.user.id, 'student.volunteer_ended', v.id); res.json({ ok: true });
+  });
+  app.get('/api/admin/volunteers', need('admin'), (req, res) => res.json(h.all("SELECT u.id, u.name, u.email, v.sector, v.organisation, v.expertise_json, v.capacity, (SELECT COUNT(*) FROM mentor_links l WHERE l.mentor_id = u.id) AS students, (SELECT COALESCE(SUM(minutes), 0) FROM mentor_sessions s WHERE s.mentor_id = u.id) AS minutes FROM volunteers v JOIN users u ON u.id = v.user_id ORDER BY u.name")
+    .map(({ expertise_json, ...v }) => ({ ...v, sectorLabel: D.SECTORS[v.sector], expertise: parse(expertise_json, []) }))));
+
+  // ---------- Mentoring hours and the certificate ----------
+  const dayOk = (t) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(String(t))) return false; const d = new Date(t + 'T00:00:00Z'); return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === t; };
+  const sessionTotals = (mentorId) => h.get('SELECT COUNT(*) AS sessions, COALESCE(SUM(minutes), 0) AS minutes, COUNT(DISTINCT student_id) AS students, MIN(held_on) AS from_date, MAX(held_on) AS to_date FROM mentor_sessions WHERE mentor_id = ?', mentorId);
+  app.get('/api/mentor/sessions', need('mentor'), (req, res) => res.json({
+    sessions: h.all('SELECT s.id, s.held_on, s.minutes, s.kind, s.note, u.name AS student FROM mentor_sessions s LEFT JOIN users u ON u.id = s.student_id WHERE s.mentor_id = ? ORDER BY s.held_on DESC, s.id DESC LIMIT 100', req.user.id),
+    totals: sessionTotals(req.user.id),
+    certificates: h.all('SELECT code, minutes, sessions, students, from_date, to_date, issued_at FROM certificates WHERE mentor_id = ? ORDER BY issued_at DESC', req.user.id) }));
+  app.post('/api/mentor/sessions', need('mentor'), (req, res) => {
+    const b = req.body || {}, kind = String(b.kind || ''), minutes = Number(b.minutes), on = String(b.heldOn || '');
+    if (!has(D.SESSION_KINDS, kind)) return fail(res, 400, 'Choose what kind of time this was.');
+    if (!dayOk(on)) return fail(res, 400, 'Type the date it happened, for example 12 Nov 2026.');
+    const t = new Date(on + 'T00:00:00Z').getTime();
+    if (t > Date.now()) return fail(res, 400, 'The date cannot be in the future.');
+    if (t < Date.now() - 366 * 864e5) return fail(res, 400, 'Log time within a year of when it happened.');
+    if (!Number.isInteger(minutes) || minutes < 5 || minutes > 480) return fail(res, 400, 'Give the time in minutes, from 5 to 480.');
+    let sid = null;
+    if (b.studentId !== undefined && b.studentId !== null && b.studentId !== '') { sid = Number(b.studentId); if (!isMentee(req.user.id, sid)) return fail(res, 400, 'That student is not your mentee.'); }
+    if (kind === 'one_to_one' && !sid) return fail(res, 400, 'Say which mentee the one-to-one session was with.');
+    const r = h.run('INSERT INTO mentor_sessions (mentor_id, student_id, held_on, minutes, kind, note) VALUES (?, ?, ?, ?, ?, ?)', req.user.id, sid, on, minutes, kind, L.clean(b.note, 200) || null);
+    audit(req.user.id, 'mentor.session_logged', r.lastInsertRowid);
+    res.status(201).json({ ok: true, id: Number(r.lastInsertRowid), totals: sessionTotals(req.user.id) });
+  });
+  app.delete('/api/mentor/sessions/:id', need('mentor'), (req, res) => {
+    const r = h.run('DELETE FROM mentor_sessions WHERE id = ? AND mentor_id = ?', +req.params.id, req.user.id);
+    if (!r.changes) return fail(res, 404, 'Not found.');
+    audit(req.user.id, 'mentor.session_removed', +req.params.id); res.json({ ok: true, totals: sessionTotals(req.user.id) });
+  });
+  // A certificate is a snapshot of the hours logged so far, with a code anyone can check on the certificate page.
+  app.post('/api/mentor/certificate', need('mentor'), (req, res) => {
+    const t = sessionTotals(req.user.id);
+    if (t.minutes < 60) return fail(res, 409, 'Log at least one hour of mentoring before asking for a certificate.');
+    const v = volunteerOf(req.user.id), inst = req.user.institution_id ? h.get('SELECT name FROM institutions WHERE id = ?', req.user.institution_id) : null;
+    const description = v ? `Volunteer mentor (${v.sectorLabel.toLowerCase()}, ${v.organisation})` : `Faculty mentor, ${inst ? inst.name : 'college not given'}`;
+    const code = 'GRM-' + crypto.randomBytes(5).toString('hex').toUpperCase();
+    h.run('INSERT INTO certificates (code, mentor_id, name, description, minutes, sessions, students, from_date, to_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', code, req.user.id, req.user.name, description, t.minutes, t.sessions, t.students, t.from_date, t.to_date);
+    audit(req.user.id, 'mentor.certificate_issued', code);
+    res.status(201).json({ code });
+  });
+  // Public: anyone holding the code can check a certificate. Nothing about students is shown.
+  app.get('/api/certificates/:code', (req, res) => {
+    if (ipLimited(req, res, 'cert', 60)) return;
+    const c = h.get('SELECT code, name, description, minutes, sessions, students, from_date, to_date, issued_at FROM certificates WHERE code = ?', String(req.params.code || '').trim().toUpperCase());
+    if (!c) return fail(res, 404, 'No certificate has that code. Check it against the certificate.');
+    res.json(c);
+  });
   app.get('/api/college/mentoring', need('college_admin'), (req, res) => res.json(mentoring(req.user.institution_id)));
   app.post('/api/college/mentoring/share', need('college_admin'), (req, res) => {
     if (!h.get("SELECT 1 FROM users WHERE role = 'mentor' AND institution_id = ?", req.user.institution_id)) return fail(res, 409, 'No mentor at your college has an GRM account yet. Ask your faculty mentors to create one; the GRM admin approves it.');
@@ -237,29 +347,60 @@ function createApp(db, opts = {}) {
   }
   const typedToday = (table, userId) => h.get(`SELECT COUNT(*) AS n FROM ${table} WHERE created_by = ? AND created_at > datetime('now', '-1 day')`, userId).n;
   // Type a role: an existing one with the same name is reused, otherwise a new one is made from its role family.
-  app.post('/api/library/role', need(), (req, res) => {
-    const made = L.makeRole(req.body?.text);
-    if (!made) return fail(res, 400, 'Type the role as you would say it, for example "Data Scientist".');
-    // "Data Analysts" and "data analyst" are the same role.
-    const one = (t) => L.norm(t).replace(/s$/, '');
-    const same = Object.keys(D.ROLES).find((k) => one(D.ROLES[k].label) === one(made.label) || k === made.key);
-    if (same) return res.json({ key: same, role: D.ROLES[same], created: false });
-    if (req.user.role === 'student' && typedToday('custom_roles', req.user.id) >= 8) return fail(res, 429, 'You have added several new roles today. Choose one of them or try again tomorrow.');
-    const listed = req.user.role === 'student' ? 0 : 1;
+  // Type a role: an existing one with the same name is reused, otherwise a new one is made from its role family.
+  // "Data Analysts" and "data analyst" are the same role.
+  const sameRole = (made) => { const one = (t) => L.norm(t).replace(/s$/, ''); return Object.keys(D.ROLES).find((k) => one(D.ROLES[k].label) === one(made.label) || k === made.key) || null; };
+  function resolveRole(text, user) {
+    const made = L.makeRole(text);
+    if (!made) return { error: 'Type the role as you would say it, for example "Data Scientist".', status: 400 };
+    const same = sameRole(made); if (same) return { key: same, created: false };
+    if (user.role === 'student' && typedToday('custom_roles', user.id) >= 8) return { error: 'You have added several new roles today. Choose one of them or try again tomorrow.', status: 429 };
     h.run('INSERT INTO custom_roles (key, label, family, skills_json, targets_json, project, internship, needs_review, listed, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      made.key, made.label, made.family, JSON.stringify(made.skills), JSON.stringify(made.target), made.project, made.internship, made.needsReview ? 1 : 0, listed, req.user.id);
-    audit(req.user.id, 'library.role_typed', made.key); loadLibrary();
-    res.status(201).json({ key: made.key, role: D.ROLES[made.key], created: true });
+      made.key, made.label, made.family, JSON.stringify(made.skills), JSON.stringify(made.target), made.project, made.internship, made.needsReview ? 1 : 0, user.role === 'student' ? 0 : 1, user.id);
+    audit(user.id, 'library.role_typed', made.key); loadLibrary();
+    return { key: made.key, created: true };
+  }
+  function resolveProgramme(text, user) {
+    const made = L.makeProgramme(text);
+    if (!made) return { error: 'Type the programme as it appears on the marks card, for example "B.Sc. Physics".', status: 400 };
+    const same = D.PROGRAMMES.find((p) => L.norm(p.label) === L.norm(made.label) || p.id === made.id);
+    if (same) return { id: same.id, created: false };
+    if (user.role === 'student' && typedToday('custom_programmes', user.id) >= 8) return { error: 'You have added several new programmes today. Choose one of them or try again tomorrow.', status: 429 };
+    h.run('INSERT INTO custom_programmes (id, label, years, discipline, listed, created_by) VALUES (?, ?, ?, ?, ?, ?)', made.id, made.label, made.years, made.discipline, user.role === 'student' ? 0 : 1, user.id);
+    audit(user.id, 'library.programme_typed', made.id); loadLibrary();
+    return { id: made.id, created: true };
+  }
+  app.post('/api/library/role', need(), (req, res) => {
+    const r = resolveRole(req.body?.text, req.user);
+    if (r.error) return fail(res, r.status, r.error);
+    res.status(r.created ? 201 : 200).json({ key: r.key, role: D.ROLES[r.key], created: r.created });
   });
   app.post('/api/library/programme', need(), (req, res) => {
-    const made = L.makeProgramme(req.body?.text);
-    if (!made) return fail(res, 400, 'Type the programme as it appears on your marks card, for example "B.Sc. Physics".');
-    const same = D.PROGRAMMES.find((p) => L.norm(p.label) === L.norm(made.label) || p.id === made.id);
-    if (same) return res.json({ id: same.id, programme: same, created: false });
-    if (req.user.role === 'student' && typedToday('custom_programmes', req.user.id) >= 8) return fail(res, 429, 'You have added several new programmes today. Choose one of them or try again tomorrow.');
-    h.run('INSERT INTO custom_programmes (id, label, years, discipline, listed, created_by) VALUES (?, ?, ?, ?, ?, ?)', made.id, made.label, made.years, made.discipline, req.user.role === 'student' ? 0 : 1, req.user.id);
-    audit(req.user.id, 'library.programme_typed', made.id); loadLibrary();
-    res.status(201).json({ id: made.id, programme: D.programme(made.id), created: true });
+    const r = resolveProgramme(req.body?.text, req.user);
+    if (r.error) return fail(res, r.status, r.error.replace('the marks card', 'your marks card'));
+    res.status(r.created ? 201 : 200).json({ id: r.id, programme: D.programme(r.id), created: r.created });
+  });
+  // The placement cell says which roles each of its programmes usually leads to. Students of that programme see them as ideas.
+  const programmeRoles = (instId) => {
+    const out = {};
+    for (const r of h.all('SELECT programme, role_key FROM programme_roles WHERE institution_id = ? ORDER BY programme, position', instId)) if (D.ROLES[r.role_key]) (out[r.programme] = out[r.programme] || []).push({ key: r.role_key, label: D.ROLES[r.role_key].label });
+    return Object.keys(out).map((p) => ({ programme: p, label: D.programme(p).label, roles: out[p] })).sort((a, b) => a.label.localeCompare(b.label));
+  };
+  app.get('/api/college/programme-roles', need('college_admin', 'mentor'), atCollege, (req, res) => res.json(programmeRoles(req.user.institution_id)));
+  app.put('/api/college/programme-roles', need('college_admin'), (req, res) => {
+    const b = req.body || {};
+    const P = b.programmeId && D.PROGRAMMES.find((p) => p.id === b.programmeId) ? { id: b.programmeId } : resolveProgramme(b.programme, req.user);
+    if (P.error) return fail(res, P.status, P.error);
+    const typed = (Array.isArray(b.roles) ? b.roles : String(b.roles || '').split(/[,;\n]/)).map((x) => L.clean(x, 60)).filter(Boolean);
+    if (typed.length > 5) return fail(res, 400, 'Type up to 5 roles for a programme.');
+    const keys = [];
+    for (const t of typed) { const r = resolveRole(t, req.user); if (r.error) return fail(res, r.status, `"${t}": ${r.error}`); if (!keys.includes(r.key)) keys.push(r.key); }
+    h.tx(() => {
+      h.run('DELETE FROM programme_roles WHERE institution_id = ? AND programme = ?', req.user.institution_id, P.id);
+      keys.forEach((k, i) => h.run('INSERT INTO programme_roles (institution_id, programme, role_key, position) VALUES (?, ?, ?, ?)', req.user.institution_id, P.id, k, i));
+    });
+    audit(req.user.id, 'college.programme_roles_set', P.id + ':' + keys.length);
+    res.json(programmeRoles(req.user.institution_id));
   });
   // Role families a programme commonly leads to, as role names to offer.
   app.get('/api/library/suggest', need(), (req, res) => {
@@ -323,7 +464,7 @@ function createApp(db, opts = {}) {
   app.get('/api/meta', (req, res) => res.json({
     formulaVersion: D.FORMULA_VERSION, minGroup: D.MIN_GROUP, factors: D.FACTORS, groups: D.GROUPS, transversal: D.TRANSVERSAL, half: D.HALF,
     ipip: D.IPIP.map((x) => x.t), ipipScale: D.IPIP_SCALE, traitNames: D.TRAIT_NAMES, ...libraryFor(req.user), fitLabels: L.FIT_LABEL,
-    evidenceTypes: D.EVIDENCE_TYPES, slots: D.SLOTS, consentPurposes: D.CONSENT_PURPOSES, demoMode, signUp: signUpOpen, emailCodes,
+    evidenceTypes: D.EVIDENCE_TYPES, slots: D.SLOTS, consentPurposes: D.CONSENT_PURPOSES, sectors: D.SECTORS, sessionKinds: D.SESSION_KINDS, sourceKinds: D.SOURCE_KINDS, demoMode, signUp: signUpOpen, emailCodes,
     // Who runs this pilot and whom to contact about personal data (shown on the privacy notice).
     operator: { name: String(process.env.ORG_NAME || '').slice(0, 120) || null, contact: String(process.env.PRIVACY_CONTACT || '').slice(0, 160) || null },
   }));
@@ -337,7 +478,7 @@ function createApp(db, opts = {}) {
   function ipLimited(req, res, kind = 'code', max = 30) {
     const now = Date.now(), ip = kind + ':' + (req.ip || 'unknown');
     const hits = (ipHits.get(ip) || []).filter((t) => now - t < 60 * 60 * 1000);
-    if (hits.length >= max) { fail(res, 429, kind === 'code' ? 'Too many sign-in codes asked for from this network. Try again in an hour.' : 'Too many accounts created from this network in the last hour. Try again later.'); return true; }
+    if (hits.length >= max) { fail(res, 429, kind === 'code' ? 'Too many sign-in codes asked for from this network. Try again in an hour.' : kind === 'cert' ? 'Too many certificate checks from this network. Try again in an hour.' : 'Too many accounts created from this network in the last hour. Try again later.'); return true; }
     hits.push(now); ipHits.set(ip, hits);
     if (ipHits.size > 10000) for (const [k, v] of ipHits) if (!v.some((t) => now - t < 60 * 60 * 1000)) ipHits.delete(k);
     return false;
@@ -351,8 +492,11 @@ function createApp(db, opts = {}) {
     const b = req.body || {}, name = String(b.name || '').trim().replace(/\s+/g, ' ').slice(0, 120), email = String(b.email || '').trim().toLowerCase(), role = String(b.role || '');
     if (name.length < 2) return fail(res, 400, 'Enter your full name.');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return fail(res, 400, 'Enter a valid email address.');
-    if (!SIGNUP_ROLES.includes(role)) return fail(res, 400, 'Choose who you are signing up as.');
-    let institutionId = null, orgName = null, newCollege = null;
+    if (!SIGNUP_ROLES.includes(role) && role !== 'volunteer') return fail(res, 400, 'Choose who you are signing up as.');
+    let institutionId = null, orgName = null, newCollege = null, extra = null;
+    // A volunteer mentor is a mentor account with no college, approved by the admin like any mentor.
+    if (role === 'volunteer') { const v = volunteerDetails(b); if (v.error) return fail(res, 400, v.error); extra = { volunteer: v }; orgName = v.organisation; }
+    const asRole = role === 'volunteer' ? 'mentor' : role;
     const withCollege = () => { if (newCollege) { institutionId = Number(h.run('INSERT INTO institutions (name, city, is_sample, pending) VALUES (?, ?, 0, 1)', newCollege.name, newCollege.city).lastInsertRowid); audit(null, 'auth.college_typed', institutionId); } return institutionId; };
     if (ORG_ROLES[role] === 'institution') {
       // Pick a listed college or type one. A typed college that is new is added as "to be confirmed" by the admin.
@@ -369,7 +513,7 @@ function createApp(db, opts = {}) {
     if (emailCodes) {
       if (ipLimited(req, res)) return;
       const bad = auth.passwordProblem(b.password, email); if (bad) return fail(res, 400, bad);
-      const r = auth.signUpStart({ name, email, role, institutionId: withCollege(), orgName, password: b.password });
+      const r = auth.signUpStart({ name, email, role: asRole, institutionId: withCollege(), orgName, password: b.password, extra });
       if (r.error) return fail(res, r.status, r.error);
       return res.json(r);
     }
@@ -377,7 +521,7 @@ function createApp(db, opts = {}) {
     if (ipLimited(req, res, 'signup', 120)) return;
     const bad = auth.passwordProblem(b.password, email); if (bad) return fail(res, 400, bad);
     if (h.get('SELECT 1 FROM users WHERE email = ?', email)) return fail(res, 409, 'This email already has an account. Sign in instead.');
-    const r = auth.signUpDirect({ name, email, role, institutionId: withCollege(), orgName, password: b.password });
+    const r = auth.signUpDirect({ name, email, role: asRole, institutionId: withCollege(), orgName, password: b.password, extra });
     if (r.error) return fail(res, r.status, r.error);
     if (r.pending) return res.json({ pending: true });
     giveMentor(r.user.id);
@@ -425,7 +569,7 @@ function createApp(db, opts = {}) {
   });
   app.get('/api/auth/demo-users', (req, res) => {
     if (!demoMode) return fail(res, 404, 'Not available.');
-    res.json(h.all("SELECT u.email, u.name, u.role FROM users u WHERE u.email LIKE '%@demo.grm.in' ORDER BY CASE u.role WHEN 'student' THEN 1 WHEN 'mentor' THEN 2 WHEN 'college_admin' THEN 3 WHEN 'employer' THEN 4 WHEN 'researcher' THEN 5 ELSE 6 END"));
+    res.json(h.all("SELECT u.email, u.name, u.role, EXISTS (SELECT 1 FROM volunteers v WHERE v.user_id = u.id) AS volunteer FROM users u WHERE u.email LIKE '%@demo.grm.in' ORDER BY CASE u.role WHEN 'student' THEN 1 WHEN 'mentor' THEN 2 WHEN 'college_admin' THEN 3 WHEN 'employer' THEN 4 WHEN 'researcher' THEN 5 ELSE 6 END"));
   });
   app.post('/api/auth/demo', (req, res) => {
     if (!demoMode) return fail(res, 404, 'Not available.');
@@ -439,7 +583,7 @@ function createApp(db, opts = {}) {
     const u = req.user;
     const inst = u.institution_id ? h.get('SELECT name, city FROM institutions WHERE id = ?', u.institution_id) : null;
     const emp = u.employer_id ? h.get('SELECT name FROM employers WHERE id = ?', u.employer_id) : null;
-    res.json({ user: { id: u.id, name: u.name, email: u.email, role: u.role, institution: inst, employer: emp, hasPassword: auth.hasPassword(u.id), signedInWith: u.via, mustChangePassword: !!u.mustChange }, consents: u.role === 'student' ? consents(u.id) : undefined });
+    res.json({ user: { id: u.id, name: u.name, email: u.email, role: u.role, institution: inst, employer: emp, hasPassword: auth.hasPassword(u.id), signedInWith: u.via, mustChangePassword: !!u.mustChange, volunteer: u.role === 'mentor' ? volunteerOf(u.id) : undefined }, consents: u.role === 'student' ? consents(u.id) : undefined });
   });
 
   // ---------- Student: consent ----------
@@ -457,6 +601,7 @@ function createApp(db, opts = {}) {
     // The introductions consent and the opt-in switch are the same choice, so keep them in step.
     if (keys.includes('introductions')) h.run('UPDATE profiles SET opt_in_intros = ? WHERE user_id = ?', purposes.introductions ? 1 : 0, req.user.id);
     if (purposes.psychometric === false) scrubPsychometric(req.user.id);
+    if (purposes.ai_proof_check === false) h.run('UPDATE evidence SET ai_check_json = NULL WHERE user_id = ?', req.user.id);
     if (purposes.ai_wording === false) h.run('UPDATE recommendation_states SET ai_text = NULL, ai_source_hash = NULL WHERE user_id = ?', req.user.id);
     audit(req.user.id, 'consent.updated', keys.map((k) => k + '=' + (purposes[k] ? 1 : 0)).join(','));
     res.json(consents(req.user.id));
@@ -546,7 +691,13 @@ function createApp(db, opts = {}) {
     const verified = Object.keys(verifiedSkills(userId, c.p.role)).map(Number);
     const psy = hasConsent(userId, 'psychometric');
     return { profile: { ...c.p, optInIntros: !!c.row.opt_in_intros, verifiedSkills: verified }, mine: inWords(c.row), interestRoles: interestRoles(c.row, c.p), path: D.pathNote(c.p), score: c.result, band: D.band(c.result.index), lastRecorded: last || null,
-      ipip: psy ? { answers: ipipAnswers(c.row.ocean_json), traits: c.p.ocean } : null, compare: compareRoles(userId, c) };
+      ipip: psy ? { answers: ipipAnswers(c.row.ocean_json), traits: c.p.ocean } : null, compare: compareRoles(userId, c), collegeRoles: collegeRolesFor(userId, c) };
+  }
+  // Roles the student's placement cell says their programme usually leads to, other than the ones they already chose.
+  function collegeRolesFor(userId, c) {
+    const inst = (h.get('SELECT institution_id FROM users WHERE id = ?', userId) || {}).institution_id; if (!inst) return [];
+    const chosen = [c.p.role].concat(c.p.otherRoles);
+    return h.all('SELECT role_key FROM programme_roles WHERE institution_id = ? AND programme = ? ORDER BY position', inst, c.p.prog).map((r) => r.role_key).filter((k) => D.ROLES[k] && !chosen.includes(k)).map((k) => ({ key: k, label: D.ROLES[k].label }));
   }
   // The student's main aspired role and up to two more, side by side: how their programme leads to each, which of each role's
   // skills they already show, and how many openings there were in the last 90 days. Skills are matched by name.
@@ -703,8 +854,16 @@ function createApp(db, opts = {}) {
     fs.mkdirSync(uploadDir, { recursive: true });
     fs.writeFileSync(path.join(uploadDir, stored), req.body, { mode: 0o600 });
     dropFile(e.file_path);
-    h.run("UPDATE evidence SET file_name = ?, file_path = ?, file_type = ?, status = 'pending' WHERE id = ?", name, stored, Object.keys(FILE_TYPES).find((t) => FILE_TYPES[t] === kind), e.id);
+    const mime = Object.keys(FILE_TYPES).find((t) => FILE_TYPES[t] === kind);
+    h.run("UPDATE evidence SET file_name = ?, file_path = ?, file_type = ?, status = 'pending', ai_check_json = NULL WHERE id = ?", name, stored, mime, e.id);
     audit(req.user.id, 'evidence.file_uploaded', e.id);
+    // Only for students who agreed: an AI first look at the file, shown to the mentor as a hint. It never verifies anything.
+    if (hasConsent(req.user.id, 'ai_proof_check')) {
+      Promise.resolve(proofChecker({ buffer: req.body, mime, studentName: req.user.name, title: e.title, typeLabel: D.EVIDENCE_TYPES[e.type] })).then((r) => {
+        const clean = r && ai.cleanCheck({ name_matches: r.nameMatches ?? r.name_matches, title_matches: r.titleMatches ?? r.title_matches, issuer: r.issuer, date_on_document: r.date ?? r.date_on_document, summary: r.summary });
+        if (clean && hasConsent(req.user.id, 'ai_proof_check')) h.run('UPDATE evidence SET ai_check_json = ? WHERE id = ? AND file_path = ?', JSON.stringify({ ...clean, at: new Date().toISOString() }), e.id, stored);
+      }).catch(() => {});
+    }
     res.json(evidenceOf(req.user.id));
   });
   // Only the student and their own mentor can open a proof file.
@@ -830,23 +989,52 @@ function createApp(db, opts = {}) {
 
   // ---------- Openings from public sources (admin) ----------
   app.get('/api/admin/openings', need('admin'), (req, res) => res.json(h.all('SELECT * FROM public_openings ORDER BY id DESC LIMIT 200')
-    .map((o) => ({ ...o, roleLabel: (D.ROLES[o.role] || {}).label || o.role, skills: parse(o.skills_json, []), skills_json: undefined }))));
+    .map((o) => ({ ...o, roleLabel: (D.ROLES[o.role] || {}).label || o.role, kindLabel: D.SOURCE_KINDS[o.source_kind] || '', skills: parse(o.skills_json, []), skills_json: undefined }))));
+  // Check one opening typed by the admin, or one line of an upload. Returns { error } or the row to save.
+  // roleKey is the role already worked out from what was typed (a new role is only made once every line is right).
+  function openingFrom(b, roleKey) {
+    if (!roleKey) return { error: 'Type the role these openings are for.' };
+    const kind = String(b.sourceKind || '');
+    if (!has(D.SOURCE_KINDS, kind)) return { error: 'Say where it was found: company careers page, government notice, Employment News, recruitment agency, partner organisation or job portal.' };
+    if (kind === 'agency' && b.clientAgreed !== true) return { error: 'An agency\u2019s opening is listed only when its client agreed. Confirm that it did.' };
+    const title = L.clean(b.title, 120), org = L.clean(b.organisation, 120), source = L.clean(b.sourceName, 80) || D.SOURCE_KINDS[kind].split(',')[0], url = httpsUrl(String(b.sourceUrl || '').trim());
+    if (!title) return { error: 'Type the job title as the source gives it.' };
+    if (!org) return { error: 'Type the organisation that is hiring.' };
+    if (!url) return { error: 'Paste the link to the source, starting with https://, so students can check it.' };
+    const openings = b.openings === undefined || b.openings === null || b.openings === '' ? 1 : Number(b.openings);
+    if (!Number.isInteger(openings) || openings < 1 || openings > 500) return { error: 'Openings must be a whole number from 1 to 500.' };
+    let posted = null;
+    if (b.postedOn) { if (!dayOk(b.postedOn) || new Date(b.postedOn + 'T00:00:00Z').getTime() > Date.now()) return { error: 'Enter the date it was posted, not in the future.' }; posted = b.postedOn; }
+    const skills = []; for (const x of String(Array.isArray(b.skills) ? b.skills.join(',') : b.skills || '').split(/[,;\n]/)) { const t = L.clean(x, 40); if (t && skills.length < 8 && !skills.some((k) => L.norm(k) === L.norm(t))) skills.push(t); }
+    return { row: [title, org, roleKey, L.clean(b.city, 60) || null, JSON.stringify(skills), openings, source, url, posted, kind] };
+  }
+  const saveOpening = (row, userId) => h.run('INSERT INTO public_openings (title, organisation, role, city, skills_json, openings, source_name, source_url, posted_on, source_kind, added_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', ...row, userId);
   app.post('/api/admin/openings', need('admin'), (req, res) => {
     const b = req.body || {};
-    if (!has(D.ROLES, b.role)) return fail(res, 400, 'Type the role these openings are for.');
-    const title = L.clean(b.title, 120), org = L.clean(b.organisation, 120), source = L.clean(b.sourceName, 80), url = httpsUrl(String(b.sourceUrl || '').trim());
-    if (!title) return fail(res, 400, 'Type the job title as the source gives it.');
-    if (!org) return fail(res, 400, 'Type the organisation that is hiring.');
-    if (!source) return fail(res, 400, 'Name the source, for example the company careers page or Employment News.');
-    if (!url) return fail(res, 400, 'Paste the link to the source, starting with https://, so students can check it.');
-    const openings = b.openings === undefined || b.openings === '' ? 1 : Number(b.openings);
-    if (!Number.isInteger(openings) || openings < 1 || openings > 500) return fail(res, 400, 'Openings must be a whole number from 1 to 500.');
-    let posted = null;
-    if (b.postedOn) { const d = /^\d{4}-\d{2}-\d{2}$/.test(b.postedOn) ? new Date(b.postedOn + 'T00:00:00Z') : null; if (!d || Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== b.postedOn || d.getTime() > Date.now()) return fail(res, 400, 'Enter the date it was posted, not in the future.'); posted = b.postedOn; }
-    const skills = []; for (const x of String(Array.isArray(b.skills) ? b.skills.join(',') : b.skills || '').split(/[,;\n]/)) { const t = L.clean(x, 40); if (t && skills.length < 8 && !skills.some((k) => L.norm(k) === L.norm(t))) skills.push(t); }
-    const r = h.run('INSERT INTO public_openings (title, organisation, role, city, skills_json, openings, source_name, source_url, posted_on, added_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', title, org, b.role, L.clean(b.city, 60) || null, JSON.stringify(skills), openings, source, url, posted, req.user.id);
+    const o = openingFrom(b, has(D.ROLES, b.role) ? b.role : null);
+    if (o.error) return fail(res, 400, o.error);
+    const r = saveOpening(o.row, req.user.id);
     audit(req.user.id, 'admin.opening_added', r.lastInsertRowid);
     res.status(201).json({ ok: true, id: Number(r.lastInsertRowid) });
+  });
+  // Many openings at once, one per line, with the role typed as text. Nothing is saved if any line has a mistake.
+  app.post('/api/admin/openings/import', need('admin'), (req, res) => {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows.slice(0, 500) : [];
+    if (!rows.length) return fail(res, 400, 'Add at least one line.');
+    const errors = [], ok = [];
+    rows.forEach((b, i) => {
+      if (!b || typeof b !== 'object') return errors.push(`Line ${i + 1}: could not be read.`);
+      const made = L.makeRole(b.role);
+      if (!made) return errors.push(`Line ${i + 1}: type the role, for example Data Analyst.`);
+      const o = openingFrom(b, sameRole(made) || 'new');
+      if (o.error) return errors.push(`Line ${i + 1}: ${o.error}`);
+      ok.push({ o, roleText: b.role, isNew: !sameRole(made) });
+    });
+    if (errors.length) return fail(res, 400, errors.slice(0, 20).join(' '));
+    for (const x of ok.filter((y) => y.isNew)) x.o.row[2] = resolveRole(x.roleText, req.user).key;
+    h.tx(() => { for (const x of ok) saveOpening(x.o.row, req.user.id); });
+    audit(req.user.id, 'admin.openings_imported', ok.length);
+    res.status(201).json({ added: ok.length });
   });
   app.delete('/api/admin/openings/:id', need('admin'), (req, res) => {
     const r = h.run('DELETE FROM public_openings WHERE id = ?', +req.params.id); if (!r.changes) return fail(res, 404, 'Not found.');
@@ -865,7 +1053,7 @@ function createApp(db, opts = {}) {
       asOf: new Date().toISOString() });
   });
   // Placement cell: their own college over the last 7 days, hidden under 5 and rounded to 5 like every other college figure.
-  app.get('/api/college/activity', need('college_admin', 'mentor'), (req, res) => {
+  app.get('/api/college/activity', need('college_admin', 'mentor'), atCollege, (req, res) => {
     const scope = " AND user_id IN (SELECT id FROM users WHERE role = 'student' AND institution_id = ?)", inst = [req.user.institution_id];
     const wk = activityCounts('-7 days', scope, inst);
     res.json({ windowDays: 7, rounding: 5,
@@ -895,7 +1083,8 @@ function createApp(db, opts = {}) {
       const r = recsFor(s.id); if (!r) continue;
       for (const x of r.list) recItems.push({ studentId: s.id, studentName: s.name, ruleId: x.id, title: x.title, why: x.why, gain: x.gain, because: x.because, personal: x.personal,
         student: x.state?.student_status || null, mentor: x.state?.mentor_status || null, note: x.state?.mentor_note || null });
-      for (const e of r.c.ev.filter((e) => e.status !== 'verified')) evItems.push({ studentId: s.id, studentName: s.name, ...e, typeLabel: D.EVIDENCE_TYPES[e.type] });
+      const withAi = hasConsent(s.id, 'ai_proof_check');
+      for (const e of r.c.ev.filter((e) => e.status !== 'verified')) evItems.push({ studentId: s.id, studentName: s.name, ...e, typeLabel: D.EVIDENCE_TYPES[e.type], aiCheck: withAi ? aiCheckOf(e.id) : null });
     }
     res.json({ recommendations: recItems, evidence: evItems });
   });
@@ -931,6 +1120,9 @@ function createApp(db, opts = {}) {
     const sid = +req.body?.studentId, what = req.body?.what, value = Number(req.body?.value);
     if (!isMentee(req.user.id, sid) || !hasConsent(sid, 'profile')) return fail(res, 404, 'Not found.');
     const row = profileRow(sid); if (!row) return fail(res, 404, 'This student has not set up a profile yet.');
+    // Marks are checked against college records, so only a mentor at the student's own college can confirm them.
+    if ((what === 'cgpa' || what === 'class12') && (!req.user.institution_id || req.user.institution_id !== (h.get('SELECT institution_id FROM users WHERE id = ?', sid) || {}).institution_id))
+      return fail(res, 403, 'Only a mentor at the student\u2019s college can confirm marks against college records.');
     if (what === 'cgpa') {
       // Confirming a CGPA: the mentor enters the figure from college records. It replaces what the student typed.
       if (req.body?.value === '' || req.body?.value == null || !Number.isFinite(value) || value < 0 || value > 10) return fail(res, 400, 'Enter the CGPA from college records, from 0 to 10.');
@@ -976,7 +1168,7 @@ function createApp(db, opts = {}) {
   });
 
   // ---------- College (mentor or college admin; own institution, aggregates only) ----------
-  app.get('/api/college/cohort', need('mentor', 'college_admin'), (req, res) => {
+  app.get('/api/college/cohort', need('mentor', 'college_admin'), atCollege, (req, res) => {
     // One filter at a time, a programme or a target role, so two views can never be subtracted to isolate a student.
     const role = req.query.role && req.query.role !== 'all' ? String(req.query.role) : null;
     const prog = !role && req.query.programme && req.query.programme !== 'all' ? String(req.query.programme) : null;
@@ -1032,7 +1224,7 @@ function createApp(db, opts = {}) {
     res.json({ role, personal, openings: posts.reduce((t, p) => t + p.openings, 0), employers: new Set(posts.map((p) => p.employer)).size,
       skills: Object.entries(skills).sort((a, b) => b[1] - a[1]).map(([name, openings]) => ({ name, openings })),
       fromSources: posts.filter((p) => p.source).length,
-      latest: posts.slice(0, 6).map((p) => ({ employer: p.employer, title: p.title || null, city: p.city, openings: p.openings, postedAt: p.postedAt, source: p.source, url: p.url })), asOf: new Date().toISOString() });
+      latest: posts.slice(0, 6).map((p) => ({ employer: p.employer, title: p.title || null, city: p.city, openings: p.openings, postedAt: p.postedAt, source: p.source, sourceKind: p.sourceKind || null, url: p.url })), asOf: new Date().toISOString() });
   });
 
   // ---------- Employer (aggregates only) ----------
@@ -1182,7 +1374,8 @@ function createApp(db, opts = {}) {
   });
 
   // Sign-ups from mentors, placement cells, employers and researchers wait here until an admin approves or declines them.
-  app.get('/api/admin/signups', need('admin'), (req, res) => res.json(h.all("SELECT s.email, s.name, s.role, COALESCE(i.name, s.org_name) AS org, s.created_at FROM signups s LEFT JOIN institutions i ON i.id = s.institution_id WHERE s.status = 'waiting' ORDER BY s.created_at")));
+  app.get('/api/admin/signups', need('admin'), (req, res) => res.json(h.all("SELECT s.email, s.name, s.role, COALESCE(i.name, s.org_name) AS org, s.extra_json, s.created_at FROM signups s LEFT JOIN institutions i ON i.id = s.institution_id WHERE s.status = 'waiting' ORDER BY s.created_at")
+    .map(({ extra_json, ...r }) => { const v = parse(extra_json, {}).volunteer; return v ? { ...r, volunteer: { ...v, sectorLabel: D.SECTORS[v.sector] } } : r; })));
   app.post('/api/admin/signups/decide', need('admin'), (req, res) => {
     const row = h.get("SELECT * FROM signups WHERE email = ? AND status = 'waiting'", String(req.body?.email || '').trim().toLowerCase());
     if (!row) return fail(res, 404, 'That request is no longer waiting.');
@@ -1193,9 +1386,11 @@ function createApp(db, opts = {}) {
       const e = h.get('SELECT id FROM employers WHERE lower(name) = lower(?)', row.org_name);
       employerId = e ? e.id : Number(h.run('INSERT INTO employers (name, city, is_sample) VALUES (?, NULL, 0)', row.org_name).lastInsertRowid);
     }
+    const v = parse(row.extra_json, {}).volunteer;
     const user = auth.createFromSignup(row, row.institution_id, employerId);
-    // A newly approved mentor takes on students at the college who have nobody yet.
-    if (user.role === 'mentor') shareOut(user.institution_id);
+    if (v && user.role === 'mentor') saveVolunteer(user.id, v);
+    // A newly approved mentor takes on students at the college who have nobody yet. A volunteer waits to be asked.
+    if (user.role === 'mentor' && user.institution_id) shareOut(user.institution_id);
     audit(req.user.id, 'admin.signup_approved', user.id);
     mailNotice(user.email, 'Your GRM account is approved', `Hello ${user.name},\n\nYour GRM account has been approved. You can now sign in with your email and the password you chose.`);
     res.json({ ok: true, approved: true });
@@ -1296,7 +1491,7 @@ function createApp(db, opts = {}) {
       if (!m) return fail(res, 400, `No mentor has the email ${email}.`);
       if (m.institution_id !== st.institution_id) return fail(res, 400, 'That mentor is at a different college.');
     }
-    h.tx(() => { h.run('DELETE FROM mentor_links WHERE student_id = ?', st.id); if (m) h.run('INSERT INTO mentor_links (mentor_id, student_id) VALUES (?, ?)', m.id, st.id); });
+    h.tx(() => { h.run('DELETE FROM mentor_links WHERE student_id = ? AND mentor_id NOT IN (SELECT user_id FROM volunteers)', st.id); if (m) h.run('INSERT INTO mentor_links (mentor_id, student_id) VALUES (?, ?)', m.id, st.id); });
     audit(req.user.id, 'admin.mentor_' + (m ? 'set' : 'cleared'), st.id);
     res.json({ mentor: m ? email : null });
   });

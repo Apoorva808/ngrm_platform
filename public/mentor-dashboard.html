@@ -33,7 +33,7 @@
     <div class="queue" id="queue"><p class="loading">Loading…</p></div>
     <div style="margin-top:0.75rem"><button class="btn btn-secondary btn-sm" type="button" id="more" hidden>Show more</button></div>
   </section>
-  <div class="grid-2">
+  <div class="grid-2" id="cohortRow">
     <section class="card" aria-labelledby="wTitle"><header><h2 id="wTitle">Where the cohort is weakest</h2><span class="small muted">Average factor score, out of 100</span></header><div id="cFactors"></div><div id="roleSkills" hidden></div><div class="note warning" style="margin-top:1rem" id="signal" hidden></div></section>
     <section class="card" aria-labelledby="bTitle">
       <header><h2 id="bTitle">Readiness bands</h2><span class="small muted">Students see only their own band</span></header>
@@ -53,6 +53,17 @@
     <header><h2 id="mgTitle">Mentors at your college</h2><span class="small muted">Every student needs a mentor before anything they enter can be confirmed</span></header>
     <div id="mentoring"></div>
   </section>
+  <section class="card" id="progCard" hidden aria-labelledby="prTitle">
+    <header><h2 id="prTitle">Roles your programmes lead to</h2><span class="small muted">Students of each programme see these as roles to compare</span></header>
+    <p class="small">From your placement records: which jobs do students of each programme usually go into? Type up to 5 roles. Students still choose their own aspired role; these are only ideas, and are not used in anyone’s score.</p>
+    <div id="progRoles" style="display:grid;gap:0.5rem;margin-bottom:0.9rem"></div>
+    <form id="progForm" novalidate style="display:grid;gap:0.75rem">
+      <div class="row-2"><div class="field"><label for="pr-prog">Programme</label><input type="text" id="pr-prog" maxlength="120" autocomplete="off" placeholder="As on the marks card, for example B.Com"></div>
+      <div class="field"><label for="pr-roles">Roles it usually leads to</label><input type="text" id="pr-roles" maxlength="320" autocomplete="off" placeholder="Separate with commas: Accountant, Financial Analyst"><span class="hint">Leave empty and save to remove the programme.</span></div></div>
+      <p class="small" id="pr-err" style="color:var(--danger)" hidden></p>
+      <div><button class="btn btn-primary" type="submit">Save</button></div>
+    </form>
+  </section>
   <section class="card" id="introCard" hidden aria-labelledby="iTitle">
     <header><h2 id="iTitle">Introduction requests</h2><span class="small muted">Only students who said they’re interested, and only from your college</span></header>
     <div id="intros" style="display:grid;gap:0.75rem"></div>
@@ -69,6 +80,21 @@
       <p class="small" id="as-err" style="color:var(--danger)" hidden></p>
     </form>
   </section>
+  <section class="card" id="hoursCard" hidden aria-labelledby="hTitle">
+    <header><h2 id="hTitle">My mentoring hours</h2><span class="small muted" id="hTotals"></span></header>
+    <p class="small">Log the time you give. When you have an hour or more, get a certificate of your hours. Anyone you show it to can check it on GRM with its code. Students’ names stay off the certificate.</p>
+    <form id="hoursForm" novalidate style="display:grid;gap:0.75rem">
+      <fieldset class="field"><legend>What kind of time</legend><div style="display:flex;gap:0.4rem 1.1rem;flex-wrap:wrap" id="h-kinds"></div></fieldset>
+      <div class="row-2"><div class="field"><label for="h-who">Mentee (for a one-to-one)</label><input type="text" id="h-who" autocomplete="off" maxlength="120" placeholder="Type their name" aria-describedby="h-whoNote"><span class="hint" id="h-whoNote" role="status"></span></div>
+      <div class="field"><label for="h-date">Date</label><input type="text" id="h-date" maxlength="30" placeholder="For example: 12 Nov 2026, or today"></div></div>
+      <div class="row-2"><div class="field"><label for="h-min">Minutes</label><input type="number" id="h-min" min="5" max="480" inputmode="numeric" placeholder="5–480"></div>
+      <div class="field"><label for="h-note">Note for yourself (optional)</label><input type="text" id="h-note" maxlength="200" placeholder="For example: CV review"></div></div>
+      <p class="small" id="h-err" style="color:var(--danger)" hidden></p>
+      <div style="display:flex;gap:0.6rem;flex-wrap:wrap"><button class="btn btn-primary" type="submit">Log this time</button><button class="btn btn-secondary" type="button" id="certBtn">Get a certificate of my hours</button></div>
+    </form>
+    <div id="certs" style="margin-top:0.9rem"></div>
+    <div class="table-wrap" style="margin-top:0.9rem"><table><thead><tr><th>Date</th><th>Kind</th><th>With</th><th class="n">Minutes</th><th>Note</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="sessions"></tbody></table></div>
+  </section>
 </div>
 </main>
 <script src="assets/app.js"></script>
@@ -82,7 +108,7 @@
     var items = ev.map(function (e) { return { kind: 'ev', e: e }; }).concat(recs.map(function (r) { return { kind: 'rec', r: r }; }));
     $('#queue').innerHTML = items.slice(0, shown).map(function (it) {
       if (it.kind === 'ev') { var e = it.e;
-        return '<div class="qitem"><div class="top"><b>' + esc(e.studentName) + ' · evidence: ' + esc(e.title) + '</b><span class="chip ' + (e.status === 'needs_proof' ? 'danger' : 'warning') + '">' + (e.status === 'needs_proof' ? 'Proof requested' : 'Awaiting check') + '</span></div><p class="small muted">' + esc(e.typeLabel) + (e.file_name ? ' · proof: ' + (e.has_file ? '<a href="/api/evidence/' + e.id + '/file" target="_blank" rel="noopener">' + esc(e.file_name) + '</a>' : esc(e.file_name) + ' (named, no file)') : ' · no proof attached') + '</p>' +
+        return '<div class="qitem"><div class="top"><b>' + esc(e.studentName) + ' · evidence: ' + esc(e.title) + '</b><span class="chip ' + (e.status === 'needs_proof' ? 'danger' : 'warning') + '">' + (e.status === 'needs_proof' ? 'Proof requested' : 'Awaiting check') + '</span></div><p class="small muted">' + esc(e.typeLabel) + (e.file_name ? ' · proof: ' + (e.has_file ? '<a href="/api/evidence/' + e.id + '/file" target="_blank" rel="noopener">' + esc(e.file_name) + '</a>' : esc(e.file_name) + ' (named, no file)') : ' · no proof attached') + '</p>' + aiHint(e.aiCheck) +
           '<div style="display:flex;flex-wrap:wrap;gap:0.5rem"><button class="btn btn-primary btn-sm" type="button" data-ev="' + e.id + '" data-act="verify">Mark as verified</button><button class="btn btn-secondary btn-sm" type="button" data-ev="' + e.id + '" data-act="needs_proof">Ask for proof</button></div></div>'; }
       var r = it.r, key = r.studentId + '-' + r.ruleId, first = esc(r.studentName.split(' ')[0]);
       var stu = r.student === 'accepted' ? '<span class="chip success">Student accepted</span>' : r.student === 'declined' ? '<span class="chip">Student declined</span>' : '<span class="chip">Student hasn’t decided</span>';
@@ -93,6 +119,12 @@
     }).join('') || '<p class="muted">Nothing needs your review right now.</p>';
     $('#more').hidden = items.length <= shown;
     $('#more').textContent = 'Show more (' + (items.length - shown) + ' left)';
+  }
+  // The AI first look, for students who agreed to it. Only a hint: the mentor opens the file and decides.
+  function aiHint(a) {
+    if (!a) return '';
+    var w = { yes: 'matches', no: 'does not match', unclear: 'unclear' };
+    return '<p class="small" style="margin:0;padding:0.45rem 0.6rem;border-radius:var(--radius-sm,6px);background:var(--surface-subtle)"><b>AI first look (a hint, not a check):</b> name on the file ' + w[a.nameMatches] + '; what it says it is ' + w[a.titleMatches] + (a.issuer ? '; issued by ' + esc(a.issuer) : '') + (a.date ? ', ' + esc(a.date) : '') + '.' + (a.summary ? ' “' + esc(a.summary) + '”' : '') + ' Open the file before you decide.</p>';
   }
   function loadQueue() { return N.api('GET', '/api/mentor/queue').then(function (d) { q = d; renderQueue(); return d; }); }
   function loadCohort() {
@@ -129,28 +161,22 @@
   }
   N.boot('mentor', ['mentor', 'college_admin']).then(function (ctx) {
     meta = ctx.meta; me = ctx.me;
-    N.api('GET', '/api/me').then(function (r) { $('#bannerCollege').textContent = (r.user.institution ? r.user.institution.name : '') + (me.role === 'mentor' ? ' · faculty mentor' : ' · placement cell'); });
+    N.api('GET', '/api/me').then(function (r) {
+      volunteer = r.user.volunteer || null;
+      $('#bannerCollege').textContent = volunteer ? volunteer.organisation + ' · volunteer mentor (' + volunteer.sectorLabel.toLowerCase() + ')' : (r.user.institution ? r.user.institution.name : '') + (me.role === 'mentor' ? ' · faculty mentor' : ' · placement cell');
+      if (me.role === 'mentor') startMentor();
+    });
     $('#pageTitle').textContent = me.role === 'mentor' ? 'Mentor dashboard' : 'College dashboard';
     N.api('GET', '/api/demand').then(function (d) { $('#demand').innerHTML = d.slice(0, 4).map(function (x) { return '<div style="border:1px solid var(--border);border-radius:var(--radius-md);padding:0.6rem 0.8rem;display:grid;gap:0.15rem"><b class="small">' + esc(x.employer) + '</b><span class="small">' + esc(meta.roles[x.role].label) + ' · ' + x.openings + ' opening' + (x.openings == 1 ? '' : 's') + (x.city ? ' · ' + esc(x.city) : '') + '</span><span class="small muted">Needs: ' + x.skills.map(esc).join(', ') + '</span></div>'; }).join('') || '<p class="small muted">No requirements posted yet.</p>'; });
-    if (me.role === 'mentor') {
-      $('#queueCard').hidden = false; $('#menteeCard').hidden = false;
-      loadQueue().then(loadCohort).catch(function (e) { N.showError($('#queue'), e); });
-      // New items appear on their own, unless a note is being drafted (so nothing typed is lost).
-      N.live(function () { var drafting = N.$$('#queue textarea').some(function (t) { return t.value.trim(); }); if (!drafting) return loadQueue(); }, 30);
-      N.api('GET', '/api/mentor/mentees').then(function (list) {
-        if (!list.length) { $('#mentees').innerHTML = '<tr><td colspan="7" class="muted">No mentees yet. New students at your college are given to the mentor with the fewest students.</td></tr>'; $('#assessForm').hidden = true; return; }
-        mentees = list;
-        $('#as-student').innerHTML = list.map(function (s) { return '<option value="' + s.id + '">' + esc(s.name) + '</option>'; }).join(''); whatOptions();
-        menteeRows(list);
-      });
-    } else {
+    if (me.role !== 'mentor') {
       loadCohort().catch(function (e) { N.showError($('#cFactors'), e); });
-      $('#actCard').hidden = false; $('#mentoringCard').hidden = false;
+      $('#actCard').hidden = false; $('#mentoringCard').hidden = false; $('#progCard').hidden = false; loadProgRoles();
       // Mentor load, and one button to share out students who have nobody. New sign-ups get a mentor by themselves.
       var showMentoring = function (m) {
         $('#mentoring').innerHTML = (m.mentors.length ? '<div class="table-wrap"><table><thead><tr><th>Mentor</th><th class="n">Students</th></tr></thead><tbody>' + m.mentors.map(function (x) { return '<tr><td>' + esc(x.name) + '</td><td class="n">' + x.students + '</td></tr>'; }).join('') + '</tbody></table></div>'
           : '<p class="note warning">No faculty mentor at your college has an GRM account yet. Ask your mentors to create an account; the GRM admin approves it, and waiting students are then shared among them.</p>') +
-          '<p style="margin-top:0.75rem">' + (m.withoutMentor ? '<b>' + m.withoutMentor + '</b> ' + (m.withoutMentor === 1 ? 'student has' : 'students have') + ' no mentor yet. ' + (m.mentors.length ? '<button class="btn btn-primary btn-sm" type="button" id="shareBtn">Share them among these mentors</button>' : '') : 'Every student at your college has a mentor. New students who sign up are given the mentor with the fewest students.') + '</p>';
+          '<p style="margin-top:0.75rem">' + (m.withoutMentor ? '<b>' + m.withoutMentor + '</b> ' + (m.withoutMentor === 1 ? 'student has' : 'students have') + ' no mentor yet. ' + (m.mentors.length ? '<button class="btn btn-primary btn-sm" type="button" id="shareBtn">Share them among these mentors</button>' : '') : 'Every student at your college has a mentor. New students who sign up are given the mentor with the fewest students.') + '</p>' +
+          (m.withVolunteer ? '<p class="small muted">' + m.withVolunteer + (m.withVolunteer === 1 ? ' student also has' : ' students also have') + ' a volunteer mentor from industry, government or education, at their own request. Volunteers do not confirm marks.</p>' : '');
       };
       N.api('GET', '/api/college/mentoring').then(showMentoring).catch(function (e) { N.showError($('#mentoring'), e); });
       $('#mentoring').addEventListener('click', function (e) { if (e.target.id === 'shareBtn') N.api('POST', '/api/college/mentoring/share').then(function (m) { N.toast(m.shared + (m.shared === 1 ? ' student now has a mentor.' : ' students now have a mentor.')); showMentoring(m); }).catch(function (x) { N.toast(x.message); }); });
@@ -170,10 +196,71 @@
       }).catch(function (e) { N.showError($('#intros'), e); });
     }
   });
-  var mentees = [];
+  var mentees = [], volunteer = null;
+  // A mentor's page. A volunteer mentor has no college, so the cohort views are left out and marks are not theirs to confirm.
+  function startMentor() {
+    $('#queueCard').hidden = false; $('#menteeCard').hidden = false; $('#hoursCard').hidden = false;
+    if (volunteer) { $('#cohortRow').hidden = true; $('#viewText').closest('.field').hidden = true; document.querySelector('.page-banner .lead').textContent = 'You review the plans of students who asked for a volunteer mentor, check their proof and assess their skills. Your areas: ' + volunteer.expertise.join(', ') + '. Thank you for your time.'; $('#assessForm h3').textContent = 'Record an assessment'; $('#assessForm p').textContent = 'Students are never kept waiting for you: what they report counts at half until a mentor assesses it, then in full. Enter an assessment result or your own judgement of a skill. Marks are confirmed only by a mentor at the student\u2019s college.'; }
+    loadQueue().then(function () { return volunteer ? volunteerKpis() : loadCohort(); }).catch(function (e) { N.showError($('#queue'), e); });
+    // New items appear on their own, unless a note is being drafted (so nothing typed is lost).
+    N.live(function () { var drafting = N.$$('#queue textarea').some(function (t) { return t.value.trim(); }); if (!drafting) return loadQueue().then(function () { if (volunteer) volunteerKpis(); }); }, 30);
+    N.api('GET', '/api/mentor/mentees').then(function (list) {
+      mentees = list;
+      if (!list.length) { $('#mentees').innerHTML = '<tr><td colspan="7" class="muted">' + (volunteer ? 'No mentees yet. Students who ask for a volunteer mentor are matched to you by the areas you gave and the role they are aiming for.' : 'No mentees yet. New students at your college are given to the mentor with the fewest students.') + '</td></tr>'; $('#assessForm').hidden = true; return; }
+      $('#as-student').innerHTML = list.map(function (s) { return '<option value="' + s.id + '">' + esc(s.name) + '</option>'; }).join(''); whatOptions();
+      menteeRows(list);
+    });
+    $('#h-kinds').innerHTML = Object.keys(meta.sessionKinds).map(function (k, i) { return '<label class="check"><input type="radio" name="hkind" value="' + k + '"> ' + esc(meta.sessionKinds[k]) + '</label>'; }).join('');
+    loadHours().catch(function (e) { N.showError($('#sessions'), e); });
+  }
+  function volunteerKpis() {
+    var pending = q.evidence.filter(function (e) { return e.status !== 'needs_proof'; }).length + q.recommendations.filter(function (x) { return !x.mentor && x.student !== 'declined'; }).length;
+    $('#kpis').innerHTML = '<div class="kpi"><b>' + mentees.length + ' / ' + volunteer.capacity + '</b><span>Mentees, of the most you said you can take</span></div><div class="kpi"><b>' + pending + '</b><span>Items awaiting your review</span></div><div class="kpi"><b>' + (hours ? N.f1(hours.minutes / 60) : '0') + '</b><span>Hours logged</span></div>';
+  }
+  var hours = null;
+  function loadHours() {
+    return N.api('GET', '/api/mentor/sessions').then(function (d) {
+      hours = d.totals;
+      $('#hTotals').textContent = d.totals.sessions ? N.f1(d.totals.minutes / 60) + ' hours over ' + d.totals.sessions + (d.totals.sessions === 1 ? ' session' : ' sessions') : 'Nothing logged yet';
+      $('#sessions').innerHTML = d.sessions.map(function (x) { return '<tr><td>' + esc(x.held_on) + '</td><td>' + esc(meta.sessionKinds[x.kind]) + '</td><td>' + (x.student ? esc(x.student) : '<span class="muted">—</span>') + '</td><td class="n">' + x.minutes + '</td><td class="small">' + esc(x.note || '') + '</td><td><button class="btn-link" type="button" data-session="' + x.id + '">Remove</button></td></tr>'; }).join('') || '<tr><td colspan="6" class="muted">No time logged yet.</td></tr>';
+      $('#certs').innerHTML = d.certificates.length ? '<p class="small"><b>Your certificates:</b> ' + d.certificates.map(function (c) { return '<a href="certificate.html?code=' + encodeURIComponent(c.code) + '" target="_blank" rel="noopener">' + esc(c.code) + '</a> (' + N.f1(c.minutes / 60) + ' hours, ' + esc(c.issued_at.slice(0, 10)) + ')'; }).join(' · ') + '</p>' : '';
+      if (volunteer && q) volunteerKpis();
+    });
+  }
+  function whoTyped() {
+    var t = $('#h-who').value.replace(/\s+/g, ' ').trim().toLowerCase(); if (!t) { $('#h-whoNote').textContent = ''; return null; }
+    var hit = mentees.filter(function (m) { return m.name.toLowerCase() === t; })[0] || (function () { var m = mentees.filter(function (x) { return x.name.toLowerCase().indexOf(t) >= 0; }); return m.length === 1 ? m[0] : null; })();
+    $('#h-whoNote').textContent = hit ? 'Your mentee ' + hit.name + '.' : 'None of your mentees matches “' + $('#h-who').value.trim() + '”.';
+    return hit;
+  }
+  $('#h-who').addEventListener('change', function () { var m = whoTyped(); if (m) $('#h-who').value = m.name; });
+  $('#hoursForm').addEventListener('submit', function (e) {
+    e.preventDefault(); var err = $('#h-err'), kind = ($('input[name=hkind]:checked') || {}).value, who = whoTyped(), on = N.typedDate($('#h-date').value);
+    if ($('#h-who').value.trim() && !who) { err.hidden = false; err.textContent = 'Type the name of one of your mentees, or leave it empty for group time.'; return; }
+    if ($('#h-date').value.trim() && !on) { err.hidden = false; err.textContent = 'Type the date like 12 Nov 2026, or “today”.'; return; }
+    N.api('POST', '/api/mentor/sessions', { kind: kind, studentId: who ? who.id : null, heldOn: on || '', minutes: $('#h-min').value === '' ? '' : +$('#h-min').value, note: $('#h-note').value })
+      .then(function () { err.hidden = true; ['#h-who', '#h-date', '#h-min', '#h-note'].forEach(function (i) { $(i).value = ''; }); $('#h-whoNote').textContent = ''; N.toast('Time logged.'); return loadHours(); })
+      .catch(function (x) { err.hidden = false; err.textContent = x.message; });
+  });
+  $('#sessions').addEventListener('click', function (e) { var b = e.target.closest('[data-session]'); if (b) N.api('DELETE', '/api/mentor/sessions/' + b.dataset.session).then(function () { N.toast('Removed.'); return loadHours(); }).catch(function (x) { N.toast(x.message); }); });
+  $('#certBtn').addEventListener('click', function () {
+    N.api('POST', '/api/mentor/certificate').then(function (r) { N.toast('Certificate ' + r.code + ' is ready.'); return loadHours(); }).catch(function (x) { var err = $('#h-err'); err.hidden = false; err.textContent = x.message; });
+  });
+  // Placement cell: which roles each programme usually leads to.
+  function showProgRoles(list) {
+    $('#progRoles').innerHTML = list.length ? list.map(function (p) { return '<div style="border:1px solid var(--border);border-radius:var(--radius-md);padding:0.55rem 0.8rem;display:flex;justify-content:space-between;gap:0.6rem;flex-wrap:wrap;align-items:center"><span class="small"><b>' + esc(p.label) + '</b>: ' + p.roles.map(function (r) { return esc(r.label); }).join(', ') + '</span><button class="btn-link" type="button" data-prog-edit="' + esc(p.label) + '" data-prog-roles="' + esc(p.roles.map(function (r) { return r.label; }).join(', ')) + '">Change</button></div>'; }).join('') : '<p class="small muted">No programmes mapped yet.</p>';
+  }
+  function loadProgRoles() { return N.api('GET', '/api/college/programme-roles').then(showProgRoles).catch(function (e) { N.showError($('#progRoles'), e); }); }
+  $('#progRoles').addEventListener('click', function (e) { var b = e.target.closest('[data-prog-edit]'); if (!b) return; $('#pr-prog').value = b.dataset.progEdit; $('#pr-roles').value = b.dataset.progRoles; $('#pr-roles').focus(); });
+  $('#progForm').addEventListener('submit', function (e) {
+    e.preventDefault(); var err = $('#pr-err');
+    N.api('PUT', '/api/college/programme-roles', { programme: $('#pr-prog').value, roles: $('#pr-roles').value })
+      .then(function (list) { err.hidden = true; $('#pr-prog').value = ''; $('#pr-roles').value = ''; N.toast('Saved. Students of that programme see these roles to compare.'); showProgRoles(list); })
+      .catch(function (x) { err.hidden = false; err.textContent = x.message; });
+  });
   function waiting(s) {
     var w = [], n = s.skillsVerified.filter(function (v, i) { return !v && s.skillsRated[i]; }).length, t = s.transversal.filter(function (v, i) { return v != null && !s.transversalVerified[i]; }).length;
-    if (s.cgpa != null && !s.cgpaConfirmed) w.push('CGPA ' + s.cgpa + ' to confirm'); else if (s.cgpa == null && s.class12 != null && !s.class12Confirmed) w.push('Class 12 marks ' + s.class12 + '% to confirm'); else if (s.cgpa == null && s.class12 == null) w.push('CGPA not entered');
+    if (volunteer) {} else if (s.cgpa != null && !s.cgpaConfirmed) w.push('CGPA ' + s.cgpa + ' to confirm'); else if (s.cgpa == null && s.class12 != null && !s.class12Confirmed) w.push('Class 12 marks ' + s.class12 + '% to confirm'); else if (s.cgpa == null && s.class12 == null) w.push('CGPA not entered');
     if (n) w.push(n + (n === 1 ? ' role skill' : ' role skills') + ' to assess');
     if (t) w.push(t + (t === 1 ? ' transversal skill' : ' transversal skills') + ' to assess');
     return w.length ? esc(w.join(' · ')) + '<br><span class="muted">Counting at half meanwhile</span>' : '<span class="muted">Nothing</span>';
@@ -189,8 +276,8 @@
   function current() { return mentees.filter(function (m) { return String(m.id) === $('#as-student').value; })[0]; }
   function whatOptions(keep) {
     var s = current(); if (!s) return; var was = keep === true ? $('#as-what').value : null;
-    $('#as-what').innerHTML = '<option value="cgpa">CGPA' + (s.cgpaConfirmed ? ' (confirmed: ' + s.cgpa + ')' : s.cgpa != null ? ' (student entered ' + s.cgpa + ')' : '') + '</option>' +
-      (s.cgpa == null ? '<option value="class12">Class 12 marks, until a first CGPA' + (s.class12Confirmed ? ' (confirmed: ' + s.class12 + '%)' : s.class12 != null ? ' (student entered ' + s.class12 + '%)' : '') + '</option>' : '') +
+    $('#as-what').innerHTML = (volunteer ? '' : '<option value="cgpa">CGPA' + (s.cgpaConfirmed ? ' (confirmed: ' + s.cgpa + ')' : s.cgpa != null ? ' (student entered ' + s.cgpa + ')' : '') + '</option>') +
+      (s.cgpa == null && !volunteer ? '<option value="class12">Class 12 marks, until a first CGPA' + (s.class12Confirmed ? ' (confirmed: ' + s.class12 + '%)' : s.class12 != null ? ' (student entered ' + s.class12 + '%)' : '') + '</option>' : '') +
       meta.roles[s.role].skills.map(function (k, i) { return '<option value="' + i + '">' + esc(k) + (s.skillsVerified[i] ? ' (assessed: ' + s.skills[i] + ')' : s.skillsRated[i] ? ' (student rated ' + s.skills[i] + ')' : ' (not rated)') + '</option>'; }).join('') +
       meta.transversal.map(function (k, i) { return '<option value="t' + i + '">' + esc(k) + (s.transversalVerified[i] ? ' (assessed: ' + s.transversal[i] + ')' : s.transversal[i] != null ? ' (student rated ' + s.transversal[i] + ')' : ' (not rated)') + '</option>'; }).join('');
     if (was != null) $('#as-what').value = was;

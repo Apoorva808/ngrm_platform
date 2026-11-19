@@ -26,6 +26,10 @@
     <div class="recs" id="recs"><p class="loading">Loading your plan…</p></div>
     <p class="small muted" style="margin-top:0.9rem">Steps and their ranking come from fixed rules your mentor can see. If you agreed to AI wording, an AI model may reword the reason; it never sets a number or adds a step, and anything it writes is checked first.</p>
   </section>
+  <section class="card" aria-labelledby="mtTitle">
+    <header><h2 id="mtTitle">Your mentors</h2><span class="small muted">They review your plan and check your evidence</span></header>
+    <div id="mentors"><p class="loading">Loading…</p></div>
+  </section>
   <section class="card" aria-labelledby="demandTitle">
     <header><h2 id="demandTitle">Live demand for your aspired role</h2><span class="small muted" id="liveStamp" aria-live="off"></span></header>
     <div id="demand"><p class="muted">Loading…</p></div>
@@ -87,8 +91,8 @@
         }).join('') + '</div>' +
         (d.personal && d.personal.openingsInMyCities != null ? '<p class="small" style="margin-top:0.6rem"><b>' + d.personal.openingsInMyCities + '</b> of these openings are in the places you said you want to work (' + esc(d.personal.cities) + ').</p>' : d.personal ? '<p class="small muted" style="margin-top:0.6rem">Type where you would like to work on My score, and this will show the openings there.</p>' : '') +
         (d.personal && d.personal.alsoAsked.length ? '<p class="small">They also ask for: ' + d.personal.alsoAsked.map(function (k) { return esc(k.name) + ' (' + k.openings + ' open' + (k.have ? ', <b>you listed this</b>' : '') + ')'; }).join(' · ') + '.</p>' : '') +
-        '<p class="small" style="margin-bottom:0.3rem"><b>Latest</b></p><ul class="small" style="margin:0 0 0.5rem;padding-left:1.1rem">' + d.latest.map(function (p) { return '<li>' + (p.title ? esc(p.title) + ', ' : '') + esc(p.employer) + (p.city ? ', ' + esc(p.city) : '') + ' · ' + p.openings + ' open · ' + (p.source ? 'found on ' + (p.url ? '<a href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer">' + esc(p.source) + '</a>' : esc(p.source)) : 'posted on GRM by the employer') + '</li>'; }).join('') + '</ul>' +
-        '<p class="small muted">Openings come from employers posting on GRM and from public sources the GRM team checks (company career pages, government recruitment notices, Employment News), each credited to its source. This is not a national job count.</p>';
+        '<p class="small" style="margin-bottom:0.3rem"><b>Latest</b></p><ul class="small" style="margin:0 0 0.5rem;padding-left:1.1rem">' + d.latest.map(function (p) { return '<li>' + (p.title ? esc(p.title) + ', ' : '') + esc(p.employer) + (p.city ? ', ' + esc(p.city) : '') + ' · ' + p.openings + ' open · ' + (p.source ? 'found on ' + (p.url ? '<a href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer">' + esc(p.source) + '</a>' : esc(p.source)) + (p.sourceKind && p.sourceKind.toLowerCase().indexOf(p.source.toLowerCase()) < 0 ? ' (' + esc(p.sourceKind.split(',')[0].toLowerCase()) + ')' : '') : 'posted on GRM by the employer') + '</li>'; }).join('') + '</ul>' +
+        '<p class="small muted">Openings come from employers posting on GRM and from public sources the GRM team checks (company career pages, government recruitment notices, Employment News, partner organisations, job portal listings and recruitment agencies whose clients agreed), each credited to its source. This is not a national job count.</p>';
     }).catch(function (e) { N.showError($('#demand'), e); });
   }
   function load() {
@@ -144,8 +148,22 @@
   $('#ownList').addEventListener('click', function (e) { var b = e.target.closest('[data-own-del]'); if (b) ownDone(N.api('DELETE', '/api/me/steps/' + b.dataset.ownDel)); });
   $('#ownList').addEventListener('change', function (e) { var c = e.target.closest('[data-own-done]'); if (c) ownDone(N.api('PATCH', '/api/me/steps/' + c.dataset.ownDone, { done: c.checked })); });
   $('#gapToggle').addEventListener('click', function () { var on = this.getAttribute('aria-pressed') !== 'true'; this.setAttribute('aria-pressed', String(on)); this.textContent = on ? 'View as bars' : 'View as table'; $('#gapTableWrap').hidden = !on; $('#gapBars').hidden = on; });
+  // A volunteer mentor from industry, government or education, only if the student asks. Matched to their aspired role.
+  function showMentors() {
+    return N.api('GET', '/api/me/mentors').then(function (d) {
+      var college = d.mentors.filter(function (m) { return m.kind === 'college'; }), vol = d.mentors.filter(function (m) { return m.kind === 'volunteer'; })[0];
+      $('#mentors').innerHTML = (college.length ? '<p class="small"><b>At your college:</b> ' + college.map(function (m) { return esc(m.name); }).join(', ').replace(/\.$/, '') + '. They confirm your marks and can check everything you add.</p>' : '<p class="small">Nobody at your college is your mentor on GRM yet. Your placement cell can see this and assigns one as soon as a faculty mentor joins. Meanwhile your own figures count at half.</p>') +
+        (vol ? '<div style="border:1px solid var(--border);border-radius:var(--radius-md);padding:0.7rem 0.9rem;display:grid;gap:0.35rem"><span class="small"><b>Volunteer mentor:</b> ' + esc(vol.name) + ' · ' + esc(vol.sector) + ', ' + esc(vol.organisation) + '</span><span class="small muted">Can guide you in: ' + vol.expertise.map(esc).join(', ') + '. Sees what your college mentor sees, but cannot confirm marks.</span><div><button class="btn-link" type="button" id="endVol">End this mentoring</button></div></div>'
+          : '<p class="small">Want advice from someone working in your field? Ask for a <b>volunteer mentor</b> from industry, government or education. You are matched by your aspired role. They see your profile, evidence and plan, like your college mentor, and you can end it at any time.</p>' +
+            (d.volunteerRoom ? '<div><button class="btn btn-secondary btn-sm" type="button" id="askVol">Ask for a volunteer mentor</button></div>' : '<p class="small muted">No volunteer mentor has room right now. Check again in a few days.</p>'));
+    }).catch(function (e) { N.showError($('#mentors'), e); });
+  }
+  $('#mentors').addEventListener('click', function (e) {
+    if (e.target.id === 'askVol') N.api('POST', '/api/me/volunteer-mentor').then(function (v) { N.toast('Your volunteer mentor is ' + v.name + '.'); showMentors(); }).catch(function (x) { N.toast(x.message); });
+    if (e.target.id === 'endVol') N.api('DELETE', '/api/me/volunteer-mentor').then(function () { N.toast('Ended. They no longer see your information.'); showMentors(); }).catch(function (x) { N.toast(x.message); });
+  });
   N.boot('plan', ['student']).then(function (ctx) {
-    meta = ctx.meta;
+    meta = ctx.meta; showMentors();
     Promise.resolve(load()).then(function () { if (data) loadDemand(data.role); });
     // Mentor reviews and employer demand appear without a refresh.
     N.live(function () { return Promise.resolve(load()).then(function () { if (data) return loadDemand(data.role); }); }, 30, $('#liveStamp'));

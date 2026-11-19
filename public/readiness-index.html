@@ -61,7 +61,8 @@
       <div class="field"><label for="f-other0">Other roles you are considering (up to 2)</label>
         <div style="display:flex;gap:0.4rem"><input type="text" id="f-other0" maxlength="60" placeholder="Type a role, for example UX Researcher" style="flex:1 1 auto;min-width:0" aria-describedby="otherNote"><button class="btn btn-secondary btn-sm" type="button" data-other-del="0" aria-label="Remove the first other role">Remove</button></div>
         <div style="display:flex;gap:0.4rem;margin-top:0.35rem"><input type="text" id="f-other1" maxlength="60" placeholder="Type another role" aria-label="Other roles you are considering, second" style="flex:1 1 auto;min-width:0" aria-describedby="otherNote"><button class="btn btn-secondary btn-sm" type="button" data-other-del="1" aria-label="Remove the second other role">Remove</button></div>
-        <span class="hint" id="otherNote" role="status">See how you match each one under “Compare your roles”. They do not change your score.</span></div>
+        <span class="hint" id="otherNote" role="status">See how you match each one under “Compare your roles”. They do not change your score.</span>
+        <div class="small" id="collegeRoles" hidden style="margin-top:0.45rem"></div></div>
     </fieldset></div>
     <div class="form-group"><fieldset><legend>Technical skills for your aspired role (0–100)</legend><p class="small muted" style="margin:0 0 0.6rem">Rate yourself honestly: your ratings shape your plan. Your own rating counts at half straight away, and a skill counts in full once your college assesses it.</p><div id="skillsBox" style="display:grid;gap:0.75rem"></div></fieldset></div>
     <div class="form-group"><fieldset><legend>Transversal skills (0–100)</legend><p class="small muted" style="margin:0 0 0.6rem">Skills every job needs. Same rule: your own rating counts at half, and in full once your mentor assesses it.</p><div id="tvBox" style="display:grid;gap:0.75rem"></div></fieldset></div>
@@ -215,7 +216,7 @@
     var prog = meta.programmes.filter(function (x) { return x.id === p.prog; })[0];
     $('#sMeta').textContent = (prog ? prog.label : '') + ' · ' + N.ordinal(p.year) + ' year · Aspired role: ' + meta.roles[p.role].label;
     $('#sSure').innerHTML = s.confirmedIndex < s.index ? 'Counting only what has been confirmed or verified: <b>' + N.f1(s.confirmedIndex) + '</b>. The rest counts at half until your mentor confirms it.' : 'Everything in this score has been confirmed or verified.';
-    compare(data.compare || []); ipipState();
+    compare(data.compare || []); ipipState(); collegeRoles(data.collegeRoles || []);
     words(data);
     $('#sPath').innerHTML = data.path ? '<span class="chip">' + esc(data.path.label) + '</span> ' + esc(data.path.text) : '';
     $('#sBand').innerHTML = '<span class="chip ' + N.bandCls[data.band.k] + '">' + data.band.label + '</span>' + (s.flags.cgpaMissing ? ' <span class="chip warning">CGPA missing</span>' : s.flags.cgpaUnconfirmed ? ' <span class="chip warning">' + (s.flags.marksFrom === 'class12' ? 'Class 12 marks' : 'CGPA') + ' counting at half</span>' : '') + (s.flags.skillsUnassessed ? ' <span class="chip">' + s.skillsAssessed + ' of ' + (s.skillsAssessed + s.flags.skillsUnassessed) + ' role skills assessed</span>' : '') +
@@ -239,6 +240,11 @@
     }).join('');
   }
   // Each role side by side. Skills are matched by name to what the student has rated, been assessed in, or listed.
+  // Roles your placement cell says students of your programme usually go into. Ideas only, added to compare on a click.
+  function collegeRoles(list) {
+    $('#collegeRoles').hidden = !list.length;
+    $('#collegeRoles').innerHTML = list.length ? 'Your placement cell says students of your programme often go into: ' + list.map(function (r) { return '<button class="btn-link" type="button" data-compare-add="' + esc(r.key) + '" aria-label="Add ' + esc(r.label) + ' to compare">' + esc(r.label) + ' +</button>'; }).join(' · ') : '';
+  }
   function compare(list) {
     $('#compareCard').hidden = list.length < 2;
     $('#compare').innerHTML = list.map(function (r) {
@@ -317,6 +323,13 @@
       if (key === $('#f-role').value) { otherBoxes[i].set(''); $('#otherNote').textContent = 'That is already your main role.'; return; }
       save().then(function () { otherBoxes.forEach(function (b, k) { b.set(data.profile.otherRoles[k] || ''); }); }).catch(function () {}); } }); });
     $$('[data-other-del]').forEach(function (b) { b.addEventListener('click', function () { otherBoxes[+b.dataset.otherDel].set(''); save().then(function () { otherBoxes.forEach(function (x, k) { x.set(data.profile.otherRoles[k] || ''); }); }).catch(function () {}); }); });
+    $('#collegeRoles').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-compare-add]'); if (!b) return;
+      var slot = otherBoxes.filter(function (x) { return !x.key(); })[0];
+      if (!slot) { $('#otherNote').textContent = 'You are already comparing two other roles. Remove one first.'; return; }
+      slot.set(b.dataset.compareAdd);
+      save().then(function () { otherBoxes.forEach(function (x, k) { x.set(data.profile.otherRoles[k] || ''); }); $('#otherNote').textContent = 'Added. See it under “Compare your roles”.'; }).catch(function () {});
+    });
     $('#compare').addEventListener('click', function (e) { var b = e.target.closest('[data-make-main]'); if (b) { roleBox.set(b.dataset.makeMain); pickRole(b.dataset.makeMain); } });
     $('#roleIdeas').addEventListener('click', function (e) { var b = e.target.closest('[data-idea]'); if (b) roleBox.choose(b.dataset.idea); });
     $('#wordIdeas').addEventListener('click', function (e) { var b = e.target.closest('[data-idea]'); if (b) { roleBox.choose(b.dataset.idea); $('#f-roleText').scrollIntoView({ block: 'center' }); } });

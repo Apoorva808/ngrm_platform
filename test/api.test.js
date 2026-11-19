@@ -7,13 +7,15 @@ const fs = require('node:fs'), path = require('node:path'), os = require('node:o
 const uploads = fs.mkdtempSync(path.join(os.tmpdir(), 'ngrm-up-'));
 
 let server, base, h, db;
+// What the stand-in for the AI proof check answers (the real one calls Gemini only when a key is set).
+let proofAnswer = { nameMatches: 'yes', titleMatches: 'unclear', issuer: 'NPTEL', summary: 'A course completion certificate. See https://evil.example/x' };
 const D = require('../server/domain');
 test.before(async () => {
   process.env.DEV_SHOW_OTP = 'true';
 process.env.COURSE_FEED = 'off'; // the live feed is tested below with a stand-in, never the real network
   db = open(':memory:'); seed(db); h = helpers(db);
   // Most tests run with emailed codes switched on; the password-only default has its own tests at the end.
-  server = createApp(db, { demoMode: true, emailCodes: true, sendCode: () => {}, uploadDir: uploads }).listen(0);
+  server = createApp(db, { demoMode: true, emailCodes: true, sendCode: () => {}, uploadDir: uploads, proofChecker: async () => proofAnswer }).listen(0);
   await new Promise((r) => server.once('listening', r));
   base = 'http://localhost:' + server.address().port;
 });
@@ -1207,10 +1209,11 @@ test('recommendations are built from each student’s own data, so two students 
 
 test('the team adds openings from public sources: they count in live demand, credited and linked; only admins add them', async () => {
   const admin = await as('admin@demo.grm.in'), student = await as('ananya@demo.grm.in'), employer = await as('recruiter@demo.grm.in');
-  const ok = { title: 'HR analyst', organisation: 'A real company', role: 'hr', city: 'Bengaluru', skills: 'Excel and data analysis, Workday', openings: 2, sourceName: 'Company careers page', sourceUrl: 'https://careers.example.org/hr-analyst' };
+  const ok = { title: 'HR analyst', organisation: 'A real company', role: 'hr', city: 'Bengaluru', skills: 'Excel and data analysis, Workday', openings: 2, sourceKind: 'company', sourceName: 'Company careers page', sourceUrl: 'https://careers.example.org/hr-analyst' };
   assert.equal((await employer('POST', '/api/admin/openings', ok)).status, 403);
   assert.equal((await admin('POST', '/api/admin/openings', { ...ok, sourceUrl: 'http://careers.example.org' })).status, 400, 'a link students can check, over https');
-  assert.equal((await admin('POST', '/api/admin/openings', { ...ok, sourceName: '' })).status, 400, 'the source must be named');
+  assert.equal((await admin('POST', '/api/admin/openings', { ...ok, sourceKind: '' })).status, 400, 'where it was found must be said');
+  assert.equal((await admin('POST', '/api/admin/openings', { ...ok, sourceKind: 'agency' })).status, 400, 'an agency opening needs its client\'s agreement');
   assert.equal((await admin('POST', '/api/admin/openings', { ...ok, postedOn: '2099-01-01' })).status, 400);
   assert.equal((await admin('POST', '/api/admin/openings', { ...ok, role: 'astronaut' })).status, 400);
   const before = (await student('GET', '/api/demand/summary?role=hr')).body;
@@ -1265,4 +1268,129 @@ test('a first-year student with no CGPA yet can use Class 12 marks, at half unti
   r = (await student('PUT', '/api/me/profile', { cgpa: 7.6 })).body;
   assert.equal(r.score.factors.cgpa, 38); assert.equal(r.score.flags.marksFrom, 'cgpa');
   assert.equal((await mentor('POST', '/api/mentor/assessments', { studentId: id, what: 'cgpa', value: 7.6 })).status, 201);
+});
+
+
+test('volunteer mentors: sign up, wait for approval, are matched when a student asks, and cannot confirm marks', async () => {
+  const admin = await as('admin@demo.grm.in'), pw = 'nine bright river stones';
+  const vol = async (email, name, extra) => { const c = client(); h.run('DELETE FROM otp_requests'); const r = await c('POST', '/api/auth/sign-up', { role: 'volunteer', name, email, password: pw, ...extra }); return { c, r }; };
+  assert.equal((await vol('v0@example.org', 'No Sector', { volOrg: 'Somewhere', expertise: 'Finance' })).r.status, 400, 'sector needed');
+  assert.equal((await vol('v0@example.org', 'No Areas', { sector: 'industry', volOrg: 'Somewhere', expertise: '' })).r.status, 400, 'at least one area');
+  assert.equal((await vol('v0@example.org', 'Too Many', { sector: 'industry', volOrg: 'Somewhere', expertise: 'a1, b2, c3, d4, e5, f6' })).r.status, 400, 'five areas at most');
+  assert.equal((await vol('v0@example.org', 'Big Load', { sector: 'industry', volOrg: 'Somewhere', expertise: 'Finance', capacity: 50 })).r.status, 400);
+  const a = await vol('rekha@example.org', 'Rekha Iyer', { sector: 'industry', volOrg: 'A data firm', expertise: 'Data analysis, SQL dashboards', capacity: 1 });
+  const b = await vol('suresh@example.org', 'Suresh Rao', { sector: 'government', volOrg: 'State HR department', expertise: 'People analytics, recruitment, HR' });
+  for (const [x, email] of [[a, 'rekha@example.org'], [b, 'suresh@example.org']]) { assert.equal(x.r.status, 200); assert.deepEqual((await x.c('POST', '/api/auth/sign-up/verify', { email, code: x.r.body.devCode })).body, { pending: true }); }
+  const waiting = (await admin('GET', '/api/admin/signups')).body.find((x) => x.email === 'suresh@example.org');
+  assert.equal(waiting.role, 'mentor'); assert.equal(waiting.volunteer.sectorLabel, 'Government'); assert.deepEqual(waiting.volunteer.expertise, ['People analytics', 'recruitment', 'HR']); assert.equal(waiting.volunteer.capacity, 10, 'capacity left blank means 10');
+  for (const email of ['rekha@example.org', 'suresh@example.org']) assert.equal((await admin('POST', '/api/admin/signups/decide', { email, approve: true })).status, 200);
+  const sv = client(); assert.equal((await sv('POST', '/api/auth/password', { email: 'suresh@example.org', password: pw })).status, 200);
+  const meV = (await sv('GET', '/api/me')).body.user; assert.equal(meV.institution, null); assert.equal(meV.volunteer.organisation, 'State HR department');
+  assert.equal((await sv('GET', '/api/mentor/mentees')).body.length, 0, 'a volunteer is given nobody until a student asks');
+  assert.equal((await sv('GET', '/api/college/cohort')).status, 403); assert.equal((await sv('GET', '/api/college/activity')).status, 403);
+  // Ananya aims for HR, so she is matched with the HR volunteer, not the data one.
+  const student = await as('ananya@demo.grm.in'), sid = h.get("SELECT id FROM users WHERE email = 'ananya@demo.grm.in'").id;
+  let mine = (await student('GET', '/api/me/mentors')).body;
+  assert.ok(mine.mentors.some((m) => m.kind === 'college')); assert.equal(mine.volunteerRoom, true);
+  const asked = await student('POST', '/api/me/volunteer-mentor'); assert.equal(asked.status, 201); assert.equal(asked.body.name, 'Suresh Rao');
+  assert.equal((await student('POST', '/api/me/volunteer-mentor')).status, 409, 'one volunteer at a time');
+  mine = (await student('GET', '/api/me/mentors')).body; assert.equal(mine.mentors.length, 2); assert.equal(mine.mentors[1].kind, 'volunteer');
+  assert.ok((await sv('GET', '/api/mentor/mentees')).body.some((m) => m.id === sid));
+  // The volunteer can assess a skill but not confirm marks; the college mentor still can.
+  const cg = await sv('POST', '/api/mentor/assessments', { studentId: sid, what: 'cgpa', value: 8 }); assert.equal(cg.status, 403); assert.match(cg.body.error, /college/);
+  assert.equal((await sv('POST', '/api/mentor/assessments', { studentId: sid, what: 'class12', value: 80 })).status, 403);
+  assert.equal((await sv('POST', '/api/mentor/assessments', { studentId: sid, what: 't1', value: 70 })).status, 201);
+  // Admin's change of college mentor leaves the volunteer in place.
+  const kavya = await as('kavya@demo.grm.in');
+  assert.equal((await admin('PUT', `/api/admin/users/${sid}/mentor`, { mentorEmail: 'kavya@demo.grm.in' })).status, 200);
+  assert.ok((await sv('GET', '/api/mentor/mentees')).body.some((m) => m.id === sid));
+  const vols = (await admin('GET', '/api/admin/volunteers')).body; assert.equal(vols.length, 3, 'two new, one from the sample data'); assert.equal(vols.find((v) => v.name === 'Suresh Rao').students, 1);
+  // Ending it removes the link; the student can ask again.
+  assert.equal((await student('DELETE', '/api/me/volunteer-mentor')).status, 200);
+  assert.ok(!(await sv('GET', '/api/mentor/mentees')).body.some((m) => m.id === sid));
+  assert.equal((await kavya('GET', '/api/mentor/mentees')).body.some((m) => m.id === sid), true);
+});
+
+test('mentors log their hours and get a certificate anyone can check by its code', async () => {
+  const kavya = await as('kavya@demo.grm.in'), sid = (await kavya('GET', '/api/mentor/mentees')).body[0].id;
+  const today = new Date().toISOString().slice(0, 10), future = new Date(Date.now() + 2 * 864e5).toISOString().slice(0, 10);
+  const log = (b) => kavya('POST', '/api/mentor/sessions', b);
+  assert.equal((await log({ kind: 'one_to_one', heldOn: today, minutes: 45 })).status, 400, 'one-to-one needs the mentee');
+  assert.equal((await log({ kind: 'group', heldOn: future, minutes: 45 })).status, 400);
+  assert.equal((await log({ kind: 'group', heldOn: '2026-02-30', minutes: 45 })).status, 400);
+  assert.equal((await log({ kind: 'group', heldOn: today, minutes: 2 })).status, 400);
+  assert.equal((await log({ kind: 'chat', heldOn: today, minutes: 30 })).status, 400);
+  const other = h.get("SELECT id FROM users WHERE role = 'student' AND id NOT IN (SELECT student_id FROM mentor_links WHERE mentor_id = (SELECT id FROM users WHERE email = 'kavya@demo.grm.in')) LIMIT 1");
+  if (other) assert.equal((await log({ kind: 'one_to_one', studentId: other.id, heldOn: today, minutes: 30 })).status, 400, 'only own mentees');
+  assert.equal((await kavya('POST', '/api/mentor/certificate')).status, 409, 'needs an hour first (the sample data has 30 minutes)');
+  assert.equal((await log({ kind: 'one_to_one', studentId: sid, heldOn: today, minutes: 45, note: 'CV review' })).status, 201);
+  const r = await log({ kind: 'group', heldOn: today, minutes: 30 }); assert.equal(r.status, 201);
+  assert.equal(r.body.totals.minutes, 105, '30 from the sample data, plus 75'); assert.equal(r.body.totals.sessions, 3);
+  const cert = await kavya('POST', '/api/mentor/certificate'); assert.equal(cert.status, 201); assert.match(cert.body.code, /^GRM-[0-9A-F]{10}$/);
+  const pub = await client()('GET', '/api/certificates/' + cert.body.code.toLowerCase());
+  assert.equal(pub.status, 200); assert.equal(pub.body.minutes, 105); assert.equal(pub.body.name, 'Dr. Kavya S.'); assert.match(pub.body.description, /^Faculty mentor/);
+  assert.equal(JSON.stringify(pub.body).includes('CV review'), false, 'nothing about students');
+  assert.equal((await client()('GET', '/api/certificates/GRM-0000000000')).status, 404);
+  // The certificate is a snapshot: removing a session later does not change it.
+  const list = (await kavya('GET', '/api/mentor/sessions')).body; assert.equal(list.sessions.length, 3); assert.equal(list.certificates.length, 1);
+  assert.equal((await kavya('DELETE', '/api/mentor/sessions/' + list.sessions[0].id)).status, 200);
+  assert.equal((await client()('GET', '/api/certificates/' + cert.body.code)).body.minutes, 105);
+  assert.equal((await (await as('ananya@demo.grm.in'))('POST', '/api/mentor/sessions', { kind: 'group', heldOn: today, minutes: 30 })).status, 403);
+});
+
+test('the placement cell maps programmes to the roles they usually lead to, and students of that programme see them', async () => {
+  const cell = await as('placement@demo.grm.in'), student = await as('ananya@demo.grm.in'), kavya = await as('kavya@demo.grm.in');
+  const prog = (await student('GET', '/api/me/profile')).body.profile.prog, label = D.programme(prog).label;
+  assert.equal((await kavya('PUT', '/api/college/programme-roles', { programme: label, roles: 'Data Analyst' })).status, 403, 'the placement cell sets it');
+  assert.equal((await cell('PUT', '/api/college/programme-roles', { programme: label, roles: 'Analyst one, Analyst two, Analyst three, Analyst four, Analyst five, Analyst six' })).status, 400);
+  const r = await cell('PUT', '/api/college/programme-roles', { programme: label, roles: 'Data Analysts, HR / People Analytics Associate, Supply Chain Coordinator' });
+  assert.equal(r.status, 200); const row = r.body.find((x) => x.programme === prog);
+  assert.equal(row.roles[0].key, 'data', 'a typed plural matches the listed role'); assert.equal(row.roles.length, 3);
+  assert.deepEqual((await kavya('GET', '/api/college/programme-roles')).body, r.body, 'mentors at the college can read it');
+  const p = (await student('GET', '/api/me/profile')).body;
+  assert.ok(!p.collegeRoles.some((x) => x.key === p.profile.role), 'the role already chosen is not offered again');
+  assert.ok(p.collegeRoles.some((x) => x.key === 'data'));
+  // Another college's students do not see it.
+  const otherInst = h.get("SELECT id FROM institutions WHERE id != (SELECT institution_id FROM users WHERE email = 'placement@demo.grm.in') LIMIT 1").id;
+  const spare = Object.keys(D.ROLES).find((k) => k !== p.profile.role && !p.collegeRoles.some((x) => x.key === k) && !p.profile.otherRoles.includes(k));
+  h.run('INSERT INTO programme_roles (institution_id, programme, role_key, position) VALUES (?, ?, ?, 0)', otherInst, prog, spare);
+  assert.equal((await student('GET', '/api/me/profile')).body.collegeRoles.some((x) => x.key === spare), false, 'another college\'s map is not shown');
+  h.run('DELETE FROM programme_roles WHERE institution_id = ?', otherInst);
+  assert.equal((await cell('PUT', '/api/college/programme-roles', { programme: label, roles: '' })).body.some((x) => x.programme === prog), false, 'clearing the roles removes the programme');
+});
+
+test('openings can be uploaded many at a time; nothing is saved if one line is wrong', async () => {
+  const admin = await as('admin@demo.grm.in'), n0 = h.get('SELECT COUNT(*) AS n FROM public_openings').n;
+  const good = { title: 'Junior analyst', organisation: 'State Bank', role: 'Data Analyst', sourceKind: 'government', sourceUrl: 'https://example.gov.in/notice', openings: 3 };
+  let r = await admin('POST', '/api/admin/openings/import', { rows: [good, { ...good, sourceUrl: 'ftp://x' }, { ...good, sourceKind: 'agency' }] });
+  assert.equal(r.status, 400); assert.match(r.body.error, /Line 2/); assert.match(r.body.error, /Line 3/);
+  assert.equal(h.get('SELECT COUNT(*) AS n FROM public_openings').n, n0);
+  r = await admin('POST', '/api/admin/openings/import', { rows: [good, { ...good, role: 'Wildlife Photographer', sourceKind: 'agency', clientAgreed: true, sourceName: 'An agency' }] });
+  assert.equal(r.status, 201); assert.equal(r.body.added, 2);
+  const list = (await admin('GET', '/api/admin/openings')).body;
+  assert.equal(list.find((o) => o.title === 'Junior analyst' && o.source_kind === 'government').source_name, 'Government recruitment notice', 'a blank source name takes the kind');
+  assert.ok(Object.values(D.ROLES).some((x) => x.label === 'Wildlife Photographer'), 'a new role typed in the upload is added');
+  assert.equal((await (await as('kavya@demo.grm.in'))('POST', '/api/admin/openings/import', { rows: [good] })).status, 403);
+});
+
+test('AI first look at proof files: only with consent, shown to the mentor as a hint, never verifies, cleared on withdrawal', async () => {
+  const student = await as('ananya@demo.grm.in'), kavya = await as('kavya@demo.grm.in');
+  const sid = h.get("SELECT id FROM users WHERE email = 'ananya@demo.grm.in'").id;
+  const add = async () => { const l = (await student('POST', '/api/me/evidence', { type: 'course', title: 'NPTEL Data Science ' + Math.random().toString(36).slice(2, 6) })).body; return l[l.length - 1].id; };
+  const cookie = (await fetch(base + '/api/auth/demo', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'ananya@demo.grm.in' }) })).headers.get('set-cookie').split(';')[0];
+  const put = (id) => fetch(base + `/api/me/evidence/${id}/file`, { method: 'PUT', headers: { cookie, 'content-type': 'application/pdf', 'x-file-name': 'c.pdf' }, body: Buffer.from('%PDF-1.4 cert') });
+  const settle = () => new Promise((r) => setTimeout(r, 50));
+  const hint = async (id) => ((await kavya('GET', '/api/mentor/queue')).body.evidence.find((e) => e.id === id) || {}).aiCheck;
+  let id = await add(); assert.equal((await put(id)).status, 200); await settle();
+  assert.equal(await hint(id), null, 'no consent, no AI look');
+  assert.equal((await student('POST', '/api/me/consents', { purposes: { ai_proof_check: true } })).status, 200);
+  id = await add(); assert.equal((await put(id)).status, 200); await settle();
+  const got = await hint(id);
+  assert.equal(got.nameMatches, 'yes'); assert.equal(got.issuer, 'NPTEL'); assert.equal(/https?:/.test(got.summary), false, 'links are stripped');
+  assert.equal(h.get('SELECT status FROM evidence WHERE id = ?', id).status, 'pending', 'it never verifies');
+  proofAnswer = { nameMatches: 'maybe', titleMatches: null }; id = await add(); await put(id); await settle();
+  assert.equal(await hint(id), null, 'an empty or odd answer is dropped');
+  assert.equal((await student('POST', '/api/me/consents', { purposes: { ai_proof_check: false } })).status, 200);
+  assert.equal(h.get("SELECT COUNT(*) AS n FROM evidence WHERE user_id = ? AND ai_check_json IS NOT NULL", sid).n, 0, 'withdrawing clears every AI look');
+  for (const e of h.all("SELECT id FROM evidence WHERE user_id = ? AND title LIKE 'NPTEL Data Science %'", sid)) await student('DELETE', '/api/me/evidence/' + e.id);
 });

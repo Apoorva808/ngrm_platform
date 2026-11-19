@@ -122,7 +122,7 @@ CREATE INDEX IF NOT EXISTS login_failures_email ON login_failures(email, at);
 CREATE TABLE IF NOT EXISTS consents (
   id             INTEGER PRIMARY KEY,
   user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  purpose        TEXT NOT NULL CHECK (purpose IN ('profile','psychometric','ai_wording','introductions','study')),
+  purpose        TEXT NOT NULL CHECK (purpose IN ('profile','psychometric','ai_wording','ai_proof_check','introductions','study')),
   granted        INTEGER NOT NULL,
   is_adult       INTEGER,
   guardian_name  TEXT,
@@ -293,3 +293,47 @@ CREATE TABLE IF NOT EXISTS feed_status (
   checked_at  INTEGER
 );
 CREATE INDEX IF NOT EXISTS audit_log_at ON audit_log(at);
+
+-- Volunteer mentors (advisers' review, November 2026): people from industry, government and education who mentor
+-- without being at the student's college. They are mentor accounts with no college, plus these details.
+CREATE TABLE IF NOT EXISTS volunteers (
+  user_id        INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  sector         TEXT NOT NULL CHECK (sector IN ('industry','government','education','other')),
+  organisation   TEXT,
+  expertise_json TEXT NOT NULL DEFAULT '[]',
+  capacity       INTEGER NOT NULL DEFAULT 10
+);
+
+-- Mentoring time, logged by the mentor. Builds the certificate of hours.
+CREATE TABLE IF NOT EXISTS mentor_sessions (
+  id          INTEGER PRIMARY KEY,
+  mentor_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  student_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  held_on     TEXT NOT NULL,
+  minutes     INTEGER NOT NULL CHECK (minutes BETWEEN 5 AND 480),
+  kind        TEXT NOT NULL CHECK (kind IN ('one_to_one','group','review')),
+  note        TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS certificates (
+  code        TEXT PRIMARY KEY,
+  mentor_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  description TEXT NOT NULL,
+  minutes     INTEGER NOT NULL,
+  sessions    INTEGER NOT NULL,
+  students    INTEGER NOT NULL,
+  from_date   TEXT NOT NULL,
+  to_date     TEXT NOT NULL,
+  issued_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Roles a college's placement cell says each programme usually leads to. Students of that programme see them as suggestions.
+CREATE TABLE IF NOT EXISTS programme_roles (
+  institution_id  INTEGER NOT NULL REFERENCES institutions(id) ON DELETE CASCADE,
+  programme       TEXT NOT NULL,
+  role_key        TEXT NOT NULL,
+  position        INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (institution_id, programme, role_key)
+);

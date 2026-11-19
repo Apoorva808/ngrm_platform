@@ -67,7 +67,7 @@ function makeAuth(h, { audit, sendCode }) {
   // ---------- Sign-up ----------
   // Step 1: keep the details (password as a hash only) and email a code. The answer is the same whether or not the email
   // already has an account; an existing account simply gets an ordinary sign-in code.
-  function signUpStart({ name, email, role, institutionId, orgName, password }) {
+  function signUpStart({ name, email, role, institutionId, orgName, password, extra }) {
     const problem = passwordProblem(password, email); if (problem) return { error: problem, status: 400 };
     const limited = throttle(email); if (limited) return limited;
     const code = String(crypto.randomInt(100000, 1000000));
@@ -80,10 +80,10 @@ function makeAuth(h, { audit, sendCode }) {
     }
     // A request already waiting for approval is left untouched, so nobody else can overwrite it.
     if (h.get("SELECT 1 FROM signups WHERE email = ? AND status = 'waiting'", email)) return { sent: true, devNote: process.env.DEV_SHOW_OTP === 'true' ? 'This email already has a request waiting for approval.' : undefined };
-    h.run(`INSERT INTO signups (email, name, role, institution_id, org_name, pw_hash, code_hash, expires_at, attempts, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'unverified')
+    h.run(`INSERT INTO signups (email, name, role, institution_id, org_name, pw_hash, code_hash, expires_at, attempts, status, extra_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'unverified', ?)
       ON CONFLICT(email) DO UPDATE SET name = excluded.name, role = excluded.role, institution_id = excluded.institution_id, org_name = excluded.org_name, pw_hash = excluded.pw_hash,
-      code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0, status = 'unverified', created_at = datetime('now')`,
-      email, name, role, institutionId ?? null, orgName || null, hashPassword(password), hash('signup:' + email + ':' + code), Date.now() + OTP_TTL_MS);
+      code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0, status = 'unverified', extra_json = excluded.extra_json, created_at = datetime('now')`,
+      email, name, role, institutionId ?? null, orgName || null, hashPassword(password), hash('signup:' + email + ':' + code), Date.now() + OTP_TTL_MS, extra ? JSON.stringify(extra) : null);
     sendCode(email, code);
     audit(null, 'auth.sign_up_started', role);
     return { sent: true, devCode: dev };
@@ -149,13 +149,13 @@ function makeAuth(h, { audit, sendCode }) {
   }
   const mustChange = (userId) => !!(h.get('SELECT must_change FROM passwords WHERE user_id = ?', userId) || {}).must_change;
   // Sign-up without emailed codes: the account (or, for staff roles, the request) is made at once.
-  function signUpDirect({ name, email, role, institutionId, orgName, password }) {
+  function signUpDirect({ name, email, role, institutionId, orgName, password, extra }) {
     const problem = passwordProblem(password, email); if (problem) return { error: problem, status: 400 };
     if (h.get('SELECT id FROM users WHERE email = ?', email)) return { error: 'This email already has an account. Sign in instead.', status: 409 };
     if (h.get("SELECT 1 FROM signups WHERE email = ? AND status = 'waiting'", email)) return { error: 'This email already has a request waiting for approval.', status: 409 };
     h.run('DELETE FROM signups WHERE email = ?', email);
-    h.run("INSERT INTO signups (email, name, role, institution_id, org_name, pw_hash, code_hash, expires_at, attempts, status) VALUES (?, ?, ?, ?, ?, ?, '', 0, 0, ?)",
-      email, name, role, institutionId ?? null, orgName || null, hashPassword(password), role === 'student' ? 'unverified' : 'waiting');
+    h.run("INSERT INTO signups (email, name, role, institution_id, org_name, pw_hash, code_hash, expires_at, attempts, status, extra_json) VALUES (?, ?, ?, ?, ?, ?, '', 0, 0, ?, ?)",
+      email, name, role, institutionId ?? null, orgName || null, hashPassword(password), role === 'student' ? 'unverified' : 'waiting', extra ? JSON.stringify(extra) : null);
     if (role !== 'student') { audit(null, 'auth.sign_up_waiting', role); return { pending: true }; }
     const user = createFromSignup(h.get('SELECT * FROM signups WHERE email = ?', email), institutionId, null);
     return { token: startSession(user.id, 'password'), user };
