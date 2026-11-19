@@ -32,7 +32,7 @@
     <div class="who" id="cName"></div>
     <p style="margin:0" id="cDesc"></p>
     <p style="margin:0">gave their time to mentor students on GRM between <b id="cFrom"></b> and <b id="cTo"></b>:</p>
-    <div class="figures"><div><b id="cHours"></b><span class="small muted">hours</span></div><div><b id="cSessions"></b><span class="small muted">sessions logged</span></div><div><b id="cStudents"></b><span class="small muted">students mentored one-to-one</span></div></div>
+    <div class="figures"><div><b id="cHours"></b><span class="small muted">hours</span></div><div><b id="cSessions"></b><span class="small muted" id="cSessionsL">sessions logged</span></div><div><b id="cStudents"></b><span class="small muted" id="cStudentsL">students mentored one-to-one</span></div></div>
     <p class="small muted" style="margin:0">Hours are as logged by the mentor on GRM. Issued <span id="cIssued"></span>. Check it at this page with the code <span class="code" id="cCode"></span>.</p>
   </section>
   <div class="no-print" id="printRow" hidden><button class="btn btn-secondary" type="button" id="printBtn">Print or save as PDF</button></div>
@@ -52,6 +52,7 @@
       $('#cName').textContent = c.name; $('#cDesc').textContent = c.description;
       $('#cFrom').textContent = day(c.from_date); $('#cTo').textContent = day(c.to_date);
       $('#cHours').textContent = N.f1(c.minutes / 60); $('#cSessions').textContent = c.sessions; $('#cStudents').textContent = c.students;
+      $('#cSessionsL').textContent = c.sessions === 1 ? 'session logged' : 'sessions logged'; $('#cStudentsL').textContent = c.students === 1 ? 'student mentored one-to-one' : 'students mentored one-to-one';
       $('#cIssued').textContent = day(c.issued_at); $('#cCode').textContent = c.code;
       $('#cert').hidden = false; $('#printRow').hidden = framed; $('#code').value = c.code;
       document.title = 'Certificate ' + c.code + ' · GRM';
