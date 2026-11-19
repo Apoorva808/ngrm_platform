@@ -42,6 +42,8 @@
 <script>
 (function () {
   var N = NGRM, $ = N.$;
+  // Inside a frame (such as the browser demo) printing is blocked, so the button is left out there.
+  var framed = (function () { try { return window.self !== window.top; } catch (e) { return true; } })();
   var day = function (d) { return new Date(d.slice(0, 10) + 'T00:00:00Z').toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }); };
   function show(code) {
     var err = $('#err'); err.hidden = true;
@@ -51,7 +53,7 @@
       $('#cFrom').textContent = day(c.from_date); $('#cTo').textContent = day(c.to_date);
       $('#cHours').textContent = N.f1(c.minutes / 60); $('#cSessions').textContent = c.sessions; $('#cStudents').textContent = c.students;
       $('#cIssued').textContent = day(c.issued_at); $('#cCode').textContent = c.code;
-      $('#cert').hidden = false; $('#printRow').hidden = false; $('#code').value = c.code;
+      $('#cert').hidden = false; $('#printRow').hidden = framed; $('#code').value = c.code;
       document.title = 'Certificate ' + c.code + ' · GRM';
     }).catch(function (x) { $('#cert').hidden = true; $('#printRow').hidden = true; err.hidden = false; err.textContent = x.message; });
   }
