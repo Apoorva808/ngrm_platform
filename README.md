@@ -248,7 +248,7 @@ and replace `server/db.js` queries with Supabase calls. The API routes and pages
 3. **Add colleges.** On the Admin page add each college (students can only sign up to a listed college), then add or approve mentors and link students to mentors.
 4. **Read the privacy notice** at `/privacy.html` and edit `public/privacy.html` if anything differs from how you will run the pilot (retention, contact, who the responsible organisation is).
 5. **Tell students** the address. They create an account with their email and a password, read the notice, and choose their consents.
-6. **Tell mentors** that a student's CGPA and skills count only after they confirm them on the mentor page.
+6. **Tell mentors** that what students report counts at half until they confirm it on the mentor page, and in full after. Only a mentor at the student's own college can confirm CGPA or Class 12 marks.
 
 The server refuses to start in live mode without the operator name, privacy contact and a strong session secret. Keep backups: check your host's disk snapshot settings before students start, and take a copy of `/data` before any upgrade.
 
